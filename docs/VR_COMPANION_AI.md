@@ -292,3 +292,14 @@ Phase 5 represents the finalization, in-headset verification, and quality assura
    - Complete offline VR safety: zero modifications to character save files (`.d2s`), zero memory leaks, and seamless fallback to vanilla engine behavior when running in desktop mode or when disabled.
 
 
+
+
+---
+
+## 10. Phase 6 Design: Gesture-Based Tactical Commands (Point & Hold)
+
+Detailed technical specifications, kinematic formulas, archetype voice line architecture, visual beacon rendering, and edge-case handling are established in [`docs/VR_COMPANION_TACTICAL_COMMANDS.md`](VR_COMPANION_TACTICAL_COMMANDS.md):
+* **Point-to-Command (`MoveAndHold` / `PrioritizeEnemy`):** OpenXR aim pose raycasting against monster entities and floor elevation mesh with grip-squeeze execution.
+* **Open-Palm Defensive Hold (`DefensiveHold`):** Kinematic upright open-palm posture facing the companion with a 400ms hysteresis lock.
+* **Voice Line Integration:** Fallback archetype voices (Amazon, Paladin, Necromancer, Barbarian) with `x_impossible` rejection cues and movement/combat affirmations.
+* **Elastic Leash Auto-Cancel:** Automatic reversion to squad formation when exceeding `ElasticCombatLeashDistance` (40 sub-tiles).
