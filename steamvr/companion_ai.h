@@ -105,7 +105,7 @@ inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
         case TacticalVoiceCue::MoveConfirm: {
             switch (classId) {
                 case MonStatsIndex::Rogue:
-                    return (var == 0) ? 4293 : 4297; // rogue_confirm_a_4 / rogue_confirm_b_4 ("Sí" / "Vale" / "Okay")
+                    return (var == 0) ? 4294 : 4291; // rogue_confirm_a_4 ("Sí") / rogue_confirm_a_1 ("Como desees") - both Voice Set A
                 case MonStatsIndex::Desert:
                     return 3952;                      // greiz_greeting_inactive_2 ("Sí" / "Vale" / "Okay")
                 case MonStatsIndex::IronWolf:
@@ -845,6 +845,11 @@ struct TacticalOrderController {
         }
 
         if (activeOrder.type == TacticalOrderType::PrioritizeEnemy) {
+            const float distToTarget = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
+            // If already within combat engagement range (3.5 sub-tiles), stop forcing movement so combat AI can attack
+            if (distToTarget <= 3.5f) {
+                return false;
+            }
             outTarget = activeOrder.targetPos;
             return true;
         }

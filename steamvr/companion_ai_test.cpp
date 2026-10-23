@@ -782,7 +782,7 @@ int main() {
         const int rogueDistress = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Distress);
         assert(rogueDistress == 2937 || rogueDistress == 2938);
         const int rogueMove = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::MoveConfirm);
-        assert(rogueMove == 4293 || rogueMove == 4297);
+        assert(rogueMove == 4294 || rogueMove == 4291);
         const int rogueAtk = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::AttackConfirm);
         assert(rogueAtk == 2937 + 12 || rogueAtk == 2937 + 13);
         const int rogueImp = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Impossible);
