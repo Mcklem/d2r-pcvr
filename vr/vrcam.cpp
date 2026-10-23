@@ -3414,7 +3414,7 @@ Pick g_pick[3];                      // aimrules::Source: right, left, eyes
 std::atomic<bool> g_pointing[2]{};   // that arm is held out
 std::atomic<uint32_t> g_held[2]{};   // the target a held button took, 0 none
 std::atomic<int> g_heldSource[2]{};
-const char* SourceName(int source) { return source == 0 ? "right hand" : source == 1 ? "left hand" : "eyes"; }
+const char* SourceName(int source) { return source == 0 ? "right hand" : source == 1 ? "left hand" : source == 99 ? "tactical priority" : "eyes"; }
 bool Pointing(int hand) { return hand >= 0 && hand < 2 && g_pointing[hand].load(); }
 void Store(int k, const targetlock::Snapshot* s, int i) {
     if (!s || i < 0) { g_pick[k].id.store(0); return; }
@@ -3582,6 +3582,16 @@ int ShownTargets(Shown out[2]) {
     // Aim follows your view: while the hand whose color the eyes' monster takes points, it is not outlined (that hand's cast never takes it)
     const bool eyes = framevr::aimrules::EyesOutlined(FollowsView(), Pointing(dominant));
     if (n == 0 && eyes) if (const uint32_t id = idOf(framevr::aimrules::Eyes); id && fill(id, framevr::aimrules::Eyes, out[n])) ++n;
+#if D2RVR_NATIVE_OPENXR
+    if (companionai::IsTacticalCommandsEnabled() && n < 2) {
+        const auto tactical = companionai::GetActiveTacticalOrder();
+        if (tactical.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && tactical.targetUnitId) {
+            if (tactical.targetUnitId != first && fill(tactical.targetUnitId, 99, out[n])) {
+                ++n;
+            }
+        }
+    }
+#endif
     // Telemetry: "Frame aim outline:" whenever what is outlined changes
     static uint64_t shownKey = ~0ull;
     uint64_t key = n;
@@ -9281,7 +9291,11 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 const float hue = OutlineHue(t.source);
                 float wheel[3];
                 framevr::settings::HueRgb(hue, wheel);
-                SetFloats(rt, k ? "Outline2Color" : "OutlineColor", hue <= 0 ? kBands[framevr::targetcone::Band(t.distance)] : wheel, 3);
+                const auto tactical = companionai::GetActiveTacticalOrder();
+                const bool isTactical = (t.source == 99 || (tactical.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && tactical.targetUnitId == t.id));
+                static const float kTacticalCrimson[3] = {1.0f, 0.05f, 0.05f};
+                const float* col = isTactical ? kTacticalCrimson : (hue <= 0 ? kBands[framevr::targetcone::Band(t.distance)] : wheel);
+                SetFloats(rt, k ? "Outline2Color" : "OutlineColor", col, 3);
                 SetFloats(rt, k ? "Outline2Shape" : "OutlineShape", mobShape, 3);
             }
         }

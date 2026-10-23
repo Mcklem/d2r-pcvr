@@ -6,6 +6,7 @@
 #include <vector>
 #include "companion_ai.h"
 #include "../steamvr/companion_ai.h"
+#include "../steamvr/telegraph.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/logging.h"
 #include "bow.h"
@@ -336,6 +337,16 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
         }
 
         if (isTacticalActive) {
+            framevr::companionai::TacticalOrder activeOrder;
+            {
+                AcquireSRWLockShared(&g_tacticalLock);
+                activeOrder = g_tacticalOrderController.GetOrder();
+                ReleaseSRWLockShared(&g_tacticalLock);
+            }
+            if (activeOrder.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
+                framevr::telegraph::Current().Place(activeOrder.targetPos.x * 0.5f, activeOrder.targetPos.y * 0.5f, nowMs, 3000, 3, 1.8f);
+            }
+
             if (dispatchTactical) {
                 int targetX = int(std::round(tacticalTarget.x));
                 int targetY = int(std::round(tacticalTarget.y));
@@ -604,6 +615,10 @@ bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order) {
 
     if (cue != framevr::companionai::TacticalVoiceCue::None) {
         PlayVoiceCue(uint16_t(classId), cue);
+    }
+
+    if (accepted && order.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
+        framevr::telegraph::Current().Place(order.targetPos.x * 0.5f, order.targetPos.y * 0.5f, nowMs, 6000, 3, 1.8f);
     }
 
     return accepted;
