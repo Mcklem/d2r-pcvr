@@ -58,6 +58,8 @@
 #include "../vr/wall_cells.h"
 #include "../vr/prop_scan.h"
 #include "elemental_hands_renderer.h"
+#include "../vr/companion_ai.h"
+#include "../vr/target_lock.h" 
 #include "vr_settings_ui.h"
 #include "../vr/settings_menu.h"
 #include "journal.h"
@@ -1694,6 +1696,119 @@ bottles::Prop Metres(const props::Seen& s,float upm) {
     p.unitsPerMetre=upm;
     return p;
 }
+bool g_tacticalPrevGrip[2]{};
+uint64_t g_openPalmHoldStart[2]{};
+bool g_openPalmLocked[2]{};
+
+void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftTrigger) {
+    if (!::companionai::IsTacticalCommandsEnabled() || !interactionInput.active) {
+        g_tacticalPrevGrip[0] = g_tacticalPrevGrip[1] = false;
+        g_openPalmHoldStart[0] = g_openPalmHoldStart[1] = 0;
+        g_openPalmLocked[0] = g_openPalmLocked[1] = false;
+        return;
+    }
+
+    const bool handsBusy = interactionOutput.nearBelt >= 0 || interactionOutput.nearHolster >= 0 ||
+                           interactionOutput.wheel || interactionOutput.settings || motionOutput.bowDrawing;
+
+    for (int h = 0; h < 2; ++h) {
+        if (!interactionInput.tracked[h]) {
+            g_tacticalPrevGrip[h] = false;
+            g_openPalmHoldStart[h] = 0;
+            g_openPalmLocked[h] = false;
+            continue;
+        }
+
+        const bool gripDown = motionInput.grip[h] > 0.6f;
+        const bool gripClick = gripDown && !g_tacticalPrevGrip[h];
+        g_tacticalPrevGrip[h] = gripDown;
+
+        if (handsBusy) {
+            g_openPalmHoldStart[h] = 0;
+            g_openPalmLocked[h] = false;
+            continue;
+        }
+
+        // 1. Gesture: Open-Palm Defensive Hold (Upright palm facing companion / forward)
+        const float trigger = (h == 0) ? rightTrigger : leftTrigger;
+        const bool handOpen = motionInput.grip[h] < 0.2f && trigger < 0.2f;
+        if (handOpen) {
+            const auto handUp = math::Rotate(interactionInput.hand[h].q, {0, 1, 0});
+            if (handUp.y > 0.82f) {
+                const auto palmNormal = math::Rotate(interactionInput.hand[h].q, h ? math::Vec{1, 0, 0} : math::Vec{-1, 0, 0});
+                const auto headForward = math::Rotate(interactionInput.head.q, {0, 0, -1});
+                if (math::Dot(palmNormal, headForward) > 0.70f) {
+                    if (g_openPalmHoldStart[h] == 0) {
+                        g_openPalmHoldStart[h] = now;
+                    } else if (now - g_openPalmHoldStart[h] >= 400 && !g_openPalmLocked[h]) {
+                        g_openPalmLocked[h] = true;
+                        framevr::companionai::TacticalOrder order;
+                        order.type = framevr::companionai::TacticalOrderType::DefensiveHold;
+                        if (::companionai::IssueTacticalOrder(order)) {
+                            MotionPulse(h, haptics::Category::Interaction, 0.50f, 60000000);
+                            Say("Frame companion tactical: open-palm defensive hold commanded");
+                        }
+                    }
+                } else {
+                    g_openPalmHoldStart[h] = 0;
+                    g_openPalmLocked[h] = false;
+                }
+            } else {
+                g_openPalmHoldStart[h] = 0;
+                g_openPalmLocked[h] = false;
+            }
+        } else {
+            g_openPalmHoldStart[h] = 0;
+            g_openPalmLocked[h] = false;
+        }
+
+        // 2. Gesture: Point-and-Command (Point ray + Grip click)
+        if (gripClick && handAimTracked[h]) {
+            const math::Vec rayOrigin = handAim[h].p;
+            const math::Vec rayDir = math::Rotate(handAim[h].q, {0, 0, -1});
+            const math::Vec worldDir = stageWorld.valid ? math::Rotate(stageWorld.base, rayDir) : rayDir;
+
+            int picked = -1;
+            const auto snapshot = targetlock::Get();
+            if (snapshot.count > 0 && snapshot.at > 0 && (now - snapshot.at <= 500)) {
+                picked = framevr::targetcone::Pick(snapshot.targets, snapshot.count, snapshot.heroX, snapshot.heroY, worldDir.x, worldDir.z, 0);
+            }
+
+            if (picked >= 0) {
+                framevr::companionai::TacticalOrder order;
+                order.type = framevr::companionai::TacticalOrderType::PrioritizeEnemy;
+                order.targetUnitId = snapshot.targets[picked].id;
+                order.targetPos = { snapshot.targets[picked].x * 2.0f, snapshot.targets[picked].y * 2.0f };
+                if (::companionai::IssueTacticalOrder(order)) {
+                    MotionPulse(h, haptics::Category::Interaction, 0.45f, 40000000);
+                    char line[128];
+                    std::snprintf(line, sizeof line, "Frame companion tactical: prioritized monster unit=%u", order.targetUnitId);
+                    Say(line);
+                }
+            } else if (stageWorld.valid && stageWorld.upm >= 1.0f && interactionInput.floorKnown) {
+                const float floorY = interactionInput.floor;
+                const math::Vec worldOrigin = stageWorld.origin + math::Rotate(stageWorld.base, rayOrigin);
+                if (worldDir.y < -1e-4f && worldOrigin.y > floorY) {
+                    const float t = (floorY - worldOrigin.y) / worldDir.y;
+                    const math::Vec hit = worldOrigin + worldDir * t;
+                    float gx = 0, gy = 0;
+                    if (toss::Cell(hit, floorY, stageWorld.upm, gx, gy)) {
+                        framevr::companionai::TacticalOrder order;
+                        order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
+                        order.targetPos = { gx * 2.0f, gy * 2.0f };
+                        if (::companionai::IssueTacticalOrder(order)) {
+                            MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
+                            char line[128];
+                            std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", order.targetPos.x, order.targetPos.y);
+                            Say(line);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 void StepDroppedBottles() {
     const auto& in=interactionInput;const auto& out=interactionOutput;
     const bool bottlesOn=bottlePhysics.load(),propsOn=propPhysics.load();
@@ -2138,6 +2253,7 @@ void Input() {
             PlayGuardBreak();
         }
         if(strainOutput.clearedNow)Say("Frame guard strain: cleared");
+        StepCompanionTacticalGestures(now, Float(trigger, 0), Float(trigger, 1));
         // Consume completed images before scheduling more work. Never replace an
         // in-flight request: at <=25 FPS that discarded every animated result.
         if(in.session!=strainPaintSession||!strainOutput.visible) {

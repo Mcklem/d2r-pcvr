@@ -8610,7 +8610,9 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
         const char* want = g_arcaneSkyReady.load() ? "1" : "0";
         char have[16] = {}; size_t size = sizeof have;
         if (!rt->get_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY_CACHE", have, &size) || strcmp(have, want)) {
-            rt->set_preprocessor_de
+            rt->set_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY_CACHE", want);
+            set = true;
+        }
     }
     for (int a = 1; a <= 6; ++a) {
         AcquireSRWLockShared(&g_skyCfgLock); const SkyAct act = g_skyAct[a]; ReleaseSRWLockShared(&g_skyCfgLock);
