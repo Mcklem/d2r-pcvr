@@ -772,5 +772,173 @@ int main() {
         assert(controller.inPeelAction);
     }
 
+    // =========================================================================
+    // 21. Phase 6: Archetype Tactical Voice Cue Mapping Tests
+    // =========================================================================
+    {
+        using namespace framevr::companionai;
+        // Rogue Scout (Amazon base: 2937)
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::None) == 0);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Distress) == 2937);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::MoveConfirm) == 2937 + 1);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::AttackConfirm) == 2937 + 2);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Impossible) == 2937 + 3);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::HoldConfirm) == 2937 + 6);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::RegroupLeash) == 2937 + 1);
+
+        // Desert Guard (Paladin base: 3171)
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::Distress) == 3171);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::Impossible) == 3171 + 3);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::HoldConfirm) == 3171 + 6);
+
+        // Iron Wolf (Necromancer base: 3093)
+        assert(GetArchetypeVoiceCue(MonStatsIndex::IronWolf, TacticalVoiceCue::Distress) == 3093);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::IronWolf, TacticalVoiceCue::Impossible) == 3093 + 3);
+
+        // Barbarian (Barbarian base: 3015)
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Barbarian1, TacticalVoiceCue::Distress) == 3015);
+        assert(GetArchetypeVoiceCue(MonStatsIndex::Barbarian2, TacticalVoiceCue::Impossible) == 3015 + 3);
+    }
+
+    // =========================================================================
+    // 22. Phase 6: Tactical Order Issuance & Rejection Validation Tests
+    // =========================================================================
+    {
+        using namespace framevr::companionai;
+        TacticalOrderController controller;
+        const Vec2 playerPos{ 100.0f, 100.0f };
+        const Vec2 compNear{ 100.0f, 96.0f }; // dist 4
+        TacticalVoiceCue cue = TacticalVoiceCue::None;
+
+        // 1. Valid MoveAndHold within leash (target at dist 15 < 40)
+        TacticalOrder moveOrder{};
+        moveOrder.type = TacticalOrderType::MoveAndHold;
+        moveOrder.targetPos = { 100.0f, 85.0f };
+        assert(controller.IssueOrder(moveOrder, 1000, compNear, playerPos, cue, false));
+        assert(cue == TacticalVoiceCue::MoveConfirm);
+        assert(controller.IsActive());
+        assert(controller.GetOrderType() == TacticalOrderType::MoveAndHold);
+
+        // 2. Reject order if companion is in retreat (< 50% HP)
+        assert(!controller.IssueOrder(moveOrder, 1050, compNear, playerPos, cue, true));
+        assert(cue == TacticalVoiceCue::Impossible);
+
+        // 3. Reject order if target is beyond ElasticCombatLeashDistance (> 40 sub-tiles)
+        TacticalOrder farTargetOrder{};
+        farTargetOrder.type = TacticalOrderType::MoveAndHold;
+        farTargetOrder.targetPos = { 100.0f, 150.0f }; // dist 50 > 40
+        assert(!controller.IssueOrder(farTargetOrder, 1100, compNear, playerPos, cue, false));
+        assert(cue == TacticalVoiceCue::Impossible);
+
+        // 4. Reject order if companion itself is beyond leash (> 40 sub-tiles)
+        const Vec2 compFar{ 100.0f, 150.0f }; // dist 50 > 40
+        assert(!controller.IssueOrder(moveOrder, 1200, compFar, playerPos, cue, false));
+        assert(cue == TacticalVoiceCue::Impossible);
+
+        // 5. Valid DefensiveHold within leash
+        TacticalOrder holdOrder{};
+        holdOrder.type = TacticalOrderType::DefensiveHold;
+        assert(controller.IssueOrder(holdOrder, 1300, compNear, playerPos, cue, false));
+        assert(cue == TacticalVoiceCue::HoldConfirm);
+        assert(controller.GetOrderType() == TacticalOrderType::DefensiveHold);
+
+        // 6. Valid PrioritizeEnemy within leash
+        TacticalOrder attackOrder{};
+        attackOrder.type = TacticalOrderType::PrioritizeEnemy;
+        attackOrder.targetUnitId = 42;
+        attackOrder.targetPos = { 105.0f, 98.0f };
+        assert(controller.IssueOrder(attackOrder, 1400, compNear, playerPos, cue, false));
+        assert(cue == TacticalVoiceCue::AttackConfirm);
+        assert(controller.GetOrderType() == TacticalOrderType::PrioritizeEnemy);
+    }
+
+    // =========================================================================
+    // 23. Phase 6: Tactical Order Execution & Deadband Arrival Tests
+    // =========================================================================
+    {
+        using namespace framevr::companionai;
+        TacticalOrderController controller;
+        const Vec2 playerPos{ 100.0f, 100.0f };
+        const Vec2 compPos{ 100.0f, 96.0f };
+        TacticalVoiceCue cue = TacticalVoiceCue::None;
+
+        TacticalOrder moveOrder{};
+        moveOrder.type = TacticalOrderType::MoveAndHold;
+        moveOrder.targetPos = { 100.0f, 85.0f }; // dist 11 from compPos
+        assert(controller.IssueOrder(moveOrder, 1000, compPos, playerPos, cue));
+
+        Vec2 outTarget{};
+        // En route: returns true to dispatch movement
+        assert(controller.Evaluate(compPos, playerPos, 1100, false, outTarget, cue));
+        assert(outTarget.x == 100.0f && outTarget.y == 85.0f);
+        assert(cue == TacticalVoiceCue::None);
+
+        // Arrived within deadband (<= 2.0 sub-tiles): returns false to hold ground stably
+        const Vec2 compArrived{ 100.0f, 86.0f }; // dist 1.0 from target
+        assert(!controller.Evaluate(compArrived, playerPos, 1200, false, outTarget, cue));
+        assert(controller.IsActive()); // Still active holding position!
+
+        // Defensive hold order: always returns false to hold current ground
+        TacticalOrder holdOrder{};
+        holdOrder.type = TacticalOrderType::DefensiveHold;
+        assert(controller.IssueOrder(holdOrder, 1300, compPos, playerPos, cue));
+        assert(!controller.Evaluate(compPos, playerPos, 1400, false, outTarget, cue));
+        assert(controller.IsActive());
+
+        // CancelOrder resets state
+        controller.CancelOrder();
+        assert(!controller.IsActive());
+        assert(!controller.Evaluate(compPos, playerPos, 1500, false, outTarget, cue));
+    }
+
+    // =========================================================================
+    // 24. Phase 6: Tactical Order Auto-Cancel by Retreat and Leash Break
+    // =========================================================================
+    {
+        using namespace framevr::companionai;
+        TacticalOrderController controller;
+        const Vec2 playerPos{ 100.0f, 100.0f };
+        const Vec2 compPos{ 100.0f, 96.0f };
+        TacticalVoiceCue cue = TacticalVoiceCue::None;
+
+        // Auto-cancel 1: Companion health drops below 50% (inRetreat = true)
+        TacticalOrder moveOrder{};
+        moveOrder.type = TacticalOrderType::MoveAndHold;
+        moveOrder.targetPos = { 100.0f, 85.0f };
+        assert(controller.IssueOrder(moveOrder, 1000, compPos, playerPos, cue));
+        assert(controller.IsActive());
+
+        Vec2 outTarget{};
+        // Companion enters critical retreat: order must be auto-cancelled immediately!
+        assert(!controller.Evaluate(compPos, playerPos, 1100, true, outTarget, cue));
+        assert(cue == TacticalVoiceCue::Distress);
+        assert(!controller.IsActive()); // Order aborted!
+
+        // Auto-cancel 2: Player moves away and distance exceeds leash (> 40 sub-tiles)
+        assert(controller.IssueOrder(moveOrder, 1200, compPos, playerPos, cue));
+        assert(controller.IsActive());
+
+        const Vec2 playerFar{ 100.0f, 150.0f }; // Player ran 50 sub-tiles away
+        assert(!controller.Evaluate(compPos, playerFar, 1300, false, outTarget, cue));
+        assert(cue == TacticalVoiceCue::RegroupLeash);
+        assert(!controller.IsActive()); // Leash broke hold order!
+
+        // Auto-cancel 3: Order duration timeout
+        TacticalOrder timedOrder{};
+        timedOrder.type = TacticalOrderType::DefensiveHold;
+        timedOrder.holdDurationMs = 5000; // 5s duration
+        assert(controller.IssueOrder(timedOrder, 2000, compPos, playerPos, cue));
+        assert(controller.IsActive());
+
+        // At 4s: still active
+        assert(!controller.Evaluate(compPos, playerPos, 6000, false, outTarget, cue));
+        assert(controller.IsActive());
+
+        // At 7.1s (> 5s): timed out!
+        assert(!controller.Evaluate(compPos, playerPos, 7100, false, outTarget, cue));
+        assert(cue == TacticalVoiceCue::RegroupLeash);
+        assert(!controller.IsActive());
+    }
+
     return 0;
 }

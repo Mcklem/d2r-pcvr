@@ -202,3 +202,4 @@ To provide unambiguous spatial feedback in VR, an active tactical command render
 ### Phase 5: In-Headset Calibration & Verification
 - Test in Meta Quest 3 across Act 1 Catacombs and Blood Moor.
 - Validate audio responsiveness and leash auto-cancels.
+

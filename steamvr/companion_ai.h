@@ -67,6 +67,50 @@ inline int GetArchetypeDistressSound(uint16_t classId) {
     }
 }
 
+// Tactical voice cues for gesture-based commands
+enum class TacticalVoiceCue : uint8_t {
+    None = 0,
+    Impossible,    // Command rejected / unreachable / out of leash / retreating
+    MoveConfirm,   // Acknowledged MoveAndHold
+    AttackConfirm, // Acknowledged PrioritizeEnemy
+    HoldConfirm,   // Acknowledged DefensiveHold
+    RegroupLeash,  // Auto-cancelled hold by leash break
+    Distress       // Critical health < 50%
+};
+
+// Maps hireling class and tactical voice cue to native sounds.txt row
+inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
+    if (cue == TacticalVoiceCue::None) return 0;
+    if (cue == TacticalVoiceCue::Distress) return GetArchetypeDistressSound(classId);
+
+    // sounds.txt row indices per character archetype:
+    // Amazon base: 2937, Barbarian base: 3015, Necromancer base: 3093, Paladin base: 3171
+    int base = 3171; // Default to Paladin
+    switch (classId) {
+        case MonStatsIndex::Rogue:      base = 2937; break; // Amazon
+        case MonStatsIndex::Desert:     base = 3171; break; // Paladin
+        case MonStatsIndex::IronWolf:   base = 3093; break; // Necromancer
+        case MonStatsIndex::Barbarian1:
+        case MonStatsIndex::Barbarian2: base = 3015; break; // Barbarian
+        default:                        base = 3171; break;
+    }
+
+    switch (cue) {
+        case TacticalVoiceCue::Impossible:
+            return base + 3;
+        case TacticalVoiceCue::MoveConfirm:
+            return base + 1;
+        case TacticalVoiceCue::AttackConfirm:
+            return base + 2;
+        case TacticalVoiceCue::HoldConfirm:
+            return base + 6;
+        case TacticalVoiceCue::RegroupLeash:
+            return base + 1;
+        default:
+            return 0;
+    }
+}
+
 enum class Archetype {
     MeleeVanguard,   // Act 2 (Desert), Act 5 (Barbarians)
     RangedOverwatch  // Act 1 (Rogue), Act 3 (Iron Wolf)
@@ -657,6 +701,147 @@ struct TacticalFormationController {
         lastTargetPos = {};
         inTacticalMove = false;
     }
+};
+
+// Phase 6: Gesture-Based Tactical Commands (Point & Hold)
+enum class TacticalOrderType : uint8_t {
+    None = 0,         // Autonomous mode: standard formations and peeling
+    MoveAndHold,      // March to target ground coordinate and hold defensive ground
+    PrioritizeEnemy,  // Focus attack exclusively on a specific monster entity
+    DefensiveHold     // Cease movement and lock current ground position
+};
+
+struct TacticalOrder {
+    TacticalOrderType type = TacticalOrderType::None;
+    uint32_t targetUnitId = 0;       // Unit ID if type == PrioritizeEnemy
+    Vec2 targetPos{};                // Sub-tile world coordinates
+    uintptr_t targetRoom = 0;        // D2RoomStrc pointer
+    uint64_t issuedMs = 0;           // Timestamp of command issuance
+    uint64_t holdDurationMs = 0;     // 0 = indefinite until leash break or cancel
+    bool operator==(const TacticalOrder&) const = default;
+};
+
+struct TacticalOrderController {
+    TacticalOrder activeOrder{};
+    uint64_t lastOrderMs = 0;
+    bool inTacticalOrder = false;
+
+    // Issues an order. Validates leash distance.
+    // Returns true if accepted (outCue set to confirmation cue),
+    // or false if rejected (outCue set to TacticalVoiceCue::Impossible).
+    bool IssueOrder(const TacticalOrder& order, uint64_t nowMs, Vec2 compPos, Vec2 playerPos, TacticalVoiceCue& outCue, bool inRetreat = false) {
+        if (inRetreat) {
+            outCue = TacticalVoiceCue::Impossible;
+            return false;
+        }
+
+        const float compDistToPlayer = std::hypot(compPos.x - playerPos.x, compPos.y - playerPos.y);
+        if (compDistToPlayer > float(ElasticCombatLeashDistance)) {
+            outCue = TacticalVoiceCue::Impossible;
+            return false;
+        }
+
+        if (order.type == TacticalOrderType::MoveAndHold || order.type == TacticalOrderType::PrioritizeEnemy) {
+            const float targetDistToPlayer = std::hypot(order.targetPos.x - playerPos.x, order.targetPos.y - playerPos.y);
+            if (targetDistToPlayer > float(ElasticCombatLeashDistance)) {
+                outCue = TacticalVoiceCue::Impossible;
+                return false;
+            }
+        }
+
+        activeOrder = order;
+        activeOrder.issuedMs = nowMs;
+        lastOrderMs = nowMs;
+        inTacticalOrder = (order.type != TacticalOrderType::None);
+
+        switch (order.type) {
+            case TacticalOrderType::MoveAndHold:
+                outCue = TacticalVoiceCue::MoveConfirm;
+                break;
+            case TacticalOrderType::PrioritizeEnemy:
+                outCue = TacticalVoiceCue::AttackConfirm;
+                break;
+            case TacticalOrderType::DefensiveHold:
+                outCue = TacticalVoiceCue::HoldConfirm;
+                break;
+            default:
+                outCue = TacticalVoiceCue::None;
+                break;
+        }
+        return true;
+    }
+
+    void CancelOrder() {
+        activeOrder = {};
+        inTacticalOrder = false;
+    }
+
+    // Evaluates the active order on tick.
+    // Returns true if a pathMove should be dispatched to outTarget.
+    // If order is cancelled (e.g. leash exceeded or retreat entered), sets outCue appropriately.
+    bool Evaluate(Vec2 compPos, Vec2 playerPos, uint64_t nowMs, bool inRetreat, Vec2& outTarget, TacticalVoiceCue& outCue) {
+        outCue = TacticalVoiceCue::None;
+        if (!inTacticalOrder || activeOrder.type == TacticalOrderType::None) {
+            return false;
+        }
+
+        // Priority 1: Critical health retreat aborts tactical orders immediately
+        if (inRetreat) {
+            CancelOrder();
+            outCue = TacticalVoiceCue::Distress;
+            return false;
+        }
+
+        // Priority 2: Elastic leash auto-cancel (> 40 sub-tiles from player)
+        const float compDistToPlayer = std::hypot(compPos.x - playerPos.x, compPos.y - playerPos.y);
+        if (compDistToPlayer > float(ElasticCombatLeashDistance)) {
+            CancelOrder();
+            outCue = TacticalVoiceCue::RegroupLeash;
+            return false;
+        }
+
+        if (activeOrder.type == TacticalOrderType::MoveAndHold || activeOrder.type == TacticalOrderType::PrioritizeEnemy) {
+            const float targetDistToPlayer = std::hypot(activeOrder.targetPos.x - playerPos.x, activeOrder.targetPos.y - playerPos.y);
+            if (targetDistToPlayer > float(ElasticCombatLeashDistance)) {
+                CancelOrder();
+                outCue = TacticalVoiceCue::RegroupLeash;
+                return false;
+            }
+        }
+
+        // Priority 3: Optional timeout duration
+        if (activeOrder.holdDurationMs > 0 && (nowMs - activeOrder.issuedMs) >= activeOrder.holdDurationMs) {
+            CancelOrder();
+            outCue = TacticalVoiceCue::RegroupLeash;
+            return false;
+        }
+
+        // Priority 4: Movement dispatch
+        if (activeOrder.type == TacticalOrderType::MoveAndHold) {
+            const float distToTarget = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
+            // Arrival deadband: 2.0 sub-tiles
+            if (distToTarget <= 2.0f) {
+                return false; // Arrived; hold position without thrashing path calls
+            }
+            outTarget = activeOrder.targetPos;
+            return true;
+        }
+
+        if (activeOrder.type == TacticalOrderType::PrioritizeEnemy) {
+            outTarget = activeOrder.targetPos;
+            return true;
+        }
+
+        if (activeOrder.type == TacticalOrderType::DefensiveHold) {
+            return false; // Hold current position
+        }
+
+        return false;
+    }
+
+    bool IsActive() const { return inTacticalOrder && activeOrder.type != TacticalOrderType::None; }
+    const TacticalOrder& GetOrder() const { return activeOrder; }
+    TacticalOrderType GetOrderType() const { return activeOrder.type; }
 };
 
 struct HirelingBaseline {
