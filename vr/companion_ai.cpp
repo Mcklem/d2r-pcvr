@@ -366,51 +366,64 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                 framevr::telegraph::Current().Place(activeOrder.targetPos.x, activeOrder.targetPos.y, nowMs, 3000, 3, 1.8f);
             }
 
-            if (dispatchTactical) {
-                int targetX = int(std::round(tacticalTarget.x));
-                int targetY = int(std::round(tacticalTarget.y));
+            const auto arch = framevr::companionai::GetHirelingArchetype(uint16_t(classId));
+            const bool isRanged = (arch == framevr::companionai::Archetype::RangedOverwatch);
+            const float attackEngagementRange = isRanged ? 12.0f : 2.5f;
 
-                // If prioritizing an enemy, track the enemy's live position
-                if (activeOrder.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && activeOrder.targetUnitId) {
-                    uintptr_t enemy = melee::ServerUnit(game, 1, activeOrder.targetUnitId);
-                    if (enemy) {
-                        uint32_t enemyHeader[4]{};
-                        if (Read(enemy, enemyHeader) && enemyHeader[3] != 0 && enemyHeader[3] != 12) {
-                            float ex = 0.0f, ey = 0.0f;
-                            if (ReadPosition(enemy, ex, ey)) {
-                                targetX = int(std::round(ex));
-                                targetY = int(std::round(ey));
+            float targetX = tacticalTarget.x;
+            float targetY = tacticalTarget.y;
+
+            if (activeOrder.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && activeOrder.targetUnitId) {
+                uintptr_t enemy = melee::ServerUnit(game, 1, activeOrder.targetUnitId);
+                if (enemy) {
+                    uint32_t enemyHeader[4]{};
+                    if (Read(enemy, enemyHeader) && enemyHeader[3] != 0 && enemyHeader[3] != 12) {
+                        float ex = 0.0f, ey = 0.0f;
+                        if (ReadPosition(enemy, ex, ey)) {
+                            targetX = ex;
+                            targetY = ey;
+                            const float distToEnemy = std::hypot(ex - compPos.x, ey - compPos.y);
+                            if (distToEnemy <= attackEngagementRange) {
+                                // Within effective attack range: stop walking so combat AI engages
+                                dispatchTactical = false;
                             }
-                        } else {
-                            // Target enemy is dead; cancel order
-                            CancelTacticalOrder();
-                            return;
                         }
                     } else {
-                        // Target enemy despawned; cancel order
+                        // Target enemy is dead; cancel order
                         CancelTacticalOrder();
                         return;
                     }
+                } else {
+                    // Target enemy despawned; cancel order
+                    CancelTacticalOrder();
+                    return;
                 }
+            }
 
-                uintptr_t targetRoom = 0;
-                if (roomPointFn) {
-                    targetRoom = roomPointFn(playerRoom, targetX, targetY);
-                }
-                if (!targetRoom) {
-                    targetRoom = playerRoom;
-                }
+            if (dispatchTactical) {
+                const float dx = targetX - compPos.x;
+                const float dy = targetY - compPos.y;
+                const float dist = std::hypot(dx, dy);
 
-                uintptr_t compPath = 0;
-                if (Read(hireling + 0x38, compPath) && compPath) {
-                    const uint32_t tx = uint32_t(targetX);
-                    const uint32_t ty = uint32_t(targetY);
+                if (dist > 1.5f) {
+                    // Step smoothly along vector towards target (~1.5 units per 250ms = 6 units/sec natural walk)
+                    const float step = std::min(dist, 1.8f);
+                    const int nextX = int(std::round(compPos.x + (dx / dist) * step));
+                    const int nextY = int(std::round(compPos.y + (dy / dist) * step));
 
-                    framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x08), &tx, sizeof(tx));
-                    framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x0C), &ty, sizeof(ty));
+                    uintptr_t targetRoom = 0;
+                    if (roomPointFn) {
+                        targetRoom = roomPointFn(playerRoom, nextX, nextY);
+                    }
+                    if (!targetRoom) {
+                        targetRoom = playerRoom;
+                    }
 
-                    if (targetRoom) {
-                        framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x28), &targetRoom, sizeof(targetRoom));
+                    uintptr_t compPath = 0;
+                    if (pathMoveFn && Read(hireling + 0x38, compPath) && compPath && targetRoom) {
+                        pathMoveFn(compPath, hireling, targetRoom, nextX, nextY);
+                    } else if (relocateFn && targetRoom) {
+                        relocateFn(game, hireling, targetRoom, nextX, nextY, 1, 0);
                     }
 
                     // Start walk animation if not currently walking or running
@@ -423,11 +436,16 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                     g_tacticalCommandEvents.fetch_add(1, std::memory_order_relaxed);
                     char line[180];
                     std::snprintf(line, sizeof line,
-                        "Frame companion AI: walking to tactical target (type=%d) -> (%d, %d)",
-                        int(g_tacticalOrderController.GetOrderType()), targetX, targetY);
+                        "Frame companion AI: stepping to tactical target (type=%d dist=%.1f) -> step (%d, %d)",
+                        int(g_tacticalOrderController.GetOrderType()), dist, nextX, nextY);
                     framevr::logging::Write(line);
+                } else {
+                    // Arrived within target zone
+                    dispatchTactical = false;
                 }
-            } else {
+            }
+
+            if (!dispatchTactical) {
                 // Arrived at destination or in combat engagement range!
                 // Reset from walk mode to neutral so combat AI or idle animation can execute
                 uint32_t animMode = 0;
