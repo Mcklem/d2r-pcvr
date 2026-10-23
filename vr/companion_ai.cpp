@@ -327,7 +327,7 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
             AcquireSRWLockExclusive(&g_tacticalLock);
             isTacticalActive = g_tacticalOrderController.IsActive();
             if (isTacticalActive) {
-                dispatchTactical = g_tacticalOrderController.Evaluate(compPos, plyrPos, nowMs, inRetreat, tacticalTarget, voiceCue);
+                dispatchTactical = g_tacticalOrderController.Evaluate(compPos, plyrPos, nowMs, inRetreat, tacticalTarget, voiceCue, health, maxHealth);
             }
             ReleaseSRWLockExclusive(&g_tacticalLock);
         }
@@ -344,7 +344,7 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                 ReleaseSRWLockShared(&g_tacticalLock);
             }
             if (activeOrder.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
-                framevr::telegraph::Current().Place(activeOrder.targetPos.x * 0.5f, activeOrder.targetPos.y * 0.5f, nowMs, 3000, 3, 1.8f);
+                framevr::telegraph::Current().Place(activeOrder.targetPos.x, activeOrder.targetPos.y, nowMs, 3000, 3, 1.8f);
             }
 
             if (dispatchTactical) {
@@ -609,7 +609,7 @@ bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order) {
 
     {
         AcquireSRWLockExclusive(&g_tacticalLock);
-        accepted = g_tacticalOrderController.IssueOrder(order, nowMs, {cx, cy}, {px, py}, cue, inRetreat);
+        accepted = g_tacticalOrderController.IssueOrder(order, nowMs, {cx, cy}, {px, py}, cue, inRetreat, health, maxHealth);
         ReleaseSRWLockExclusive(&g_tacticalLock);
     }
 
@@ -618,7 +618,7 @@ bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order) {
     }
 
     if (accepted && order.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
-        framevr::telegraph::Current().Place(order.targetPos.x * 0.5f, order.targetPos.y * 0.5f, nowMs, 6000, 3, 1.8f);
+        framevr::telegraph::Current().Place(order.targetPos.x, order.targetPos.y, nowMs, 6000, 3, 1.8f);
     }
 
     return accepted;

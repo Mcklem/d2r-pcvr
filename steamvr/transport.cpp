@@ -1766,42 +1766,42 @@ void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftT
         if (gripClick && handAimTracked[h]) {
             const math::Vec rayOrigin = handAim[h].p;
             const math::Vec rayDir = math::Rotate(handAim[h].q, {0, 0, -1});
-            const math::Vec worldDir = stageWorld.valid ? math::Rotate(stageWorld.base, rayDir) : rayDir;
+            const auto& tossStage = interactionInput.stage;
+            const bool tossWorld = interactionInput.floorKnown && tossStage.known && stageWorld.upm >= 1.0f && stageWorld.upm <= 12.0f;
+            const float tossFloor = tossStage.anchor.y + (interactionInput.floor - tossStage.origin.y);
+            const auto worldP = tossStage.known ? tossStage.World(rayOrigin) : (stageWorld.valid ? (stageWorld.hero + math::Rotate(stageWorld.base, rayOrigin)) : rayOrigin);
+            const auto worldV = tossStage.known ? math::Rotate(tossStage.base, rayDir) : (stageWorld.valid ? math::Rotate(stageWorld.base, rayDir) : rayDir);
 
             int picked = -1;
             const auto snapshot = targetlock::Get();
             if (snapshot.count > 0 && snapshot.at > 0 && (now - snapshot.at <= 500)) {
-                picked = framevr::targetcone::Pick(snapshot.targets, snapshot.count, snapshot.heroX, snapshot.heroY, worldDir.x, worldDir.z, 0);
+                picked = framevr::targetcone::Pick(snapshot.targets, snapshot.count, snapshot.heroX, snapshot.heroY, worldV.x, worldV.z, 0);
             }
 
             if (picked >= 0) {
                 framevr::companionai::TacticalOrder order;
                 order.type = framevr::companionai::TacticalOrderType::PrioritizeEnemy;
                 order.targetUnitId = snapshot.targets[picked].id;
-                order.targetPos = { snapshot.targets[picked].x * 2.0f, snapshot.targets[picked].y * 2.0f };
+                order.targetPos = { snapshot.targets[picked].x, snapshot.targets[picked].y };
                 if (::companionai::IssueTacticalOrder(order)) {
                     MotionPulse(h, haptics::Category::Interaction, 0.45f, 40000000);
                     char line[128];
-                    std::snprintf(line, sizeof line, "Frame companion tactical: prioritized monster unit=%u", order.targetUnitId);
+                    std::snprintf(line, sizeof line, "Frame companion tactical: prioritized monster unit=%u at (%.1f, %.1f)", order.targetUnitId, order.targetPos.x, order.targetPos.y);
                     Say(line);
                 }
-            } else if (stageWorld.valid && stageWorld.upm >= 1.0f && interactionInput.floorKnown) {
-                const float floorY = interactionInput.floor;
-                const math::Vec worldOrigin = stageWorld.origin + math::Rotate(stageWorld.base, rayOrigin);
-                if (worldDir.y < -1e-4f && worldOrigin.y > floorY) {
-                    const float t = (floorY - worldOrigin.y) / worldDir.y;
-                    const math::Vec hit = worldOrigin + worldDir * t;
-                    float gx = 0, gy = 0;
-                    if (toss::Cell(hit, floorY, stageWorld.upm, gx, gy)) {
-                        framevr::companionai::TacticalOrder order;
-                        order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
-                        order.targetPos = { gx * 2.0f, gy * 2.0f };
-                        if (::companionai::IssueTacticalOrder(order)) {
-                            MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
-                            char line[128];
-                            std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", order.targetPos.x, order.targetPos.y);
-                            Say(line);
-                        }
+            } else if (tossWorld && worldV.y < -1e-4f && worldP.y > tossFloor) {
+                const float t = (tossFloor - worldP.y) / worldV.y;
+                const math::Vec hit = worldP + worldV * t;
+                float gx = 0, gy = 0;
+                if (toss::Cell(hit, tossFloor, stageWorld.upm, gx, gy)) {
+                    framevr::companionai::TacticalOrder order;
+                    order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
+                    order.targetPos = { gx, gy };
+                    if (::companionai::IssueTacticalOrder(order)) {
+                        MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
+                        char line[128];
+                        std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", gx, gy);
+                        Say(line);
                     }
                 }
             }

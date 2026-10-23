@@ -3661,9 +3661,10 @@ bool RulesAimCast() {
 // Kept only while something uses a target: the outline or a spell lock.
 namespace mobaim {
 bool Wanted() {
+    const bool tacticalActive = companionai::IsTacticalCommandsEnabled();
     return g_enabled.load() && g_inWorld.load() &&
         (TargetHighlightOn() || SpellsLocked() || BowSkillsLocked() ||
-         GroundAimMode() == 2);
+         GroundAimMode() == 2 || tacticalActive);
 }
 void Tick() {
     const bool wanted = Wanted();
@@ -3685,7 +3686,7 @@ void Tick() {
     // From the settings alone, so loading screens and menus don't flip it.
     // Aim follows your view is not counted (aimrules::Any): it only changes which
     // monster the picks take, so with nothing using them it has nothing to do.
-    const bool resting = !TargetHighlightOn() && !framevr::aimrules::Any(aimtargets::Options());
+    const bool resting = !TargetHighlightOn() && !framevr::aimrules::Any(aimtargets::Options()) && !companionai::IsTacticalCommandsEnabled();
     static bool rested = false;
     if (resting != rested) {
         rested = resting;
@@ -8580,14 +8581,20 @@ bool ShieldDebugWanted() {
 bool OutlineWanted() {
 #ifdef D2RVR_NATIVE_OPENXR
     aimtargets::Shown shown[2];
-    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() && TargetHighlightOn() && aimtargets::ShownTargets(shown) > 0;
+    const bool tacticalActive = companionai::IsTacticalCommandsEnabled() &&
+        (companionai::GetActiveTacticalOrder().type == framevr::companionai::TacticalOrderType::PrioritizeEnemy);
+    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() &&
+        (TargetHighlightOn() || tacticalActive) && aimtargets::ShownTargets(shown) > 0;
 #else
     return false;
 #endif
 }
 // Landing circles (same pass): while any ground skill's circle is showing.
 bool RingWanted() {
-    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() && AimOn(framevr::settings::LandingCircles) &&
+    const bool tacticalActive = companionai::IsTacticalCommandsEnabled() &&
+        (companionai::GetActiveTacticalOrder().type == framevr::companionai::TacticalOrderType::MoveAndHold);
+    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() &&
+        (AimOn(framevr::settings::LandingCircles) || tacticalActive) &&
         framevr::telegraph::AnyOn(framevr::telegraph::Current().Get(), GetTickCount64());
 }
 

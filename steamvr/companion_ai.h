@@ -81,7 +81,11 @@ enum class TacticalVoiceCue : uint8_t {
 // Maps hireling class and tactical voice cue to native sounds.txt row
 inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
     if (cue == TacticalVoiceCue::None) return 0;
-    if (cue == TacticalVoiceCue::Distress) return GetArchetypeDistressSound(classId);
+
+    static std::atomic<unsigned> g_voiceVariation{0};
+    const unsigned var = g_voiceVariation.fetch_add(1, std::memory_order_relaxed) & 1;
+
+    if (cue == TacticalVoiceCue::Distress) return GetArchetypeDistressSound(classId) + int(var);
 
     // sounds.txt row indices per character archetype:
     // Amazon base: 2937, Barbarian base: 3015, Necromancer base: 3093, Paladin base: 3171
@@ -97,15 +101,15 @@ inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
 
     switch (cue) {
         case TacticalVoiceCue::Impossible:
-            return base + 3;
+            return base + 16 + int(var); // impossible_1 (ama_impossible) / impossible_2 (ama_cant)
         case TacticalVoiceCue::MoveConfirm:
-            return base + 1;
+            return base + 2 + int(var);  // chat_b_1 (ama_followme) / chat_b_2 (ama_comeon)
         case TacticalVoiceCue::AttackConfirm:
-            return base + 2;
+            return base + 12 + int(var); // chat_g_1 (ama_die) / chat_g_2 (ama_timetodie)
         case TacticalVoiceCue::HoldConfirm:
-            return base + 6;
+            return base + 6 + int(var);  // chat_d_1 (ama_thanks) / chat_d_2 (ama_thankyou)
         case TacticalVoiceCue::RegroupLeash:
-            return base + 1;
+            return base + 2 + int(var);  // chat_b_1 / chat_b_2
         default:
             return 0;
     }
@@ -729,8 +733,8 @@ struct TacticalOrderController {
     // Issues an order. Validates leash distance.
     // Returns true if accepted (outCue set to confirmation cue),
     // or false if rejected (outCue set to TacticalVoiceCue::Impossible).
-    bool IssueOrder(const TacticalOrder& order, uint64_t nowMs, Vec2 compPos, Vec2 playerPos, TacticalVoiceCue& outCue, bool inRetreat = false) {
-        if (inRetreat) {
+    bool IssueOrder(const TacticalOrder& order, uint64_t nowMs, Vec2 compPos, Vec2 playerPos, TacticalVoiceCue& outCue, bool inRetreat = false, float health = 0.0f, float maxHealth = 0.0f) {
+        if (inRetreat || IsCriticalHealth(health, maxHealth)) {
             outCue = TacticalVoiceCue::Impossible;
             return false;
         }
@@ -779,14 +783,14 @@ struct TacticalOrderController {
     // Evaluates the active order on tick.
     // Returns true if a pathMove should be dispatched to outTarget.
     // If order is cancelled (e.g. leash exceeded or retreat entered), sets outCue appropriately.
-    bool Evaluate(Vec2 compPos, Vec2 playerPos, uint64_t nowMs, bool inRetreat, Vec2& outTarget, TacticalVoiceCue& outCue) {
+    bool Evaluate(Vec2 compPos, Vec2 playerPos, uint64_t nowMs, bool inRetreat, Vec2& outTarget, TacticalVoiceCue& outCue, float health = 0.0f, float maxHealth = 0.0f) {
         outCue = TacticalVoiceCue::None;
         if (!inTacticalOrder || activeOrder.type == TacticalOrderType::None) {
             return false;
         }
 
         // Priority 1: Critical health retreat aborts tactical orders immediately
-        if (inRetreat) {
+        if (inRetreat || IsCriticalHealth(health, maxHealth)) {
             CancelOrder();
             outCue = TacticalVoiceCue::Distress;
             return false;
