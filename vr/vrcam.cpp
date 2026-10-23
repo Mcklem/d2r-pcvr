@@ -999,6 +999,7 @@ void LoadSettings() {
         IniF(L"gameplay",L"companion_ai",1.0f)))!=0&&g_set.platform.load()==1);
     companionai::ConfigureDistressSound((int)IniF(L"gameplay",L"companion_distress_sound",1));
     companionai::ConfigurePeel(IniF(L"gameplay",L"companion_peel",1.0f)!=0.0f);
+    companionai::ConfigureTacticalCommands(IniF(L"gameplay",L"companion_tactical_commands",1.0f)!=0.0f);
 #endif
 #if D2RVR_FIRST_PERSON
     g_set.flatView.store(std::clamp((int)IniF(L"mode", L"flat_view", 3.0f), 1, 3));
@@ -8609,9 +8610,7 @@ bool ApplySkyPictures(reshade::api::effect_runtime* rt) {
         const char* want = g_arcaneSkyReady.load() ? "1" : "0";
         char have[16] = {}; size_t size = sizeof have;
         if (!rt->get_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY_CACHE", have, &size) || strcmp(have, want)) {
-            rt->set_preprocessor_definition_for_effect("D2R_DepthFog.fx", "D2R_ARCANE_SKY_CACHE", want);
-            set = true;
-        }
+            rt->set_preprocessor_de
     }
     for (int a = 1; a <= 6; ++a) {
         AcquireSRWLockShared(&g_skyCfgLock); const SkyAct act = g_skyAct[a]; ReleaseSRWLockShared(&g_skyCfgLock);

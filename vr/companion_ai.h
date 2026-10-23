@@ -1,5 +1,6 @@
 #pragma once
 #include <D2RLPlugin/api.h>
+#include "../steamvr/companion_ai.h"
 
 namespace companionai {
 void Init(const D2RL::PluginContext* ctx);
@@ -13,6 +14,12 @@ unsigned UnstuckCount();
 unsigned TacticalMoveCount();
 void ConfigureDistressSound(int soundId);
 void ConfigurePeel(bool enabled);
+void ConfigureTacticalCommands(bool enabled);
+bool IsTacticalCommandsEnabled();
+unsigned TacticalCommandCount();
+bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order);
+void CancelTacticalOrder();
+framevr::companionai::TacticalOrder GetActiveTacticalOrder();
 void OnPotionReceived();
 bool IsInTacticalRetreat();
 unsigned PeelCount();

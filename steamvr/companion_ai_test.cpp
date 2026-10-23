@@ -940,5 +940,24 @@ int main() {
         assert(!controller.IsActive());
     }
 
+    // =========================================================================
+    // 25. Phase 2: Engine Adapter & Tactical Commands Configuration Tests
+    // =========================================================================
+    {
+        using namespace companionai;
+        ConfigureTacticalCommands(true);
+        assert(IsTacticalCommandsEnabled());
+
+        ConfigureTacticalCommands(false);
+        assert(!IsTacticalCommandsEnabled());
+
+        ConfigureTacticalCommands(true);
+        assert(IsTacticalCommandsEnabled());
+        assert(TacticalCommandCount() == 0);
+
+        CancelTacticalOrder();
+        assert(GetActiveTacticalOrder().type == framevr::companionai::TacticalOrderType::None);
+    }
+
     return 0;
 }

@@ -61,6 +61,10 @@ framevr::companionai::StuckWatchdog g_watchdog;
 framevr::companionai::TacticalFormationController g_formationController;
 framevr::companionai::TacticalRetreatController g_retreatController;
 framevr::companionai::BodyguardController g_bodyguardController;
+std::atomic<bool> g_tacticalCommandsEnabled{true};
+std::atomic<unsigned> g_tacticalCommandEvents{0};
+framevr::companionai::TacticalOrderController g_tacticalOrderController;
+SRWLOCK g_tacticalLock = SRWLOCK_INIT;
 
 template <class T>
 bool Read(uintptr_t p, T& out) {
@@ -161,6 +165,25 @@ void __cdecl DistressSoundCallback(const PluginContext*, void* user) noexcept {
         std::snprintf(line, sizeof line, "Frame companion AI: distress voice sound %d playback %s",
             sound, played ? "succeeded" : "FAILED");
         framevr::logging::Write(line);
+    }
+}
+
+void __cdecl TacticalVoiceCallback(const PluginContext*, void* user) noexcept {
+    const int sound = int(reinterpret_cast<uintptr_t>(user));
+    if (sound > 0) {
+        const bool played = bowvr::PlayHeroSound(sound);
+        char line[128];
+        std::snprintf(line, sizeof line, "Frame companion AI: tactical voice sound %d playback %s",
+            sound, played ? "succeeded" : "FAILED");
+        framevr::logging::Write(line);
+    }
+}
+
+void PlayVoiceCue(uint16_t classId, framevr::companionai::TacticalVoiceCue cue) {
+    if (cue == framevr::companionai::TacticalVoiceCue::None) return;
+    const int sound = framevr::companionai::GetArchetypeVoiceCue(classId, cue);
+    if (sound > 0 && g_threads && g_threads->runOnUiThread) {
+        g_threads->runOnUiThread(g_ctx, &TacticalVoiceCallback, reinterpret_cast<void*>(uintptr_t(sound)));
     }
 }
 
@@ -289,6 +312,53 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                 "Frame companion AI: emergency catch-up triggered (dist=%.1f inRetreat=%d); companion relocated to (%d, %d)",
                 std::hypot(compPos.x - plyrPos.x, compPos.y - plyrPos.y), inRetreat ? 1 : 0, targetX, targetY);
             framevr::logging::Write(line);
+            return;
+        }
+    }
+
+    // 5.5. Gesture-Based Tactical Commands (Point & Hold)
+    if (g_tacticalCommandsEnabled.load()) {
+        framevr::companionai::Vec2 tacticalTarget{};
+        framevr::companionai::TacticalVoiceCue voiceCue = framevr::companionai::TacticalVoiceCue::None;
+        bool dispatchTactical = false;
+        bool isTacticalActive = false;
+        {
+            AcquireSRWLockExclusive(&g_tacticalLock);
+            isTacticalActive = g_tacticalOrderController.IsActive();
+            if (isTacticalActive) {
+                dispatchTactical = g_tacticalOrderController.Evaluate(compPos, plyrPos, nowMs, inRetreat, tacticalTarget, voiceCue);
+            }
+            ReleaseSRWLockExclusive(&g_tacticalLock);
+        }
+
+        if (voiceCue != framevr::companionai::TacticalVoiceCue::None) {
+            PlayVoiceCue(uint16_t(classId), voiceCue);
+        }
+
+        if (isTacticalActive) {
+            if (dispatchTactical) {
+                int targetX = int(std::round(tacticalTarget.x));
+                int targetY = int(std::round(tacticalTarget.y));
+                uintptr_t targetRoom = 0;
+                if (roomPointFn) {
+                    targetRoom = roomPointFn(playerRoom, targetX, targetY);
+                }
+                if (!targetRoom) {
+                    targetRoom = playerRoom;
+                }
+
+                uintptr_t compPath = 0;
+                if (pathMoveFn && Read(hireling + 0x38, compPath) && compPath && targetRoom) {
+                    pathMoveFn(compPath, hireling, targetRoom, targetX, targetY);
+                    g_tacticalCommandEvents.fetch_add(1, std::memory_order_relaxed);
+                    char line[180];
+                    std::snprintf(line, sizeof line,
+                        "Frame companion AI: executing tactical order (type=%d) -> target (%d, %d)",
+                        int(g_tacticalOrderController.GetOrderType()), targetX, targetY);
+                    framevr::logging::Write(line);
+                }
+            }
+            // An active tactical order maintains priority over ambient peeling and squad formations
             return;
         }
     }
@@ -491,6 +561,65 @@ void ConfigureDistressSound(int soundId) {
 
 void ConfigurePeel(bool enabled) {
     g_peelEnabled.store(enabled);
+}
+
+void ConfigureTacticalCommands(bool enabled) {
+    g_tacticalCommandsEnabled.store(enabled);
+}
+
+bool IsTacticalCommandsEnabled() {
+    return g_tacticalCommandsEnabled.load();
+}
+
+unsigned TacticalCommandCount() {
+    return g_tacticalCommandEvents.load(std::memory_order_relaxed);
+}
+
+bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order) {
+    if (!g_tacticalCommandsEnabled.load()) return false;
+    uintptr_t game = 0, player = 0;
+    if (!melee::LocalServer(game, player)) return false;
+
+    float health = 0.0f, maxHealth = 0.0f;
+    uint32_t classId = 0, unitId = 0;
+    if (!melee::HirelingVitals(g_lastHirelingId.load(), health, maxHealth, classId, unitId) || !unitId) return false;
+    g_lastHirelingId.store(unitId);
+
+    uintptr_t hireling = melee::ServerUnit(game, 1, unitId);
+    if (!hireling) return false;
+
+    float cx = 0.0f, cy = 0.0f, px = 0.0f, py = 0.0f;
+    if (!ReadPosition(hireling, cx, cy) || !ReadPosition(player, px, py)) return false;
+
+    const auto nowMs = GetTickCount64();
+    const bool inRetreat = g_retreatController.IsInRetreat();
+    framevr::companionai::TacticalVoiceCue cue = framevr::companionai::TacticalVoiceCue::None;
+    bool accepted = false;
+
+    {
+        AcquireSRWLockExclusive(&g_tacticalLock);
+        accepted = g_tacticalOrderController.IssueOrder(order, nowMs, {cx, cy}, {px, py}, cue, inRetreat);
+        ReleaseSRWLockExclusive(&g_tacticalLock);
+    }
+
+    if (cue != framevr::companionai::TacticalVoiceCue::None) {
+        PlayVoiceCue(uint16_t(classId), cue);
+    }
+
+    return accepted;
+}
+
+void CancelTacticalOrder() {
+    AcquireSRWLockExclusive(&g_tacticalLock);
+    g_tacticalOrderController.CancelOrder();
+    ReleaseSRWLockExclusive(&g_tacticalLock);
+}
+
+framevr::companionai::TacticalOrder GetActiveTacticalOrder() {
+    AcquireSRWLockShared(&g_tacticalLock);
+    const auto order = g_tacticalOrderController.GetOrder();
+    ReleaseSRWLockShared(&g_tacticalLock);
+    return order;
 }
 
 void OnPotionReceived() {

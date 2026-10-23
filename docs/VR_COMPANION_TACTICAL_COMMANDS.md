@@ -178,7 +178,19 @@ To provide unambiguous spatial feedback in VR, an active tactical command render
 
 ---
 
-## 7. Implementation Roadmap
+## 7. Configuration & VR Settings
+
+* **INI Configuration (`d2r_pcvr.ini`):**
+  * `[gameplay] companion_tactical_commands=1`: Master toggle for gesture-based tactical commands.
+    * `1` (Default): Point-and-command and open-palm hold gestures are enabled.
+    * `0` (Disabled): Disables tactical gestures; mercenary operates in standard autonomous VR companion AI mode (squad formations, peeling, and tactical health retreat).
+* **VR Settings Menu Integration:**
+  * Configurable under the **Combat** page of the in-game VR Settings menu under the option **Tactical Commands** (`Enabled` / `Disabled`).
+  * Live status queried via `companionai::IsTacticalCommandsEnabled()`.
+
+---
+
+## 8. Implementation Roadmap
 
 ### Phase 1: Core Tactical State Machine ([`steamvr/companion_ai.h`](../steamvr/companion_ai.h))
 - Implement `TacticalOrderType` and `TacticalOrderController`.
