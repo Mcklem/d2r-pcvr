@@ -777,12 +777,12 @@ int main() {
     // =========================================================================
     {
         using namespace framevr::companionai;
-        // Rogue Scout (Amazon base: 2937)
+        // Rogue Scout (Amazon base: 2937, Dedicated move confirm: 4293/4297 "Sí / Vale")
         assert(GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::None) == 0);
         const int rogueDistress = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Distress);
         assert(rogueDistress == 2937 || rogueDistress == 2938);
         const int rogueMove = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::MoveConfirm);
-        assert(rogueMove == 2937 + 2 || rogueMove == 2937 + 3);
+        assert(rogueMove == 4293 || rogueMove == 4297);
         const int rogueAtk = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::AttackConfirm);
         assert(rogueAtk == 2937 + 12 || rogueAtk == 2937 + 13);
         const int rogueImp = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::Impossible);
@@ -792,23 +792,29 @@ int main() {
         const int rogueReg = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::RegroupLeash);
         assert(rogueReg == 2937 + 2 || rogueReg == 2937 + 3);
 
-        // Desert Guard (Paladin base: 3171)
+        // Desert Guard (Paladin base: 3171, Dedicated move confirm: 3952 "Sí / Vale")
         const int palDist = GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::Distress);
         assert(palDist == 3171 || palDist == 3172);
+        const int palMove = GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::MoveConfirm);
+        assert(palMove == 3952);
         const int palImp = GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::Impossible);
         assert(palImp == 3171 + 16 || palImp == 3171 + 17);
         const int palHold = GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::HoldConfirm);
         assert(palHold == 3171 + 6 || palHold == 3171 + 7);
 
-        // Iron Wolf (Necromancer base: 3093)
+        // Iron Wolf (Necromancer base: 3093, Dedicated move confirm: 4040/4041 "Sí / Vale")
         const int necDist = GetArchetypeVoiceCue(MonStatsIndex::IronWolf, TacticalVoiceCue::Distress);
         assert(necDist == 3093 || necDist == 3094);
+        const int necMove = GetArchetypeVoiceCue(MonStatsIndex::IronWolf, TacticalVoiceCue::MoveConfirm);
+        assert(necMove == 4040 || necMove == 4041);
         const int necImp = GetArchetypeVoiceCue(MonStatsIndex::IronWolf, TacticalVoiceCue::Impossible);
         assert(necImp == 3093 + 16 || necImp == 3093 + 17);
 
-        // Barbarian (Barbarian base: 3015)
+        // Barbarian (Barbarian base: 3015, Dedicated move confirm: 4565 "Sí / Vale")
         const int barbDist = GetArchetypeVoiceCue(MonStatsIndex::Barbarian1, TacticalVoiceCue::Distress);
         assert(barbDist == 3015 || barbDist == 3016);
+        const int barbMove = GetArchetypeVoiceCue(MonStatsIndex::Barbarian1, TacticalVoiceCue::MoveConfirm);
+        assert(barbMove == 4565);
         const int barbImp = GetArchetypeVoiceCue(MonStatsIndex::Barbarian2, TacticalVoiceCue::Impossible);
         assert(barbImp == 3015 + 16 || barbImp == 3015 + 17);
     }

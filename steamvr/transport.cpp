@@ -1763,19 +1763,73 @@ void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftT
         }
 
         // 2. Gesture: Point-and-Command (Point ray + Grip click)
-        if (gripClick && handAimTracked[h]) {
-            const math::Vec rayOrigin = handAim[h].p;
-            const math::Vec rayDir = math::Rotate(handAim[h].q, {0, 0, -1});
+        if (gripClick && (handAimTracked[h] || interactionInput.tracked[h])) {
+            const auto headP = interactionInput.head.p;
+            const auto handP = interactionInput.hand[h].p;
+            const auto eyeToHand = handP - headP;
+            const float eyeDist2 = math::Dot(eyeToHand, eyeToHand);
+
+            // Sightline ray: from the player's view through the hand / index finger tip
+            const math::Vec rayDir = (eyeDist2 > 0.0025f) ? math::Normalized(eyeToHand) : math::Rotate(handAim[h].q, {0, 0, -1});
+            const math::Vec rayOrigin = handP + rayDir * 0.10f; // 10cm forward at index finger tip
+
             const auto& tossStage = interactionInput.stage;
             const bool tossWorld = interactionInput.floorKnown && tossStage.known && stageWorld.upm >= 1.0f && stageWorld.upm <= 12.0f;
             const float tossFloor = tossStage.anchor.y + (interactionInput.floor - tossStage.origin.y);
             const auto worldP = tossStage.known ? tossStage.World(rayOrigin) : (stageWorld.valid ? (stageWorld.hero + math::Rotate(stageWorld.base, rayOrigin)) : rayOrigin);
             const auto worldV = tossStage.known ? math::Rotate(tossStage.base, rayDir) : (stageWorld.valid ? math::Rotate(stageWorld.base, rayDir) : rayDir);
 
+            // Compute ground hit (gx, gy)
+            float gx = 0, gy = 0;
+            bool groundHit = false;
+            if (tossWorld && worldV.y < -1e-4f && worldP.y > tossFloor) {
+                const float t = (tossFloor - worldP.y) / worldV.y;
+                const math::Vec hit = worldP + worldV * t;
+                groundHit = toss::Cell(hit, tossFloor, stageWorld.upm, gx, gy);
+            }
+
             int picked = -1;
             const auto snapshot = targetlock::Get();
-            if (snapshot.count > 0 && snapshot.at > 0 && (now - snapshot.at <= 500)) {
-                picked = framevr::targetcone::Pick(snapshot.targets, snapshot.count, snapshot.heroX, snapshot.heroY, worldV.x, worldV.z, 0);
+
+            // 1. Check if pointed directly at or near a hostile monster
+            if (snapshot.count > 0 && snapshot.at > 0 && (now - snapshot.at <= 800)) {
+                // If ray intersected ground, check proximity to ground hit point (within 3.5 cells)
+                if (groundHit) {
+                    float bestGroundDist = 3.5f;
+                    for (int i = 0; i < snapshot.count; ++i) {
+                        const auto& t = snapshot.targets[i];
+                        const float dist = std::hypot(t.x - gx, t.y - gy);
+                        if (dist < bestGroundDist) {
+                            bestGroundDist = dist;
+                            picked = i;
+                        }
+                    }
+                }
+
+                // If not picked by ground hit proximity, check ray heading cone (within ~30 deg)
+                if (picked < 0) {
+                    const float rayLen = std::hypot(worldV.x, worldV.z);
+                    if (rayLen > 1e-4f) {
+                        const float rnx = worldV.x / rayLen;
+                        const float rny = worldV.z / rayLen;
+                        float bestCross = 4.0f;
+                        for (int i = 0; i < snapshot.count; ++i) {
+                            const auto& t = snapshot.targets[i];
+                            const float dx = t.x - snapshot.heroX;
+                            const float dy = t.y - snapshot.heroY;
+                            const float d = std::hypot(dx, dy);
+                            if (d < 0.5f || d > 35.0f) continue;
+                            const float dot = (dx * rnx + dy * rny) / d;
+                            if (dot > 0.85f) { // ~31 deg cone
+                                const float cross = std::abs(dx * rny - dy * rnx);
+                                if (cross < bestCross) {
+                                    bestCross = cross;
+                                    picked = i;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             if (picked >= 0) {
@@ -1789,20 +1843,15 @@ void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftT
                     std::snprintf(line, sizeof line, "Frame companion tactical: prioritized monster unit=%u at (%.1f, %.1f)", order.targetUnitId, order.targetPos.x, order.targetPos.y);
                     Say(line);
                 }
-            } else if (tossWorld && worldV.y < -1e-4f && worldP.y > tossFloor) {
-                const float t = (tossFloor - worldP.y) / worldV.y;
-                const math::Vec hit = worldP + worldV * t;
-                float gx = 0, gy = 0;
-                if (toss::Cell(hit, tossFloor, stageWorld.upm, gx, gy)) {
-                    framevr::companionai::TacticalOrder order;
-                    order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
-                    order.targetPos = { gx, gy };
-                    if (::companionai::IssueTacticalOrder(order)) {
-                        MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
-                        char line[128];
-                        std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", gx, gy);
-                        Say(line);
-                    }
+            } else if (groundHit) {
+                framevr::companionai::TacticalOrder order;
+                order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
+                order.targetPos = { gx, gy };
+                if (::companionai::IssueTacticalOrder(order)) {
+                    MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
+                    char line[128];
+                    std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", gx, gy);
+                    Say(line);
                 }
             }
         }

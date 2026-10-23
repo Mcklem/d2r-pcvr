@@ -102,8 +102,21 @@ inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
     switch (cue) {
         case TacticalVoiceCue::Impossible:
             return base + 16 + int(var); // impossible_1 (ama_impossible) / impossible_2 (ama_cant)
-        case TacticalVoiceCue::MoveConfirm:
-            return base + 2 + int(var);  // chat_b_1 (ama_followme) / chat_b_2 (ama_comeon)
+        case TacticalVoiceCue::MoveConfirm: {
+            switch (classId) {
+                case MonStatsIndex::Rogue:
+                    return (var == 0) ? 4293 : 4297; // rogue_confirm_a_4 / rogue_confirm_b_4 ("Sí" / "Vale" / "Okay")
+                case MonStatsIndex::Desert:
+                    return 3952;                      // greiz_greeting_inactive_2 ("Sí" / "Vale" / "Okay")
+                case MonStatsIndex::IronWolf:
+                    return (var == 0) ? 4040 : 4041; // ironwolf_yes_1 / ironwolf_yes_2 ("Sí" / "Vale" / "Okay")
+                case MonStatsIndex::Barbarian1:
+                case MonStatsIndex::Barbarian2:
+                    return 4565;                      // qualkehk_greeting_inactive_3 ("Sí" / "Vale" / "Okay")
+                default:
+                    return 3952;
+            }
+        }
         case TacticalVoiceCue::AttackConfirm:
             return base + 12 + int(var); // chat_g_1 (ama_die) / chat_g_2 (ama_timetodie)
         case TacticalVoiceCue::HoldConfirm:

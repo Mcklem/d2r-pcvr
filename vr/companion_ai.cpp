@@ -284,8 +284,14 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
         }
     }
 
-    // 5. Watchdog update (Emergency catch-up for severe geometry traps only)
-    if (g_watchdog.Update(animMode, compPos, plyrPos, nowMs, inRetreat)) {
+    // 5. Watchdog update (Emergency catch-up for severe geometry traps only, suppressed during tactical orders)
+    bool isOrderActiveForWatchdog = false;
+    {
+        AcquireSRWLockShared(&g_tacticalLock);
+        isOrderActiveForWatchdog = g_tacticalOrderController.IsActive();
+        ReleaseSRWLockShared(&g_tacticalLock);
+    }
+    if (!isOrderActiveForWatchdog && g_watchdog.Update(animMode, compPos, plyrPos, nowMs, inRetreat)) {
         const float fx = g_cachedForwardX.load();
         const float fy = g_cachedForwardY.load();
         const auto targetPos = inRetreat
@@ -350,6 +356,19 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
             if (dispatchTactical) {
                 int targetX = int(std::round(tacticalTarget.x));
                 int targetY = int(std::round(tacticalTarget.y));
+
+                // If prioritizing an enemy, track the enemy's live position
+                if (activeOrder.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && activeOrder.targetUnitId) {
+                    uintptr_t enemy = melee::ServerUnit(game, 1, activeOrder.targetUnitId);
+                    if (enemy) {
+                        float ex = 0.0f, ey = 0.0f;
+                        if (ReadPosition(enemy, ex, ey)) {
+                            targetX = int(std::round(ex));
+                            targetY = int(std::round(ey));
+                        }
+                    }
+                }
+
                 uintptr_t targetRoom = 0;
                 if (roomPointFn) {
                     targetRoom = roomPointFn(playerRoom, targetX, targetY);
@@ -359,13 +378,35 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                 }
 
                 uintptr_t compPath = 0;
-                if (pathMoveFn && Read(hireling + 0x38, compPath) && compPath && targetRoom) {
-                    pathMoveFn(compPath, hireling, targetRoom, targetX, targetY);
+                if (Read(hireling + 0x38, compPath) && compPath) {
+                    uint32_t curTargetX = 0, curTargetY = 0;
+                    Read(compPath + 0x08, curTargetX);
+                    Read(compPath + 0x0C, curTargetY);
+
+                    // If curTargetX is in sub-tiles (> ~8000), write sub-tiles; else write grid cells
+                    const bool isSubtile = (curTargetX > 8000 || curTargetX > uint32_t(targetX * 1.5f));
+                    const uint32_t tx = isSubtile ? uint32_t(targetX * 2) : uint32_t(targetX);
+                    const uint32_t ty = isSubtile ? uint32_t(targetY * 2) : uint32_t(targetY);
+
+                    framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x08), &tx, sizeof(tx));
+                    framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x0C), &ty, sizeof(ty));
+
+                    if (targetRoom) {
+                        framevr::WriteMemory(reinterpret_cast<void*>(compPath + 0x28), &targetRoom, sizeof(targetRoom));
+                    }
+
+                    // If companion is idle, start walk animation
+                    uint32_t animMode = 0;
+                    if (Read(hireling + 0x0C, animMode) && (animMode == 1 || animMode == 5)) {
+                        uint32_t walkMode = 2; // MONMODE_WALK
+                        framevr::WriteMemory(reinterpret_cast<void*>(hireling + 0x0C), &walkMode, sizeof(walkMode));
+                    }
+
                     g_tacticalCommandEvents.fetch_add(1, std::memory_order_relaxed);
                     char line[180];
                     std::snprintf(line, sizeof line,
-                        "Frame companion AI: executing tactical order (type=%d) -> target (%d, %d)",
-                        int(g_tacticalOrderController.GetOrderType()), targetX, targetY);
+                        "Frame companion AI: walking to tactical target (type=%d) -> (%d, %d) [dwTarget: %u, %u]",
+                        int(g_tacticalOrderController.GetOrderType()), targetX, targetY, tx, ty);
                     framevr::logging::Write(line);
                 }
             }
