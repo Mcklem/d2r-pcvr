@@ -999,7 +999,8 @@ void LoadSettings() {
         IniF(L"gameplay",L"companion_ai",1.0f)))!=0&&g_set.platform.load()==1);
     companionai::ConfigureDistressSound((int)IniF(L"gameplay",L"companion_distress_sound",1));
     companionai::ConfigurePeel(IniF(L"gameplay",L"companion_peel",1.0f)!=0.0f);
-    companionai::ConfigureTacticalCommands(IniF(L"gameplay",L"companion_tactical_commands",1.0f)!=0.0f);
+    companionai::ConfigureTacticalCommands(int(framevr::settings::Normalize(framevr::settings::CompanionTactical,
+        IniF(L"gameplay",L"companion_tactical_commands",1.0f)))!=0&&g_set.platform.load()==1);
 #endif
 #if D2RVR_FIRST_PERSON
     g_set.flatView.store(std::clamp((int)IniF(L"mode", L"flat_view", 3.0f), 1, 3));

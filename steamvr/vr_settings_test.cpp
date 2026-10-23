@@ -326,7 +326,7 @@ int main(){
         thrust.Click(hit);Check(thrust.Get()[MeleeThrustSpeed]==2.25f,"thrust speed adjusts in quarter steps");
         const auto request=thrust.Click({Kind::Apply});
         Check(request.changed==(ChangeMask{1}<<MeleeThrustSpeed),"thrust edit does not change swing speed or combat rules");
-        Check(RowCount(Page::Combat)==9&&RowKey(Page::Combat,3)==ShieldBashSpeed,"nine Combat rows retain independent bash speed; parry window is fixed");
+        Check(RowCount(Page::Combat)==10&&RowKey(Page::Combat,3)==ShieldBashSpeed,"ten Combat rows retain independent bash speed; parry window is fixed");
         Check(Normalize(MeleeThrustSpeed,NAN)==2&&Normalize(MeleeThrustSpeed,0)==.75f&&Normalize(MeleeThrustSpeed,99)==10,"thrust speed has finite usable bounds");
     }
     {Model strain;strain.Open(s);strain.Click({Kind::Tab,int(Page::Combat)});
@@ -596,6 +596,22 @@ int main(){
         Check(companion.Get()[CompanionAi]==1,"increase selects Enabled (1)");
         companion.Click(At(companion,Page::Combat,Decrease(8)));
         Check(companion.Click({Kind::Apply}).changed==(ChangeMask{1}<<CompanionAi),"companion AI saves only its own setting");
+    }
+    {Model tactical;tactical.Open(s);tactical.Click({Kind::Tab,int(Page::Combat)});
+        Check(s.values[CompanionTactical]==1&&RowKey(Page::Combat,9)==CompanionTactical,"companion tactical is the tenth Combat row, Enabled by default");
+        Check(ValueBox(9).y+ValueBox(9).h<=860,"companion tactical row avoids Combat footer");
+        Check(Normalize(CompanionTactical,NAN)==1&&Normalize(CompanionTactical,0)==0&&Normalize(CompanionTactical,1)==1&&Normalize(CompanionTactical,2)==1,"companion tactical normalizes to binary choice");
+        Check(std::string(HelpChoice(CompanionTactical,1).name)=="Enabled"&&std::string(HelpChoice(CompanionTactical,0).name)=="Disabled","companion tactical choices are named Enabled and Disabled");
+        tactical.Click(At(tactical,Page::Combat,ValueBox(9)));
+        Check(tactical.Get()[CompanionTactical]==0,"clicking value toggles to Disabled (0)");
+        tactical.Click(At(tactical,Page::Combat,ValueBox(9)));
+        Check(tactical.Get()[CompanionTactical]==1,"clicking value toggles back to Enabled (1)");
+        tactical.Click(At(tactical,Page::Combat,Decrease(9)));
+        Check(tactical.Get()[CompanionTactical]==0,"decrease selects Disabled (0)");
+        tactical.Click(At(tactical,Page::Combat,Increase(9)));
+        Check(tactical.Get()[CompanionTactical]==1,"increase selects Enabled (1)");
+        tactical.Click(At(tactical,Page::Combat,Decrease(9)));
+        Check(tactical.Click({Kind::Apply}).changed==(ChangeMask{1}<<CompanionTactical),"companion tactical saves only its own setting");
     }
     {Model difficulty;difficulty.Open(s);difficulty.Click({Kind::Tab,int(Page::Combat)});
         Check(s.values[OfflinePlayers]==0&&RowKey(Page::Combat,5)==OfflinePlayers,"difficulty preserves native settings by default");

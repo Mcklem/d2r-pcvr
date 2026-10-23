@@ -17,7 +17,7 @@ namespace framevr::settings {
 enum class Page { Controls, VR, Video, HUD, Combat, Aim, Shield, Haptics, Performance, ReleaseNotes };
 enum Key { Motion, Seated, Dominant, Snap, TurnSpeed, Waist, BeltForward,
            Foveation, Sky, Fog, Ceiling, DrawDistance, ObjectDistance,
-           EyeHeight, ArmSpan, BodyCalibration, SkillGestures, WristMap, WristCompass, ControllerLabels, WeaponSkillIndicators, PlanarSpellAim, VitalsLocation, CriticalAlerts, RenderResolution, NavigationLocation, SmoothTurn, OrdinaryMobBars, MenuDistance, TooltipTiming, ProjectileAimAssist, MeleeHitSpeed, VitalsTilt, HapticStrength, HapticMelee, HapticBowDraw, HapticBowRelease, HapticSpell, HapticInteraction, HapticAlert, HapticShortMelee, BloodVisor, BloodWipe, MeleeRules, MeleeThrustSpeed, LootLabelSize, CompanionCounts, StrainDark, OfflinePlayers, ShieldBashSpeed, StrainSpeed, DesktopOneEye, MapTopDown, MapRotate, FoveationStrength, StereoRendering, DeferGpuWait, TargetHighlight, HeartbeatStart, SpellLock, StaffPoint, LandingCircles, GroundAim, AimHighlights, HighlightRight, HighlightLeft, ReShadeDepth, ElementalHands, EnemySight, BowLaser, ThrowLift, BottlePhysics, PropPhysics, CompanionAi, ShieldGrip, ShieldOut, ShieldUp, ShieldFollow, ShieldRoll, AimFollowsView, Count };
+           EyeHeight, ArmSpan, BodyCalibration, SkillGestures, WristMap, WristCompass, ControllerLabels, WeaponSkillIndicators, PlanarSpellAim, VitalsLocation, CriticalAlerts, RenderResolution, NavigationLocation, SmoothTurn, OrdinaryMobBars, MenuDistance, TooltipTiming, ProjectileAimAssist, MeleeHitSpeed, VitalsTilt, HapticStrength, HapticMelee, HapticBowDraw, HapticBowRelease, HapticSpell, HapticInteraction, HapticAlert, HapticShortMelee, BloodVisor, BloodWipe, MeleeRules, MeleeThrustSpeed, LootLabelSize, CompanionCounts, StrainDark, OfflinePlayers, ShieldBashSpeed, StrainSpeed, DesktopOneEye, MapTopDown, MapRotate, FoveationStrength, StereoRendering, DeferGpuWait, TargetHighlight, HeartbeatStart, SpellLock, StaffPoint, LandingCircles, GroundAim, AimHighlights, HighlightRight, HighlightLeft, ReShadeDepth, ElementalHands, EnemySight, BowLaser, ThrowLift, BottlePhysics, PropPhysics, CompanionAi, ShieldGrip, ShieldOut, ShieldUp, ShieldFollow, ShieldRoll, AimFollowsView, CompanionTactical, Count };
 // One bit per setting, 128 wide: two words, since MSVC has no 128-bit integer.
 struct ChangeMask {
     static constexpr int Bits=128;
@@ -127,6 +127,7 @@ inline constexpr std::array<Definition,Count> Definitions{{
     {"Shield roll", "Turns the shield around the forearm; + toward the little finger", L"gameplay",L"shield_roll_deg",0,-180,180,5},
     // The eyes' 17-degree tunnel, the hands' 30-degree wedge, a raised hand alone (targetcone, aimrules::Tries).
     {"Aim follows your view", "Only monsters ahead of you; a raised hand aims alone", L"gameplay",L"aim_follows_view",0,0,1,1},
+    {"Tactical commands", "Point & hold gestures, command beacon and priority targeting for your mercenary", L"gameplay",L"companion_tactical_commands",1,0,1,1},
 }};
 using Values=std::array<float,Count>;
 inline bool HapticKey(Key key){return key>=HapticStrength&&key<=HapticAlert;}
@@ -378,6 +379,7 @@ inline bool RowShown(Key key,const Values& v,const Context& c){
         case TurnSpeed:return SmoothTurning(v[Snap],v[SmoothTurn]);
         case Waist:return v[Seated]<.5f;   // standing mode only
         case BloodWipe:return v[BloodVisor]>.5f;
+        case CompanionTactical:return v[CompanionAi]>.5f;
         default:return true;
     }
 }
@@ -417,11 +419,11 @@ inline Rect PairDecrease(int row,int side){return {PairX(side),RowY+row*RowStep,
 inline Rect PairValue(int row,int side){return {PairX(side)+56,RowY+row*RowStep,238,52};}
 inline Rect PairIncrease(int row,int side){return {PairX(side)+298,RowY+row*RowStep,52,52};}
 // Every row a page can show, in order (Rows leaves out those that cannot apply).
-inline int CatalogCount(Page page){return page==Page::Haptics?2+haptics::CategoryCount:page==Page::Combat?9:page==Page::Aim?10:page==Page::Shield?5:page==Page::VR?10:page==Page::Video?6:page==Page::Performance?8:page==Page::HUD?10:0;}
+inline int CatalogCount(Page page){return page==Page::Haptics?2+haptics::CategoryCount:page==Page::Combat?10:page==Page::Aim?10:page==Page::Shield?5:page==Page::VR?10:page==Page::Video?6:page==Page::Performance?8:page==Page::HUD?10:0;}
 inline Key CatalogKey(Page page,int row){
     constexpr Key hapticRows[]={HapticStrength,HapticMelee,HapticShortMelee,HapticBowDraw,HapticBowRelease,HapticSpell,HapticInteraction,HapticAlert};
     if(page==Page::Haptics)return hapticRows[row];
-    constexpr Key combat[]={MeleeRules,MeleeHitSpeed,MeleeThrustSpeed,ShieldBashSpeed,StrainDark,OfflinePlayers,HeartbeatStart,EnemySight,CompanionAi};   // StrainDark: with StrainSpeed
+    constexpr Key combat[]={MeleeRules,MeleeHitSpeed,MeleeThrustSpeed,ShieldBashSpeed,StrainDark,OfflinePlayers,HeartbeatStart,EnemySight,CompanionAi,CompanionTactical};   // StrainDark: with StrainSpeed
     if(page==Page::Combat)return combat[row];
     // the aimed monster, the staff, the outline: strength, which hands, their colors; the ground skills, circles, the bow path laser, the throws
     // AimFollowsView below every row that brings it, so turning one on moves no row above the pointer

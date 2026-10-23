@@ -80,6 +80,7 @@ inline const char* HelpText(int id) {
         case ShieldRoll:return "Turns the shield around the forearm; + toward the little finger. 0 = the attach's own facing. -180 to +180 degrees in 5-degree steps; +90 suits a controller held palm down.";
         case EnemySight:return "Scales how far away hostile monsters notice and approach you in offline VR, from 100% (game default) up to 300% (three times as far). 100% keeps the game's original sight distance and restores the unmodified table values. Friendly NPCs, mercenaries and summons are unchanged.";
         case CompanionAi:return "Enhanced VR Mercenary overhaul: dynamic detection range matching enemy sight, elastic 40 sub-tile combat leash, and an anti-stuck watchdog that safely relocates the ally to your rear flank if trapped. Legacy restores vanilla AI constants and behavior.";
+        case CompanionTactical:return "Gesture-Based Tactical Commands: point at ground and click grip to move and hold, point at monster to prioritize attack, or raise an open palm for defensive hold. Enabled or Disabled.";
         case MeleeHitSpeed:return "Minimum weapon movement speed for a swing to count as a strike. Lower it for easier swings; raise it to require faster movement. Default: 12 m/s. Both melee modes use this value. Shield bash has its own threshold.";
         case ShieldBashSpeed:return "Minimum tracked hand speed for a physical shield bash, including assigned Smite. Default: 2 m/s. Move the hand at least 12 cm in one deliberate stroke; wrist twisting alone does not attack. The speed must still be met at contact. Applies in both melee modes; blocking, parries and trigger attacks are unchanged.";
         case MeleeThrustSpeed:return "Minimum forward speed for a stab along your weapon's tip. Default: 2 m/s. Move forward at least 12 cm, then pull back before stabbing again. This is separate from swing speed and applies in both melee modes.";
@@ -123,7 +124,7 @@ inline int HelpChoices(int id) {
         case StereoRendering:return int(std::size(StereoRenderingNames));
         case RenderResolution:return int(std::size(resolution::Choices));
         case ControllerLabels:return int(controllers::Choice::Count);
-        case Dominant:case MeleeRules:case MapTopDown:case AimHighlights:case CompanionAi:return 2;
+        case Dominant:case MeleeRules:case MapTopDown:case AimHighlights:case CompanionAi:case CompanionTactical:return 2;
         case GroundAim:return int(std::size(GroundAimNames));
         case SpellLock:return int(std::size(SpellLockNames));
         default:return 0;
@@ -227,6 +228,12 @@ inline ChoiceHelp HelpChoice(int id,float value) {
             static constexpr const char* text[]={
                 "Restores vanilla mercenary AI constants and original pathfinding behavior.",
                 "Enables dynamic combat detection range scaling, elastic combat tether (40 sub-tiles), and anti-stuck watchdog repositioning to your rear flank."};
+            return {names[c],text[c]};}
+        case CompanionTactical:{
+            static constexpr const char* names[]={"Disabled","Enabled"};
+            static constexpr const char* text[]={
+                "Disables hand tracking gestures and tactical command overrides for your mercenary.",
+                "Enables point-and-click grip commands (Move & Hold, Prioritize Enemy) and open-palm Defensive Hold gestures with tactical holographic beacons."};
             return {names[c],text[c]};}
         case Dominant:{
             static constexpr const char* names[]={"Right","Left"};
