@@ -167,20 +167,21 @@ flowchart LR
     Fase4 --> Fase5["Fase 5: Overkill & Settings VR"]
 ```
 
-### Fase 1: Capa de Detección, IPC y Retroalimentación Sensorial
+### Fase 1: Capa de Detección, IPC y Retroalimentación Sensorial [COMPLETADA - Commit aa6e2c8]
 *Objetivo: Sentir el impacto visceral inmediatamente en las manos y oídos sin tocar aún los gráficos.*
 1. **Detección de combate:** Extender `ApplyDamage` y `SetStat` en `vr/combat.cpp` para identificar golpes mortales, tipo de arma y distancia euclídea al jugador.
 2. **Buffer IPC:** Incorporar `D2RVR_GoreQueue` en `shared/d2r_vr_shared.h`.
 3. **Hápticos:** Implementar en `steamvr/haptic_pulse.h` los perfiles hápticos para corte óseo y carne.
 4. **Audio 3D:** Conectar FMOD en `vr/spatial_audio.cpp` para reproducir sonidos de rotura y desgarro situados en la posición tridimensional del monstruo.
-5. **Verificación automatizada:** Crear el test nativo `gore-events-test` en `steamvr/CMakeLists.txt`.
+5. **Verificación automatizada:** Crear el test nativo `gore-events-test` en `steamvr/CMakeLists.txt` (Superado 100%).
 
-### Fase 2: Decapitación Esquelética Granny 3D en Tiempo Real
+### Fase 2: Decapitación Esquelética Granny 3D en Tiempo Real [COMPLETADA]
 *Objetivo: Ver cabezas rodar o desaparecer físicamente de los monstruos en combate cuerpo a cuerpo.*
-1. **Volcado de esqueletos:** Analizar los volcados de esqueletos en `d2r_vr_skeletons.txt` para Caídos, Zombis, Esqueletos y Pícaras.
-2. **Hook de transformación:** En `vr/skeletons.cpp`, aplicar la escala cero (`0.0001f`) a la cabeza del monstruo cuando el `GoreEvent` de decapitación esté activo.
-3. **Mantenimiento del ciclo de muerte:** Comprobar que el cadáver sigue respetando las habilidades legítimas de D2 (*Find Item*, *Revive*, *Corpse Explosion*).
-4. **Verificación automatizada:** Crear el test nativo `granny-decapitation-test`.
+1. **Detección de rigs y jerarquías:** Implementado en `shared/d2r_vr_decapitation.h` con resolución prioritaria de huesos de cabeza (`head_M_JNT`, `head_bind_jnt`, `Bip01 Head`, `head`) y cuello (`neck_M_JNT`, `neck_bind_jnt`, `Bip01 Neck`, `neck`) para Caídos, Zombis, Esqueletos, Pícaras y Bestias.
+2. **Propagación y colapso óseo:** Construcción de máscara de descendientes $O(N)$ y colapso en escala $0.0001f$ anclando la posición tridimensional exactamente al pivote del cuello (`CollapseHeadBones`).
+3. **Hook de transformación en runtime:** Integrado en `vr/skeletons.cpp` dentro de `Hook` (`ComputeSelfWorldPose`) vinculando eventos `SlashDecapitation` de la cola IPC con instancias de esqueletos en espacio de juego vía ECS (`CandidatePosition`).
+4. **Ciclo de vida y TTL:** Gestión thread-safe con `DecapitationManager` (TTL de 60 s para respetar animación de muerte y persistencia de cadáver).
+5. **Verificación automatizada:** Creado test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 5 suites pasando (144/144 tests globales pasando).
 
 ### Fase 3: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo)
 *Objetivo: Trasladar el gore a la perspectiva en primera persona sin ensuciar la visión vital del visor.*

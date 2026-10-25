@@ -148,6 +148,28 @@ public:
         return false;
     }
 
+    // Finds the most recent decapitation event within maxAgeMs and maxDist of (x, z)
+    bool FindRecentDecapitation(uint64_t now, uint64_t maxAgeMs, float x, float z, float maxDist, GoreEvent& out) const {
+        const uint32_t h = head.load(std::memory_order_acquire);
+        uint32_t t = tail.load(std::memory_order_relaxed);
+        if (t == h) return false;
+        if (h - t > Capacity) t = h - Capacity;
+
+        for (uint32_t i = h; i > t; --i) {
+            const auto& candidate = buffer[(i - 1) % Capacity];
+            if (candidate.type == GoreType::SlashDecapitation &&
+                candidate.timestamp <= now && (now - candidate.timestamp) <= maxAgeMs) {
+                const float dx = candidate.worldPos[0] - x;
+                const float dz = candidate.worldPos[2] - z;
+                if (std::hypot(dx, dz) <= maxDist) {
+                    out = candidate;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     uint32_t Count() const {
         const uint32_t h = head.load(std::memory_order_acquire);
         const uint32_t t = tail.load(std::memory_order_relaxed);

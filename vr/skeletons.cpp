@@ -42,6 +42,8 @@
 #include "../steamvr/guarded_text.h"
 #include "../steamvr/shapeshift_form.h"
 #include "sigscan.h"
+#include "d2r_vr_gore.h"
+#include "d2r_vr_decapitation.h"
 #ifdef D2RVR_NATIVE_OPENXR
 #include "memory.h"
 #include "logging.h"
@@ -3439,6 +3441,78 @@ void Set(const Input& in) {
     ReleaseSRWLockExclusive(&g_inLock);
 }
 
+void DecapitateMonster(uintptr_t self) {
+    if (!self || self == g_heroSelf.load()) return;
+    const uint64_t now = GetTickCount64();
+
+    // Fast path: already recognized and tracked as decapitated
+    if (framevr::decap::Manager().IsDecapitated(self, now)) {
+        uintptr_t world = 0;
+        int32_t wpCount = 0;
+        uintptr_t mats = 0;
+        if (Get(self + 0x20, &world) && Get(world, &wpCount) && Get(world + 4, &mats) && mats && wpCount > 0) {
+            float pivot[3] = {};
+            framevr::decap::Manager().ApplyCollapse(self, reinterpret_cast<Mat*>(mats), wpCount, now, pivot);
+        }
+        return;
+    }
+
+    // Fast path: if no gore events in queue, skip matching
+    if (framevr::gore::Queue().Count() == 0) return;
+
+    // Filter out player models and items
+    uintptr_t modelInst = 0, skel = 0, nameObj = 0, nameP = 0;
+    if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
+    Get(self, &nameObj); Get(nameObj + 8, &nameP);
+    const std::string model = Str(nameP);
+    if (model.empty() || model.find("/character/player/") != std::string::npos ||
+        model.find("/items/") != std::string::npos) {
+        return;
+    }
+
+    // Get 3D world position of skeleton entity
+    float pos[3] = {};
+#ifdef D2RVR_NATIVE_OPENXR
+    if (!ecs::CandidatePosition(self, pos)) return;
+#else
+    return;
+#endif
+
+    // Check if a recent decapitation strike occurred within reach
+    framevr::gore::GoreEvent ev{};
+    if (framevr::gore::Queue().FindRecentDecapitation(now, 1500, pos[0], pos[2], 2.5f, ev)) {
+        int32_t count = 0;
+        uintptr_t bones = 0;
+        if (!Get(skel + 8, &count) || !Get(skel + 0xC, &bones) || count <= 0 || count > 1024) return;
+
+        std::vector<std::string> names(count);
+        std::vector<int32_t> parents(count, -1);
+        for (int i = 0; i < count; ++i) {
+            uintptr_t nm = 0; int32_t p = -1;
+            Get(bones + i * 0xA4, &nm);
+            Get(bones + i * 0xA4 + 8, &p);
+            names[i] = Str(nm);
+            parents[i] = p;
+        }
+
+        const int headBone = framevr::decap::FindHeadBone(names, parents);
+        if (headBone >= 0) {
+            const int neckBone = framevr::decap::FindNeckBone(names, parents, headBone);
+            const auto inHead = framevr::decap::BuildDescendantMask(count, parents, headBone);
+
+            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now);
+
+            uintptr_t world = 0;
+            int32_t wpCount = 0;
+            uintptr_t mats = 0;
+            if (Get(self + 0x20, &world) && Get(world, &wpCount) && Get(world + 4, &mats) && mats && wpCount > 0) {
+                float pivot[3] = {};
+                framevr::decap::Manager().ApplyCollapse(self, reinterpret_cast<Mat*>(mats), wpCount, now, pivot);
+            }
+        }
+    }
+}
+
 using ComputeFn = void (*)(uintptr_t self, float a, float b, bool c);
 ComputeFn g_orig = nullptr;
 
@@ -3461,6 +3535,7 @@ void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
     RefreshCrossbow(self);
     RefreshShield(self);
     PoseMotionBow(self);
+    DecapitateMonster(self);
 #endif
     if (GetTickCount64() < g_dumpUntil.load()) {
         AcquireSRWLockExclusive(&g_lock);
