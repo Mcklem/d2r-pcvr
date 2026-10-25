@@ -1844,14 +1844,38 @@ void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftT
                     Say(line);
                 }
             } else if (groundHit) {
-                framevr::companionai::TacticalOrder order;
-                order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
-                order.targetPos = { gx, gy };
-                if (::companionai::IssueTacticalOrder(order)) {
-                    MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
-                    char line[128];
-                    std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", gx, gy);
-                    Say(line);
+                // If ground aim point lands near an enemy (within 6 sub-tiles / ~2.4m), prioritize that enemy for native combat locomotion
+                int groundPicked = -1;
+                float bestDist = 6.0f;
+                for (int i = 0; i < snapshot.count; ++i) {
+                    const float d = std::hypot(snapshot.targets[i].x - gx, snapshot.targets[i].y - gy);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        groundPicked = i;
+                    }
+                }
+
+                if (groundPicked >= 0) {
+                    framevr::companionai::TacticalOrder order;
+                    order.type = framevr::companionai::TacticalOrderType::PrioritizeEnemy;
+                    order.targetUnitId = snapshot.targets[groundPicked].id;
+                    order.targetPos = { snapshot.targets[groundPicked].x, snapshot.targets[groundPicked].y };
+                    if (::companionai::IssueTacticalOrder(order)) {
+                        MotionPulse(h, haptics::Category::Interaction, 0.45f, 40000000);
+                        char line[128];
+                        std::snprintf(line, sizeof line, "Frame companion tactical: ground-proximity prioritized monster unit=%u at (%.1f, %.1f)", order.targetUnitId, order.targetPos.x, order.targetPos.y);
+                        Say(line);
+                    }
+                } else {
+                    framevr::companionai::TacticalOrder order;
+                    order.type = framevr::companionai::TacticalOrderType::MoveAndHold;
+                    order.targetPos = { gx, gy };
+                    if (::companionai::IssueTacticalOrder(order)) {
+                        MotionPulse(h, haptics::Category::Interaction, 0.35f, 30000000);
+                        char line[128];
+                        std::snprintf(line, sizeof line, "Frame companion tactical: move-and-hold ordered at (%.1f, %.1f)", gx, gy);
+                        Say(line);
+                    }
                 }
             }
         }

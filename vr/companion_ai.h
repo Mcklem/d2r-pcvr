@@ -20,6 +20,7 @@ unsigned TacticalCommandCount();
 bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order);
 void CancelTacticalOrder();
 framevr::companionai::TacticalOrder GetActiveTacticalOrder();
+uintptr_t GetTacticalCombatTarget(uintptr_t game, uintptr_t unit);
 void OnPotionReceived();
 bool IsInTacticalRetreat();
 unsigned PeelCount();

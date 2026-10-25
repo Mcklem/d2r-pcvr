@@ -64,6 +64,8 @@ framevr::companionai::TacticalRetreatController g_retreatController;
 framevr::companionai::BodyguardController g_bodyguardController;
 std::atomic<bool> g_tacticalCommandsEnabled{true};
 std::atomic<unsigned> g_tacticalCommandEvents{0};
+std::atomic<int> g_lastDispatchedTargetX{0};
+std::atomic<int> g_lastDispatchedTargetY{0};
 framevr::companionai::TacticalOrderController g_tacticalOrderController;
 SRWLOCK g_tacticalLock = SRWLOCK_INIT;
 
@@ -324,16 +326,16 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
     }
 
     // 5.5. Gesture-Based Tactical Commands (Point & Hold)
+    bool isTacticalActive = false;
     if (g_tacticalCommandsEnabled.load()) {
         framevr::companionai::Vec2 tacticalTarget{};
         framevr::companionai::TacticalVoiceCue voiceCue = framevr::companionai::TacticalVoiceCue::None;
-        bool dispatchTactical = false;
-        bool isTacticalActive = false;
         {
             AcquireSRWLockExclusive(&g_tacticalLock);
             isTacticalActive = g_tacticalOrderController.IsActive();
             if (isTacticalActive) {
-                dispatchTactical = g_tacticalOrderController.Evaluate(compPos, plyrPos, nowMs, inRetreat, tacticalTarget, voiceCue, health, maxHealth);
+                (void)g_tacticalOrderController.Evaluate(compPos, plyrPos, nowMs, inRetreat, tacticalTarget, voiceCue, health, maxHealth);
+                isTacticalActive = g_tacticalOrderController.IsActive();
             }
             ReleaseSRWLockExclusive(&g_tacticalLock);
         }
@@ -347,12 +349,8 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
         s_wasTacticalActive = isTacticalActive;
 
         if (wasTacticalActive && !isTacticalActive) {
-            // Tactical order was cancelled or timed out; restore neutral mode
-            uint32_t animMode = 0;
-            if (Read(hireling + 0x0C, animMode) && (animMode == 2 || animMode == 3)) {
-                uint32_t neutralMode = 1; // MONMODE_NEUTRAL
-                framevr::WriteMemory(reinterpret_cast<void*>(hireling + 0x0C), &neutralMode, sizeof(neutralMode));
-            }
+            g_lastDispatchedTargetX.store(0);
+            g_lastDispatchedTargetY.store(0);
         }
 
         if (isTacticalActive) {
@@ -362,105 +360,39 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
                 activeOrder = g_tacticalOrderController.GetOrder();
                 ReleaseSRWLockShared(&g_tacticalLock);
             }
+
+            // Visual telegraph placement
             if (activeOrder.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
                 framevr::telegraph::Current().Place(activeOrder.targetPos.x, activeOrder.targetPos.y, nowMs, 3000, 3, 1.8f);
             }
 
-            const auto arch = framevr::companionai::GetHirelingArchetype(uint16_t(classId));
-            const bool isRanged = (arch == framevr::companionai::Archetype::RangedOverwatch);
-            const float attackEngagementRange = isRanged ? 12.0f : 2.5f;
-
-            float targetX = tacticalTarget.x;
-            float targetY = tacticalTarget.y;
-
+            // Target Enemy Prioritization: monitor enemy vitality and cancel order if enemy dies/despawns
             if (activeOrder.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && activeOrder.targetUnitId) {
                 uintptr_t enemy = melee::ServerUnit(game, 1, activeOrder.targetUnitId);
                 if (enemy) {
                     uint32_t enemyHeader[4]{};
-                    if (Read(enemy, enemyHeader) && enemyHeader[3] != 0 && enemyHeader[3] != 12) {
-                        float ex = 0.0f, ey = 0.0f;
-                        if (ReadPosition(enemy, ex, ey)) {
-                            targetX = ex;
-                            targetY = ey;
-                            const float distToEnemy = std::hypot(ex - compPos.x, ey - compPos.y);
-                            if (distToEnemy <= attackEngagementRange) {
-                                // Within effective attack range: stop walking so combat AI engages
-                                dispatchTactical = false;
-                            }
-                        }
-                    } else {
-                        // Target enemy is dead; cancel order
+                    if (!Read(enemy, enemyHeader) || enemyHeader[0] != 1 || enemyHeader[3] == 0 || enemyHeader[3] == 12) {
+                        // Target enemy died; auto-cancel order so companion resumes normal behavior
                         CancelTacticalOrder();
-                        return;
                     }
                 } else {
-                    // Target enemy despawned; cancel order
+                    // Target enemy despawned; auto-cancel order
                     CancelTacticalOrder();
-                    return;
                 }
             }
 
-            if (dispatchTactical) {
-                const float dx = targetX - compPos.x;
-                const float dy = targetY - compPos.y;
-                const float dist = std::hypot(dx, dy);
-
-                if (dist > 1.5f) {
-                    // Step smoothly along vector towards target (~1.5 units per 250ms = 6 units/sec natural walk)
-                    const float step = std::min(dist, 1.8f);
-                    const int nextX = int(std::round(compPos.x + (dx / dist) * step));
-                    const int nextY = int(std::round(compPos.y + (dy / dist) * step));
-
-                    uintptr_t targetRoom = 0;
-                    if (roomPointFn) {
-                        targetRoom = roomPointFn(playerRoom, nextX, nextY);
-                    }
-                    if (!targetRoom) {
-                        targetRoom = playerRoom;
-                    }
-
-                    uintptr_t compPath = 0;
-                    if (pathMoveFn && Read(hireling + 0x38, compPath) && compPath && targetRoom) {
-                        pathMoveFn(compPath, hireling, targetRoom, nextX, nextY);
-                    } else if (relocateFn && targetRoom) {
-                        relocateFn(game, hireling, targetRoom, nextX, nextY, 1, 0);
-                    }
-
-                    // Start walk animation if not currently walking or running
-                    uint32_t animMode = 0;
-                    if (Read(hireling + 0x0C, animMode) && animMode != 2 && animMode != 3) {
-                        uint32_t walkMode = 2; // MONMODE_WALK
-                        framevr::WriteMemory(reinterpret_cast<void*>(hireling + 0x0C), &walkMode, sizeof(walkMode));
-                    }
-
-                    g_tacticalCommandEvents.fetch_add(1, std::memory_order_relaxed);
-                    char line[180];
-                    std::snprintf(line, sizeof line,
-                        "Frame companion AI: stepping to tactical target (type=%d dist=%.1f) -> step (%d, %d)",
-                        int(g_tacticalOrderController.GetOrderType()), dist, nextX, nextY);
-                    framevr::logging::Write(line);
-                } else {
-                    // Arrived within target zone
-                    dispatchTactical = false;
-                }
+            // MoveAndHold: maintain hold coordinates for visual telegraph and leash checks without coordinate snapping
+            if (activeOrder.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
+                int targetX = int(std::round(activeOrder.targetPos.x));
+                int targetY = int(std::round(activeOrder.targetPos.y));
+                g_lastDispatchedTargetX.store(targetX);
+                g_lastDispatchedTargetY.store(targetY);
             }
-
-            if (!dispatchTactical) {
-                // Arrived at destination or in combat engagement range!
-                // Reset from walk mode to neutral so combat AI or idle animation can execute
-                uint32_t animMode = 0;
-                if (Read(hireling + 0x0C, animMode) && (animMode == 2 || animMode == 3)) {
-                    uint32_t neutralMode = 1; // MONMODE_NEUTRAL
-                    framevr::WriteMemory(reinterpret_cast<void*>(hireling + 0x0C), &neutralMode, sizeof(neutralMode));
-                }
-            }
-            // An active tactical order maintains priority over ambient peeling and squad formations
-            return;
         }
     }
 
     // 6. Active Bodyguard Instinct ("Peeling" & Blind-Spot Defense)
-    if (!inRetreat && g_peelEnabled.load()) {
+    if (!inRetreat && !isTacticalActive && g_peelEnabled.load()) {
         const float fx = g_cachedForwardX.load();
         const float fy = g_cachedForwardY.load();
 
@@ -631,6 +563,8 @@ void Shutdown() {
     g_retreatController.Reset();
     g_bodyguardController.Reset();
     g_potionReceived.store(false);
+    g_lastDispatchedTargetX.store(0);
+    g_lastDispatchedTargetY.store(0);
     std::lock_guard lock(g_ticketMutex);
     g_syncTicket.Cancel();
 }
@@ -702,8 +636,13 @@ bool IssueTacticalOrder(const framevr::companionai::TacticalOrder& order) {
         PlayVoiceCue(uint16_t(classId), cue);
     }
 
-    if (accepted && order.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
-        framevr::telegraph::Current().Place(order.targetPos.x, order.targetPos.y, nowMs, 6000, 3, 1.8f);
+    if (accepted) {
+        g_lastDispatchedTargetX.store(0);
+        g_lastDispatchedTargetY.store(0);
+        g_lastDispatchMs.store(0); // Bypass 250ms throttle for immediate response
+        if (order.type == framevr::companionai::TacticalOrderType::MoveAndHold) {
+            framevr::telegraph::Current().Place(order.targetPos.x, order.targetPos.y, nowMs, 6000, 3, 1.8f);
+        }
     }
 
     return accepted;
@@ -714,21 +653,35 @@ void CancelTacticalOrder() {
     g_tacticalOrderController.CancelOrder();
     ReleaseSRWLockExclusive(&g_tacticalLock);
 
-    uintptr_t game = 0, player = 0;
-    if (melee::LocalServer(game, player)) {
-        float health = 0.0f, maxHealth = 0.0f;
-        uint32_t classId = 0, unitId = 0;
-        if (melee::HirelingVitals(g_lastHirelingId.load(), health, maxHealth, classId, unitId) && unitId) {
-            uintptr_t hireling = melee::ServerUnit(game, 1, unitId);
-            if (hireling) {
-                uint32_t animMode = 0;
-                if (Read(hireling + 0x0C, animMode) && (animMode == 2 || animMode == 3)) {
-                    uint32_t neutralMode = 1;
-                    framevr::WriteMemory(reinterpret_cast<void*>(hireling + 0x0C), &neutralMode, sizeof(neutralMode));
-                }
+    g_lastDispatchedTargetX.store(0);
+    g_lastDispatchedTargetY.store(0);
+}
+
+uintptr_t GetTacticalCombatTarget(uintptr_t game, uintptr_t unit) {
+    if (!g_tacticalCommandsEnabled.load()) return 0;
+    const uint32_t hirelingId = g_lastHirelingId.load();
+    if (!hirelingId || !unit) return 0;
+
+    uint32_t header[4]{};
+    if (!Read(unit, header) || header[0] != 1 || header[2] != hirelingId) return 0;
+
+    framevr::companionai::TacticalOrder order{};
+    {
+        AcquireSRWLockShared(&g_tacticalLock);
+        order = g_tacticalOrderController.GetOrder();
+        ReleaseSRWLockShared(&g_tacticalLock);
+    }
+
+    if (order.type == framevr::companionai::TacticalOrderType::PrioritizeEnemy && order.targetUnitId) {
+        uintptr_t enemy = melee::ServerUnit(game, 1, order.targetUnitId);
+        if (enemy) {
+            uint32_t enemyHeader[4]{};
+            if (Read(enemy, enemyHeader) && enemyHeader[0] == 1 && enemyHeader[3] != 0 && enemyHeader[3] != 12) {
+                return enemy;
             }
         }
     }
+    return 0;
 }
 
 framevr::companionai::TacticalOrder GetActiveTacticalOrder() {

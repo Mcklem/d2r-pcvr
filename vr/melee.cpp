@@ -25,6 +25,7 @@
 #include "sigscan.h"
 #include "memory.h"
 #include "logging.h"
+#include "companion_ai.h"
 #include "../steamvr/transport.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/world_coordinates.h"
@@ -141,6 +142,8 @@ uintptr_t Target(uintptr_t game,uintptr_t unit) {
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
     if(contact.game==game&&contact.attacker==unit&&
        (contact.smite||caller==d2rsig::Addr(0x42ffaa)||caller==d2rsig::Addr(0x43010a)))return contact.defender;
+    const auto tactical=companionai::GetTacticalCombatTarget(game,unit);
+    if(tactical)return tactical;
     const auto result=originalTarget(game,unit);
     ObserveServer(game,unit);if(result)ObserveServer(game,result);
     return result;
