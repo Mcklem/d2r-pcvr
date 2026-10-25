@@ -25,6 +25,7 @@
 #include <vector>
 #include "afr_eye_shared.h"
 #include "d2r_vr_shared.h"
+#include "../shared/d2r_vr_gore.h"
 #include "pad_mirror_shared.h"
 #include "transport.h"
 #include "../vr/bow.h"
@@ -3057,12 +3058,16 @@ void Input() {
     // One sharp tap per confirmed impact. Consume the event once; do not
     // sustain or refresh it while the weapon remains inside the creature.
     auto impactPulse=[&](int hand,bool shield=false){
-        const auto impact=settings::HapticSample(gestureSettings,haptics::Category::Melee,shield?1:0);
+        auto impact=settings::HapticSample(gestureSettings,haptics::Category::Melee,shield?1:0);
+        framevr::gore::GoreEvent goreEv{};
+        if(!shield&&framevr::gore::LatestForHand(hand,GetTickCount64(),150,goreEv)&&goreEv.type!=framevr::gore::GoreType::None) {
+            impact=haptics::GoreSampleFor(goreEv.type);
+        }
         const bool sent=MotionPulse(hand,haptics::Category::Melee,impact.amplitude,XrDuration(impact.milliseconds)*1000000,impact.frequency);
         static ULONGLONG reportAt[2]{};const auto now=GetTickCount64();
         if(now>=reportAt[hand]) {
-            char line[160];std::snprintf(line,sizeof line,"Frame melee haptics: source=%s output=%s duration_ms=%d frequency=%.0f sent=%d",
-                shield?"shield":"weapon",hand==0?"right":"left",impact.milliseconds,impact.frequency,sent);Say(line);reportAt[hand]=now+1000;
+            char line[160];std::snprintf(line,sizeof line,"Frame melee haptics: source=%s output=%s duration_ms=%d frequency=%.0f sent=%d gore=%d",
+                shield?"shield":"weapon",hand==0?"right":"left",impact.milliseconds,impact.frequency,sent,int(goreEv.type));Say(line);reportAt[hand]=now+1000;
         }
     };
     for(int hand=0;hand<2;++hand)if(const auto at=meleeImpactAt[hand].exchange(0);at&&motionInput.active&&GetTickCount64()-at<150)

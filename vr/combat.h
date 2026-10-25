@@ -39,6 +39,7 @@ float GameVolume();
 // Game thread (melee.cpp): a physical swing's native attack on this monster id
 // is running (NoSwing UINT32_MAX = none). Returns the previous value.
 uint32_t PhysicalSwing(uint32_t target);
+uint32_t PhysicalSwing(uint32_t target, int hand);
 // Game thread (melee.cpp), around one physical swing's native attack: that
 // stroke's recovery damage factor (0..1, Unleashed). Returns the previous value.
 float SwingRecovery(float factor);

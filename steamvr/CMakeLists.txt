@@ -21,6 +21,7 @@ else()
   target_link_libraries(framevr-runtime INTERFACE Threads::Threads)
 endif()
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+target_include_directories(framevr-runtime INTERFACE ${ROOT}/shared)
 # Box3D v0.1.0 (MIT), pinned by setup_windows_tools.ps1: dropped empty bottles.
 # Added before this project's definitions so its C sources build as upstream.
 set(BOX3D_SDK "$ENV{BOX3D_SDK}" CACHE PATH "Box3D checkout")
@@ -92,6 +93,8 @@ target_include_directories(companion-ai-test PRIVATE ${ROOT}/cleanroom/sigscan $
 target_link_libraries(companion-ai-test PRIVATE framevr-runtime)
 add_executable(torch-light-test torch_light_test.cpp)
 target_link_libraries(torch-light-test PRIVATE framevr-runtime)
+add_executable(gore-events-test gore_events_test.cpp)
+target_link_libraries(gore-events-test PRIVATE framevr-runtime)
 add_executable(frame-generation-test frame_generation_test.cpp)
 target_include_directories(d2rl-pcvr PRIVATE ${ROOT}/shared ${ROOT}/external/flatvr ${ROOT}/external/bodywalk ${ROOT}/external/reshade/include ${CMAKE_CURRENT_SOURCE_DIR} ${OPENXR_SDK}/include)
 target_link_libraries(d2rl-pcvr PRIVATE d2rcam minhook user32 gdi32 framevr-runtime)
@@ -326,7 +329,7 @@ foreach(test_target IN ITEMS memory-test hook-metrics-test active-keys-test reso
     portal-billboard-test shrine-trace-test shrine-placement-test overlay-view-test composition-layers-test projectile-rules-test environment-cutaway-test roof-materials-test stereo-prop-physics-test dropped-bottles-test props-test
     combat-rules-test strike-skills-test skill-usage-test shield-guard-test shapeshift-gesture-test guard-strain-test heartbeat-test logging-test melee-contact-test melee-weapon-test breakables-test offline-difficulty-test enemy-sight-test attack-speed-test world-coordinates-test bow-flight-test bow-laser-test spell-cast-test spell-aim-assist-test
     interaction-test dev-scenarios-test native-belt-test wrist-hud-test map-zoom-test navigation-info-test companions-test active-effects-test dropped-item-labels-test stick-gestures-test show-items-command-test native-hud-test render-resolution-test render-pointer-test scene-depth-test game-device-only-test controller-bindings-test journal-test native-panels-test
-    vr-settings-test vr-settings-store-test controller-labels-test math-test deferred-draw-test monster-bars-test telegraph-test aim-reach-test aim-rules-test target-cone-test gaze-test window-focus-test callback-ticket-test local-player-test shield-block-test trigger-melee-test companion-ai-test torch-light-test frame-generation-test)
+    vr-settings-test vr-settings-store-test controller-labels-test math-test deferred-draw-test monster-bars-test telegraph-test aim-reach-test aim-rules-test target-cone-test gaze-test window-focus-test callback-ticket-test local-player-test shield-block-test trigger-melee-test companion-ai-test torch-light-test frame-generation-test gore-events-test)
   # These fixtures use assert for their checks, including in Release builds.
   if(MSVC)
     target_compile_options(${test_target} PRIVATE /UNDEBUG)

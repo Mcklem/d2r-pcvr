@@ -20,11 +20,13 @@
 #include "melee.h"
 #include "native_ui_signatures.h"
 #include "../steamvr/transport.h"
+#include "../shared/d2r_vr_gore.h"
 
-namespace gamestate {uint64_t LocalPlayer();int32_t LeftDurability();}
+namespace gamestate {uint64_t LocalPlayer();int32_t LeftDurability();uint32_t WeaponType();}
 
 namespace combat {
 namespace {
+bool GridPosition(uintptr_t unit,float& x,float& z);
 constexpr uint64_t HitRva=0x44ba60,SeedRva=0x34a1e0,BlockRva=0x44b930,DodgeRva=0x44ef70;
 constexpr uint64_t HitSeedReturn=0x44bd6d;
 constexpr uint8_t HitSig[]={0x4c,0x8b,0xdc,0x53,0x55,0x56,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0x90,0x04,0x00,0x00};
@@ -109,7 +111,7 @@ ApplyDamageFn originalApplyDamage=nullptr;bool applyDamageIn=false;std::atomic<b
 // This game thread is inside a physical swing's native attack on this monster
 // (melee.cpp), and inside its damage application with this record.
 constexpr uint32_t NoSwing=UINT32_MAX;
-thread_local uint32_t swingTarget=NoSwing;thread_local uintptr_t damageRecord=0;
+thread_local uint32_t swingTarget=NoSwing;thread_local int swingHand=0;thread_local uintptr_t damageRecord=0;
 // Riposte: a parry opens a window for one stronger hit on the parried monster.
 std::atomic<float> riposteBonus{0};std::atomic<uint32_t> riposteMs{1500};
 std::atomic<uint32_t> riposteMonster{NoSwing};std::atomic<uint64_t> riposteUntil{0};
@@ -690,6 +692,41 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
             }
         }
     }
+    if(stat==6&&layer==0) {
+        uint32_t header[3]{};
+        if(Read(unit,header)&&header[0]==1) {
+            const int before=reinterpret_cast<GetStatFn>(d2rsig::Addr(GetStatRva))(unit,6,0);
+            const bool lethal=before>0&&(value<=0||value<0x100);
+            uint32_t localId=0;uint32_t attHeader[3]{};
+            const bool isLocalAttacker=damageAttacker&&Read(damageAttacker,attHeader)&&
+                ((attHeader[0]==0&&LocalPlayerId(localId)&&attHeader[2]==localId)||
+                 (swingTarget!=NoSwing&&header[2]==swingTarget));
+            if(isLocalAttacker) {
+                float ax=0,az=0,mx=0,mz=0;float dist=999.f;
+                uintptr_t playerUnit=0;
+                if(GridPosition(damageAttacker,ax,az)||(LocalPlayerUnit(playerUnit)&&GridPosition(playerUnit,ax,az))) {
+                    if(GridPosition(unit,mx,mz))dist=std::hypot(mx-ax,mz-az);
+                }
+                const uint32_t weaponType=gamestate::WeaponType();
+                const int strikingHand=swingTarget!=NoSwing?swingHand:0;
+                const auto goreType=framevr::gore::ClassifyMeleeGore(weaponType,lethal,false);
+                if(goreType!=framevr::gore::GoreType::None||lethal) {
+                    framevr::gore::GoreEvent ev{};
+                    ev.timestamp=GetTickCount64();
+                    ev.monsterId=header[2];
+                    ev.classId=header[1];
+                    ev.type=(goreType!=framevr::gore::GoreType::None)?goreType:framevr::gore::GoreType::GenericLethal;
+                    ev.taxonomy=framevr::gore::TaxonomyForMonster(header[1]);
+                    ev.hand=strikingHand;
+                    ev.lethal=lethal;
+                    ev.critical=false;
+                    ev.distanceSubTiles=dist;
+                    ev.worldPos[0]=mx;ev.worldPos[1]=0;ev.worldPos[2]=mz;
+                    framevr::gore::Publish(ev);
+                }
+            }
+        }
+    }
     originalSetStat(unit,stat,value,layer);
 }
 uint64_t HitChance(uintptr_t game,uintptr_t attacker,uintptr_t defender,int chance,int roll) {
@@ -1226,11 +1263,12 @@ float GameVolume() {
     if(volume<0||!known||CompareFileTime(&a.ftLastWriteTime,&seen)){if(known)seen=a.ftLastWriteTime;volume=GameCombatVolume();}
     return volume;
 }
-uint32_t PhysicalSwing(uint32_t target) {
-    const auto was=swingTarget;swingTarget=target;swingChance=-1;
+uint32_t PhysicalSwing(uint32_t target, int hand) {
+    const auto was=swingTarget;swingTarget=target;swingHand=hand;swingChance=-1;
     if(target!=NoSwing)lastSwingVerdict=-1;   // a new swing's verdict (the restoring call keeps it for the trace)
     return was;
 }
+uint32_t PhysicalSwing(uint32_t target) { return PhysicalSwing(target, 0); }
 float SwingRecovery(float factor) {const float was=swingRecovery;swingRecovery=factor;return was;}
 void ConfigureArDamage(bool on,float floor) {arDamage=on;arFloor=std::clamp(floor,0.f,1.f);}
 void NoteRiposte(uint32_t monster) {

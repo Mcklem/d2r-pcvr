@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include "../shared/d2r_vr_gore.h"
 
 namespace framevr::haptics {
 constexpr float DefaultStrength=100,MaxStrength=200,StrengthStep=10;
@@ -31,6 +32,24 @@ inline constexpr Sample SampleFor(Category category,bool shortMelee=false,int ha
     if(category==Category::Melee&&shortMelee)return {.95f,10,180};
     if(category==Category::Melee&&hand==1)return {.95f,45};
     return Samples[int(category)];
+}
+inline constexpr Sample GoreSampleFor(gore::GoreType type) {
+    switch(type) {
+        case gore::GoreType::SlashDecapitation:
+            return {1.0f, 35, 160.0f};  // Sharp high-frequency flesh/cartilage cut
+        case gore::GoreType::BluntBoneCrush:
+            return {1.0f, 95, 50.0f};   // Heavy low-frequency bone fracture thud
+        case gore::GoreType::CorpseExplosion:
+            return {1.0f, 140, 60.0f};  // Broad blast concussion
+        case gore::GoreType::ColdShatter:
+            return {0.85f, 45, 200.0f}; // Brittle crystalline shatter
+        case gore::GoreType::PiercingArterial:
+            return {0.9f, 40, 120.0f};  // Puncture resistance bite
+        case gore::GoreType::GenericLethal:
+            return {0.95f, 80, 75.0f};  // Standard heavy lethal blow
+        default:
+            return Samples[int(Category::Melee)];
+    }
 }
 using Pattern=std::array<Sample,2>; // right, left
 inline Pattern BowPull(float draw) {
