@@ -44,6 +44,9 @@ using BlockFn=int(*)(uintptr_t,uintptr_t,uintptr_t,int,int);
 using DodgeFn=int(*)(uintptr_t,uintptr_t,int);
 HitFn originalHit=nullptr;SeedFn originalSeed=nullptr;BlockFn originalBlock=nullptr;DodgeFn originalDodge=nullptr;
 std::atomic<bool> enabled{false},ready{false};
+std::atomic<bool> g_goreEnabled{true};
+std::atomic<int> g_decapitationRate{2}; // 0 = Off, 1 = Crits, 2 = Dynamic 35%, 3 = High 65%, 4 = Always
+std::atomic<bool> g_headPhysics{true};
 bool hitIn=false,seedIn=false,blockIn=false,dodgeIn=false,rollChecked=false;
 // One atomic value keeps freshness and id coherent, including native id zero.
 std::atomic<uint64_t> localIdentity{0},localSession{0};
@@ -709,8 +712,48 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
                 }
                 const uint32_t weaponType=gamestate::WeaponType();
                 const int strikingHand=swingTarget!=NoSwing?swingHand:0;
-                const auto goreType=framevr::gore::ClassifyMeleeGore(weaponType,lethal,false);
-                if(goreType!=framevr::gore::GoreType::None||lethal) {
+                const bool isGoreActive=g_goreEnabled.load();
+
+                // Circumstantial decapitation check
+                bool shouldDecapitate=false;
+                if(isGoreActive && framevr::gore::IsCuttingWeapon(weaponType) && lethal) {
+                    const int rate = g_decapitationRate.load();
+                    const auto now = GetTickCount64();
+                    const bool isRiposte = (riposteMonster.load() == header[2] && now < riposteUntil.load());
+                    const int damageDealt = before - value;
+                    const bool isOverkill = (before > 0 && damageDealt >= (before * 3) / 2);
+                    const bool isCriticalOrOverkill = isRiposte || isOverkill || (lastFactor >= 1.5f);
+
+                    if (rate == 1) { // Crits only
+                        shouldDecapitate = isCriticalOrOverkill;
+                    } else if (rate == 2) { // Dynamic 35%
+                        if (isCriticalOrOverkill) {
+                            shouldDecapitate = true;
+                        } else {
+                            const uint32_t roll = (uint32_t(now) * 1103515245u + header[2]) % 100u;
+                            shouldDecapitate = (roll < 35u);
+                        }
+                    } else if (rate == 3) { // High 65%
+                        if (isCriticalOrOverkill) {
+                            shouldDecapitate = true;
+                        } else {
+                            const uint32_t roll = (uint32_t(now) * 1103515245u + header[2]) % 100u;
+                            shouldDecapitate = (roll < 65u);
+                        }
+                    } else if (rate >= 4) { // Always
+                        shouldDecapitate = true;
+                    }
+                }
+
+                auto goreType = framevr::gore::ClassifyMeleeGore(weaponType, lethal, false);
+                if (framevr::gore::IsCuttingWeapon(weaponType)) {
+                    goreType = shouldDecapitate ? framevr::gore::GoreType::SlashDecapitation : framevr::gore::GoreType::GenericLethal;
+                }
+                if (!isGoreActive) {
+                    goreType = framevr::gore::GoreType::None;
+                }
+
+                if((goreType!=framevr::gore::GoreType::None||lethal) && isGoreActive) {
                     framevr::gore::GoreEvent ev{};
                     ev.timestamp=GetTickCount64();
                     ev.monsterId=header[2];
@@ -719,9 +762,22 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
                     ev.taxonomy=framevr::gore::TaxonomyForMonster(header[1]);
                     ev.hand=strikingHand;
                     ev.lethal=lethal;
-                    ev.critical=false;
+                    ev.critical=shouldDecapitate;
                     ev.distanceSubTiles=dist;
                     ev.worldPos[0]=mx;ev.worldPos[1]=0;ev.worldPos[2]=mz;
+
+                    // Directional impulse: from attacker towards monster with upward pop
+                    float dx = mx - ax, dz = mz - az;
+                    float dlen = std::hypot(dx, dz);
+                    if (dlen > 1e-3f) {
+                        ev.impactNormal[0] = (dx / dlen) * 2.2f;
+                        ev.impactNormal[1] = 1.8f;
+                        ev.impactNormal[2] = (dz / dlen) * 2.2f;
+                    } else {
+                        ev.impactNormal[0] = 1.2f;
+                        ev.impactNormal[1] = 1.8f;
+                        ev.impactNormal[2] = 1.2f;
+                    }
                     framevr::gore::Publish(ev);
                 }
             }
@@ -1286,6 +1342,16 @@ OnHitScope GateOnHit(OnHitScope scope) {
 int LastSwingWouldHit() {return lastSwingVerdict;}
 void ConfigureShotRules(bool unleashed) {shotRules=unleashed;}
 void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
+void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
+    g_goreEnabled.store(enabled);
+    g_decapitationRate.store(decapitationRate);
+    g_headPhysics.store(headPhysics);
+}
+
+bool GoreHeadPhysics() {
+    return g_headPhysics.load();
+}
+
 void ConfigureRiposte(float bonus,uint32_t windowMs,float volume,const wchar_t* soundFile) {
     riposteBonus=std::clamp(bonus,0.f,4.f);riposteMs=windowMs;
     {std::lock_guard lock(riposteSoundMutex);const float v=std::clamp(volume,0.f,4.f);if(riposteExtra!=v){riposteExtra=v;riposteGain=-1;}}

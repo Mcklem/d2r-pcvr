@@ -108,26 +108,24 @@ struct D2RVR_GoreQueue {
 
 ## 4. Detalles de Implementación de los Subsistemas
 
-### 4.1. Decapitación Esquelética en Granny 3D (`vr/skeletons.cpp`)
-- **Hook existente:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
-- **Lógica de Colapso Óseo:**
-  ```cpp
-  // En Hook de ComputeSelfWorldPose en vr/skeletons.cpp:
-  if (g_goreSystemActive && IsMonsterDecapitated(self)) {
-      const int headBoneIndex = FindHeadBone(skeleton);
-      if (headBoneIndex >= 0) {
-          // Escalar matriz de transformación de la cabeza a escala casi cero
-          Mat& headMat = worldPoses[headBoneIndex];
-          for (int r = 0; r < 3; ++r) {
-              for (int c = 0; c < 3; ++c) {
-                  headMat.m[r * 4 + c] *= 0.0001f;
-              }
-          }
-          // Colapsar todos los huesos hijos de la cabeza
-          CollapseDescendants(skeleton, headBoneIndex, worldPoses);
-      }
-  }
-  ```
+### 4.1. Decapitación Esquelética en Granny 3D y Prop Físico de Cabeza (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
+- **Hook en tiempo real:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
+- **Lógica de Decapitación Circunstancial (No 100% Ubicua):**
+  - Se evita que todo enemigo con cabeza resulte decapitado de forma monótona o irreal.
+  - La probabilidad y condición de corte se calcula en `vr/combat.cpp` en función del daño infligido y la configuración del usuario:
+    - **Modo 0 (Off):** Decapitación desactivada.
+    - **Modo 1 (Crits Only):** Exclusivamente en golpes críticos (riposte letal, factor multiplicador de daño melee $\ge 1.5$, o daño excesivo *overkill* que supere el $150\%$ de la vida restante del monstruo).
+    - **Modo 2 (Dynamic 35%):** Garantizado en críticos/riposte/overkill, y con un $35\%$ de probabilidad en cortes letales estándar con armas afiladas.
+    - **Modo 3 (High 65%):** Garantizado en críticos/riposte/overkill, y con un $65\%$ de probabilidad en cortes letales estándar.
+    - **Modo 4 (Always):** $100\%$ de decapitaciones en todo golpe letal cortante.
+- **Física Balística 3D de la Cabeza Cercenada:**
+  - Cuando la opción de físicas de cabeza está activa (`SeveredHeadPhysics = 1`), la cabeza no desaparece: el hueso `headBone` y todos sus huesos descendientes (mandíbula, cuernos, barba, etc.) se desprenden con física balística tridimensional en tiempo real:
+    - **Impulso de corte:** Vector de velocidad $\mathbf{v}_0$ derivado de la dirección del golpe del jugador y la inercia del arma (con elevación vertical y dispersión lateral).
+    - **Trayectoria y gravedad:** Simulación parabólica $\mathbf{P}(t) = \mathbf{P}_0 + \mathbf{v}_0 t - \frac{1}{2} \mathbf{g} t^2$ con $g = 9.81\text{ m/s}^2$.
+    - **Rebote en el suelo:** Detección de cota de suelo del monstruo (`floorY`) con coeficiente de restitución inelástico $e = 0.35$ en rebotes primario y secundario.
+    - **Fricción y reposo:** Amortiguación exponencial horizontal ($\mu = 2.5$) hasta el reposo definitivo en el suelo.
+    - **Giro y volteo (*Tumble rotation*):** Rotación angular tridimensional continua alrededor de un eje perpendicular al vector de vuelo calculada mediante la fórmula de rotación de Rodrigues.
+  - Si el usuario prefiere un acabado limpio (`SeveredHeadPhysics = 0` o "Clean Stump"), el hueso de la cabeza y sus hijos se colapsan a escala $0.0001f$ anclados exactamente al pivote del cuello cercenado.
 - **Monstruos cualificados:** Inicialmente humanoides bípedos con jerarquía esquelética estándar:
   - Caídos / Chamanes (`Fallen`, `FallenShaman`).
   - Zombis / Demonios famélicos (`Zombie`, `HungryDead`).
@@ -175,36 +173,44 @@ flowchart LR
 4. **Audio 3D:** Conectar FMOD en `vr/spatial_audio.cpp` para reproducir sonidos de rotura y desgarro situados en la posición tridimensional del monstruo.
 5. **Verificación automatizada:** Crear el test nativo `gore-events-test` en `steamvr/CMakeLists.txt` (Superado 100%).
 
-### Fase 2: Decapitación Esquelética Granny 3D en Tiempo Real [COMPLETADA]
+### Fase 2: Decapitación Esquelética Granny 3D y Prop Físico de Cabeza [COMPLETADA]
 *Objetivo: Ver cabezas rodar o desaparecer físicamente de los monstruos en combate cuerpo a cuerpo.*
 1. **Detección de rigs y jerarquías:** Implementado en `shared/d2r_vr_decapitation.h` con resolución prioritaria de huesos de cabeza (`head_M_JNT`, `head_bind_jnt`, `Bip01 Head`, `head`) y cuello (`neck_M_JNT`, `neck_bind_jnt`, `Bip01 Neck`, `neck`) para Caídos, Zombis, Esqueletos, Pícaras y Bestias.
 2. **Propagación y colapso óseo:** Construcción de máscara de descendientes $O(N)$ y colapso en escala $0.0001f$ anclando la posición tridimensional exactamente al pivote del cuello (`CollapseHeadBones`).
-3. **Hook de transformación en runtime:** Integrado en `vr/skeletons.cpp` dentro de `Hook` (`ComputeSelfWorldPose`) vinculando eventos `SlashDecapitation` de la cola IPC con instancias de esqueletos en espacio de juego vía ECS (`CandidatePosition`).
-4. **Ciclo de vida y TTL:** Gestión thread-safe con `DecapitationManager` (TTL de 60 s para respetar animación de muerte y persistencia de cadáver).
-5. **Verificación automatizada:** Creado test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 5 suites pasando (144/144 tests globales pasando).
+3. **Simulador balístico 3D de cabeza cercenada:** `SimulateHeadPhysics` con parábola gravitatoria, rebotes inelásticos contra el plano de suelo del monstruo ($e=0.35$), fricción horizontal ($\mu=2.5$) y rotación de volteo (*tumble*) en tiempo real.
+4. **Decapitación circunstancial:** Integrada en `vr/combat.cpp` basada en tipo de daño (armas cortantes), daño excesivo (*overkill* $>150\%$), golpes críticos o riposte mortal, y probabilidad graduable.
+5. **Hook de transformación en runtime:** Integrado en `vr/skeletons.cpp` dentro de `Hook` (`ComputeSelfWorldPose`) vinculando eventos `SlashDecapitation` de la cola IPC con instancias de esqueletos en espacio de juego vía ECS (`CandidatePosition`), alimentando las físicas con el nivel de suelo y la normal de impacto.
+6. **Ciclo de vida y TTL:** Gestión thread-safe con `DecapitationManager` (TTL de 60 s para respetar animación de muerte y persistencia de cadáver).
+7. **Verificación automatizada:** Test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 7 suites completas pasando (144/144 tests globales pasando).
 
-### Fase 3: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo)
+### Fase 3: Integración en Menú de Ajustes VR (`VR Settings > Combat`) [COMPLETADA]
+*Objetivo: Permitir al usuario calibrar y alternar las opciones de gore directamente desde el visor en tiempo de ejecución.*
+1. **Controles en `Page::Combat`:**
+   - `Extra Gore`: `Off (Disabled)` / `World Only (Rec)` / `Full (Visor Ichor)`.
+   - `Decapitation Rate`: `Off` / `Crits Only` / `Dynamic 35%` / `High 65%` / `Always 100%`.
+   - `Severed Head Physics`: `Roll & Bounce (3D)` / `Clean Stump`.
+2. **Optimización de UI:** Emparejamiento horizontal de `DecapitationRate` y `SeveredHeadPhysics` mediante `PairOf`, manteniendo el catálogo en exactamente 10 filas (`CatalogCount == 10`) sin colisionar con el área de mensajes del pie de página. Ocultación reactiva de opciones dependientes cuando `Extra Gore` está desactivado.
+3. **Persistencia en `d2r_pcvr.ini`:** Sección `[gore]` leída y propagada a `combat::ConfigureGore(...)` y `skeletons.cpp`.
+4. **Verificación automatizada:** Test nativo `vr-settings-test` (144/144 tests superados).
+
+### Fase 4: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo)
 *Objetivo: Trasladar el gore a la perspectiva en primera persona sin ensuciar la visión vital del visor.*
 1. **Tracking de filo:** Implementar `weapon_blood.h` con el cálculo de la posición de la hoja de espadas, hachas y mazas.
 2. **Acumulación y secado:** Simular el manchado gradual de la hoja y el secado por inercia o sacudida.
 3. **Goteo físico:** Gotas de sangre que emergen de la punta y caen hacia el suelo.
 4. **Verificación automatizada:** Test unitario `weapon-blood-test`.
 
-### Fase 4: Surtidores Arteriales 3D en Direct3D 12
+### Fase 5: Surtidores Arteriales 3D en Direct3D 12
 *Objetivo: Erupción volumétrica de sangre tridimensional con física balística.*
 1. **Pipeline D3D12:** Adaptar `elemental_hands_renderer.cpp` para crear `gore_renderer.cpp` con pipeline state object (PSO) de partículas rojas/oscuras.
 2. **Física de partículas:** Simulación de gravedad, dispersión cónica y atenuación de opacidad.
 3. **Verificación visual:** Vista previa mediante `interaction-preview.exe` o test `blood-particles-render-test`.
 
-### Fase 5: Overkill Extremo, Corpse Explosion y Menú de Ajustes
-*Objetivo: Culminación del sistema con soporte para hechizos brutales y opciones de personalización.*
+### Fase 6: Overkill Extremo y Corpse Explosion
+*Objetivo: Culminación del sistema con soporte para hechizos brutales.*
 1. **Corpse Explosion masiva:** Activación del efecto con la habilidad `CorpsExp` si el jugador está a $<4\text{ m}$.
 2. **Gore elemental:** Quiebre de hielo para muertes por frío y bilis verde para muertes por veneno.
-3. **Opciones en Menú VR (`VR Settings > Combat`):**
-   - `Hostile gore mode`: `Disabled` / `In-World Only` (Recomendado) / `Full Ichor Visor`.
-   - `Decapitation rate`: `Normal` / `High` / `Guaranteed Crits`.
-   - `Weapon blood staining`: `On` / `Off`.
-4. **Verificación completa:** Suite de pruebas CTest (117+ tests pasando) y pruebas en visor Quest 3 / Steam Frame.
+3. **Verificación completa:** Suite de pruebas CTest (144/144 tests pasando) y pruebas en visor Quest 3 / Steam Frame.
 
 ---
 
@@ -212,9 +218,9 @@ flowchart LR
 
 ```ini
 [gore]
-enabled=1                 ; 0 = Apagado, 1 = Encendido
-mode=1                    ; 0 = Solo en el Mundo (Armas/Manos/3D), 1 = Mundo + Ichor efímero en visor
-decapitation=1            ; 1 = Permite decapitación esquelética en golpes letales cortantes
+enabled=1                 ; 0 = Apagado, 1 = Solo Mundo (Recomendado), 2 = Completo (con salpicaduras efímeras en visor)
+decapitation=2            ; 0 = Off, 1 = Crits Only, 2 = Dynamic 35%, 3 = High 65%, 4 = Always 100%
+head_physics=1            ; 0 = Clean Stump (cuello limpio), 1 = Roll & Bounce (cabeza cercenada con físicas 3D)
 weapon_blood=1            ; 1 = Las armas acumulan sangre y gotean
 arterial_spray=1          ; 1 = Chorro de partículas D3D12 en decapitaciones
 corpse_explosion_fx=1     ; 1 = Onda de choque y salpicadura por explosión de cadáveres

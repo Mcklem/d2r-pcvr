@@ -38,6 +38,7 @@ struct GoreEvent {
     bool critical = false;        // True if critical strike / crushing blow
     float distanceSubTiles = 0.f; // Distance in game sub-tiles (5 sub-tiles = 1 tile)
     float worldPos[3] = {0,0,0};  // Game world coordinates
+    float impactNormal[3] = {0,0,0}; // Strike impulse direction vector
 };
 
 inline bool IsCuttingWeapon(uint32_t weaponType) {

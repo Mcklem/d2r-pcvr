@@ -378,7 +378,7 @@ int main(){
         thrust.Click(hit);Check(thrust.Get()[MeleeThrustSpeed]==2.25f,"thrust speed adjusts in quarter steps");
         const auto request=thrust.Click({Kind::Apply});
         Check(request.changed==(ChangeMask{1}<<MeleeThrustSpeed),"thrust edit does not change swing speed or combat rules");
-        Check(RowCount(Page::Combat)==8&&RowKey(Page::Combat,2)==ShieldBashSpeed,"eight Combat rows retain independent bash speed; parry window is fixed");
+        Check(RowCount(Page::Combat)==10&&RowKey(Page::Combat,2)==ShieldBashSpeed,"ten Combat rows retain independent bash speed; parry window is fixed");
         Check(Normalize(MeleeThrustSpeed,NAN)==2&&Normalize(MeleeThrustSpeed,0)==.75f&&Normalize(MeleeThrustSpeed,99)==10,"thrust speed has finite usable bounds");
     }
     {Model strain;strain.Open(s);strain.Click({Kind::Tab,int(Page::Combat)});
@@ -632,6 +632,44 @@ int main(){
         Check(companion.Get()[CompanionAi]==1,"increase selects Enabled (1)");
         companion.Click(At(companion,Page::Combat,Decrease(7)));
         Check(companion.Click({Kind::Apply}).changed==(ChangeMask{1}<<CompanionAi),"companion AI saves only its own setting");
+    }
+    {Model gore;gore.Open(s);gore.Click({Kind::Tab,int(Page::Combat)});
+        Check(s.values[ExtraGore]==1&&RowKey(Page::Combat,8)==ExtraGore,"extra gore is the ninth Combat row, Enabled by default");
+        Check(std::wstring(Definitions[ExtraGore].section)==L"gore"&&std::wstring(Definitions[ExtraGore].key)==L"enabled",
+              "extra gore INI key is [gore] enabled");
+        Check(s.values[DecapitationRate]==2&&RowKey(Page::Combat,9)==DecapitationRate,"decapitation frequency is the tenth Combat row, Dynamic 35% by default");
+        Check(std::wstring(Definitions[DecapitationRate].section)==L"gore"&&std::wstring(Definitions[DecapitationRate].key)==L"decapitation",
+              "decapitation INI key is [gore] decapitation");
+        Check(s.values[SeveredHeadPhysics]==1&&PairOf(DecapitationRate)==SeveredHeadPhysics,"severed head physics is paired with decapitation rate");
+        Check(std::wstring(Definitions[SeveredHeadPhysics].section)==L"gore"&&std::wstring(Definitions[SeveredHeadPhysics].key)==L"head_physics",
+              "severed head physics INI key is [gore] head_physics");
+
+        // Turning ExtraGore Off hides DecapitationRate and SeveredHeadPhysics
+        gore.Click(At(gore,Page::Combat,ValueBox(8)));
+        Check(gore.Get()[ExtraGore]==0,"clicking value turns extra gore Off");
+        Check(RowCount(Page::Combat,gore.Get())==9,"turning extra gore Off hides decapitation settings");
+
+        // Turning ExtraGore On restores 10 rows
+        gore.Click(At(gore,Page::Combat,ValueBox(8)));
+        Check(gore.Get()[ExtraGore]==1&&RowCount(Page::Combat,gore.Get())==10,"turning extra gore back On shows 10 rows");
+
+        // Stepping DecapitationRate: left stepper of paired row
+        gore.Click(At(gore,Page::Combat,PairDecrease(9,0)));
+        Check(gore.Get()[DecapitationRate]==1,"minus steps to Crits only (1)");
+        gore.Click(At(gore,Page::Combat,PairDecrease(9,0)));
+        Check(gore.Get()[DecapitationRate]==0,"minus steps to Off (0)");
+        gore.Click(At(gore,Page::Combat,PairDecrease(9,0)));
+        Check(gore.Get()[DecapitationRate]==0,"decapitation rate does not underflow below 0");
+        gore.Click(At(gore,Page::Combat,PairIncrease(9,0)));
+        Check(gore.Get()[DecapitationRate]==1,"plus steps to Crits only (1)");
+        gore.Click(At(gore,Page::Combat,PairIncrease(9,0)));
+        Check(gore.Get()[DecapitationRate]==2,"plus steps to Dynamic 35% (2)");
+
+        // Stepping SeveredHeadPhysics: right stepper of paired row
+        gore.Click(At(gore,Page::Combat,PairValue(9,1)));
+        Check(gore.Get()[SeveredHeadPhysics]==0,"clicking right stepper toggles severed head physics Off");
+        gore.Click(At(gore,Page::Combat,PairValue(9,1)));
+        Check(gore.Get()[SeveredHeadPhysics]==1,"clicking right stepper toggles severed head physics back On");
     }
     {Model difficulty;difficulty.Open(s);difficulty.Click({Kind::Tab,int(Page::Combat)});
         Check(s.values[OfflinePlayers]==0&&RowKey(Page::Combat,4)==OfflinePlayers,"difficulty preserves native settings by default");

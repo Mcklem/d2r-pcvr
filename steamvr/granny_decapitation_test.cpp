@@ -319,6 +319,103 @@ void TestEventQueueDecapitationMatching() {
     assert(!foundStale);
 }
 
+
+void TestSeveredHeadPhysicsTrajectory() {
+    printf("[granny-decapitation-test] Suite 6: Severed Head Physics Trajectory & Floor Bounce\n");
+
+    const float p0[3] = {10.0f, 1.5f, 20.0f};
+    const float v0[3] = {2.0f, 1.8f, 0.0f};
+    const float floorY = 0.0f;
+    const float spinAxis[3] = {0.0f, 1.0f, 0.0f};
+    const float spinSpeed = 8.0f;
+
+    // At t = 0: exactly initial pivot
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(0.0f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(std::fabs(pos[0] - 10.0f) < 1e-4f);
+        assert(std::fabs(pos[1] - 1.5f) < 1e-4f);
+        assert(std::fabs(pos[2] - 20.0f) < 1e-4f);
+    }
+
+    // At t = 0.15s: in air, rising toward apex
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(0.15f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(pos[1] > 1.5f); // rose into the air
+        assert(pos[0] > 10.0f); // moved forward
+    }
+
+    // At t = 1.0s: bouncing above ground
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(1.0f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(pos[1] >= floorY + 0.12f); // never below ground plane
+    }
+
+    // At t = 5.0s: completely settled and resting on the ground
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(5.0f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(std::fabs(pos[1] - (floorY + 0.12f)) < 1e-3f); // resting at floor + radius
+        assert(pos[0] > 10.5f && pos[0] < 12.0f); // realistic horizontal slide
+        // Check rotation matrix orthogonality (row 0 length ~ 1)
+        float lenSq = rot[0]*rot[0] + rot[1]*rot[1] + rot[2]*rot[2];
+        assert(std::fabs(lenSq - 1.0f) < 1e-3f);
+    }
+}
+
+void TestDecapitationPhysicsModes() {
+    printf("[granny-decapitation-test] Suite 7: Severed Head Physics Toggle (Enabled vs Disabled)\n");
+
+    auto& mgr = framevr::decap::Manager();
+    mgr.Clear();
+
+    const uintptr_t skelPhys = 0x2000A0;
+    const uintptr_t skelVanish = 0x2000B0;
+    const uint64_t t0 = 10000;
+    const std::vector<uint8_t> inHead = {0, 0, 0, 1, 1}; // 5 bones: 0=root, 1=spine, 2=neck, 3=head, 4=horn
+
+    const float impulse[3] = {1.5f, 1.8f, 0.0f};
+
+    // 1. Instance with head physics ENABLED
+    mgr.RegisterDecapitation(skelPhys, 501, 3, 2, inHead, t0, 0.0f, impulse, true);
+
+    // 2. Instance with head physics DISABLED (clean vanish)
+    mgr.RegisterDecapitation(skelVanish, 502, 3, 2, inHead, t0, 0.0f, impulse, false);
+
+    std::vector<MockMatrix> posesA = {
+        MockMatrix::Translation(0, 0, 0),
+        MockMatrix::Translation(0, 1, 0),
+        MockMatrix::Translation(0, 1.5f, 0),
+        MockMatrix::Translation(0, 1.8f, 0),
+        MockMatrix::Translation(0.2f, 2.1f, 0)
+    };
+    std::vector<MockMatrix> posesB = posesA;
+
+    // Apply at t0 + 2000ms
+    float pivotA[3] = {}, pivotB[3] = {};
+    mgr.ApplyCollapse(skelPhys, posesA.data(), 5, t0 + 2000, pivotA);
+    mgr.ApplyCollapse(skelVanish, posesB.data(), 5, t0 + 2000, pivotB);
+
+    // Instance A (physics): head must NOT be collapsed to 0.0001f scale, but displaced by physics
+    const float scaleSqA = posesA[3].m[0] * posesA[3].m[0] + posesA[3].m[1] * posesA[3].m[1] + posesA[3].m[2] * posesA[3].m[2];
+    assert(std::fabs(scaleSqA - 1.0f) < 1e-3f); // full scale maintained (unit orthogonal rotation)
+    assert(posesA[3].m[12] > 0.2f); // moved horizontally by physics
+    assert(posesA[4].m[12] > 0.2f); // child bone horn followed head
+
+    // Instance B (vanish): head must be collapsed to 0.0001f scale and pinned to neck pivot
+    assert(std::fabs(posesB[3].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(posesB[3].m[13] - 1.5f) < 1e-4f);
+    assert(std::fabs(posesB[4].m[0] - 0.0001f) < 1e-6f);
+
+    mgr.Clear();
+}
+
 } // namespace
 
 int main() {
@@ -328,7 +425,9 @@ int main() {
     TestMatrixCollapseMath();
     TestDecapitationManagerLifecycle();
     TestEventQueueDecapitationMatching();
-    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (5/5 SUITES) ===\n");
+    TestSeveredHeadPhysicsTrajectory();
+    TestDecapitationPhysicsModes();
+    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (7/7 SUITES) ===\n");
     return 0;
 }
 

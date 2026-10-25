@@ -44,6 +44,7 @@
 #include "sigscan.h"
 #include "d2r_vr_gore.h"
 #include "d2r_vr_decapitation.h"
+#include "combat.h"
 #ifdef D2RVR_NATIVE_OPENXR
 #include "memory.h"
 #include "logging.h"
@@ -3500,7 +3501,8 @@ void DecapitateMonster(uintptr_t self) {
             const int neckBone = framevr::decap::FindNeckBone(names, parents, headBone);
             const auto inHead = framevr::decap::BuildDescendantMask(count, parents, headBone);
 
-            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now);
+            const bool headPhys = combat::GoreHeadPhysics();
+            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, pos[1], ev.impactNormal, headPhys);
 
             uintptr_t world = 0;
             int32_t wpCount = 0;

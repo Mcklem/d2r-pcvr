@@ -41,6 +41,12 @@ static void ValueLabel(Key key,float value,const Context& c,char* label,size_t s
     else if(key==HeartbeatStart){if(value==0)std::snprintf(label,size,"Off");else std::snprintf(label,size,"%.0f%% life",value);}
     else if(key==EnemySight){if(value==100)std::snprintf(label,size,"100%% (Default)");else std::snprintf(label,size,"%.0f%%",value);}
     else if(key==CompanionAi)std::snprintf(label,size,"%s",value>.5f?"Enabled":"Legacy");
+    else if(key==ExtraGore)std::snprintf(label,size,"%s",value>.5f?"Enabled":"Off");
+    else if(key==DecapitationRate){
+        static constexpr const char* rates[]={"Off","Crits only","Dynamic 35%","High 65%","Always"};
+        std::snprintf(label,size,"%s",rates[std::clamp(int(value),0,4)]);
+    }
+    else if(key==SeveredHeadPhysics)std::snprintf(label,size,"%s",value>.5f?"Head: On":"Head: Off");
     else if(Definitions[key].max==1)std::snprintf(label,size,"%s",value>.5f?"On":"Off");
     else if(key==Snap)std::snprintf(label,size,"%.0f deg",value);
     else if(key==VitalsTilt)std::snprintf(label,size,"%+.6g deg",value);
@@ -227,10 +233,15 @@ std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,co
                  framegen::Warning(frameGen)?warn:frameGen.state==framegen::State::Active?teal:quiet);
         }
         if(m.page==Page::Combat){
-            // The ninth row ends at 800; without the offline adapter its notice replaces the difficulty note.
-            if(m.offlineDifficultyAvailable)
-                text("Difficulty affects new monsters only; existing monsters keep their stats. To apply it throughout the game, Save and Exit, then start a new game with the same character.",{58,804,1160,56},false,false,quiet);
-            else text("Offline scaling adapter unavailable. Game difficulty remains unchanged.",{58,804,1160,30},false,false,quiet);
+            // With 10 rows, place the note at 854 (between row 9 ending at 852 and footer message at 876)
+            const int noteY = rows.count > 8 ? 854 : 804;
+            const int noteH = rows.count > 8 ? 22 : 56;
+            if(m.offlineDifficultyAvailable) {
+                if(rows.count > 8)
+                    text("Offline difficulty applies to new monsters. Save & Exit to apply everywhere.",{58,noteY,1160,noteH},false,false,quiet);
+                else
+                    text("Difficulty affects new monsters only; existing monsters keep their stats. To apply it throughout the game, Save and Exit, then start a new game with the same character.",{58,noteY,1160,noteH},false,false,quiet);
+            } else text("Offline scaling adapter unavailable. Game difficulty remains unchanged.",{58,noteY,1160,noteH},false,false,quiet);
         }
         if(m.page==Page::Haptics){
             text("0% is Off; 100% is normal. Overall strength scales each category, up to the controller's maximum. Adjust in steps of 10%.",{58,750,1160,56},false,false,quiet);

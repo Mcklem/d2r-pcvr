@@ -18,7 +18,7 @@ namespace framevr::settings {
 enum class Page { Controls, VR, Video, HUD, Combat, Aim, Shield, Haptics, Performance, ReleaseNotes };
 enum Key { Motion, Seated, Dominant, Snap, TurnSpeed, Waist, BeltForward,
            Foveation, Sky, Fog, Ceiling, DrawDistance, ObjectDistance,
-           EyeHeight, ArmSpan, BodyCalibration, SkillGestures, WristMap, WristCompass, ControllerLabels, WeaponSkillIndicators, PlanarSpellAim, VitalsLocation, CriticalAlerts, RenderResolution, NavigationLocation, SmoothTurn, OrdinaryMobBars, MenuDistance, TooltipTiming, ProjectileAimAssist, MeleeHitSpeed, VitalsTilt, HapticStrength, HapticMelee, HapticBowDraw, HapticBowRelease, HapticSpell, HapticInteraction, HapticAlert, HapticShortMelee, BloodVisor, BloodWipe, MeleeThrustSpeed, LootLabelSize, CompanionCounts, StrainVignette, OfflinePlayers, ShieldBashSpeed, DesktopOneEye, MapTopDown, MapRotate, FoveationStrength, StereoRendering, DeferGpuWait, TargetHighlight, HeartbeatStart, SpellLock, StaffPoint, LandingCircles, GroundAim, AimHighlights, HighlightRight, HighlightLeft, ElementalHands, EnemySight, BowLaser, ThrowLift, BottlePhysics, PropPhysics, CompanionAi, ShieldGrip, ShieldOut, ShieldUp, ShieldFollow, ShieldRoll, AimFollowsView, LeftHandStrikes, TorchFlame, FrameGeneration, FrameGenPreset, FrameGenScale, Count };
+           EyeHeight, ArmSpan, BodyCalibration, SkillGestures, WristMap, WristCompass, ControllerLabels, WeaponSkillIndicators, PlanarSpellAim, VitalsLocation, CriticalAlerts, RenderResolution, NavigationLocation, SmoothTurn, OrdinaryMobBars, MenuDistance, TooltipTiming, ProjectileAimAssist, MeleeHitSpeed, VitalsTilt, HapticStrength, HapticMelee, HapticBowDraw, HapticBowRelease, HapticSpell, HapticInteraction, HapticAlert, HapticShortMelee, BloodVisor, BloodWipe, MeleeThrustSpeed, LootLabelSize, CompanionCounts, StrainVignette, OfflinePlayers, ShieldBashSpeed, DesktopOneEye, MapTopDown, MapRotate, FoveationStrength, StereoRendering, DeferGpuWait, TargetHighlight, HeartbeatStart, SpellLock, StaffPoint, LandingCircles, GroundAim, AimHighlights, HighlightRight, HighlightLeft, ElementalHands, EnemySight, BowLaser, ThrowLift, BottlePhysics, PropPhysics, CompanionAi, ExtraGore, DecapitationRate, SeveredHeadPhysics, ShieldGrip, ShieldOut, ShieldUp, ShieldFollow, ShieldRoll, AimFollowsView, LeftHandStrikes, TorchFlame, FrameGeneration, FrameGenPreset, FrameGenScale, Count };
 // One bit per setting, 128 wide: two words, since MSVC has no 128-bit integer.
 struct ChangeMask {
     static constexpr int Bits=128;
@@ -119,6 +119,9 @@ inline constexpr std::array<Definition,Count> Definitions{{
     {"Bottle physics", "Emptied bottles roll; thrown potions and traps stop at walls", L"interactions",L"bottle_physics",1,0,1,1},
     {"Knockable props", "Weapons and hands knock the level's cups, plates and vases about", L"interactions",L"prop_physics",1,0,1,1},
     {"Enhanced VR Mercenary", "Tactical positioning, dynamic detection range, elastic leash and anti-stuck watchdog", L"gameplay",L"companion_ai",1,0,1,1},
+    {"Hostile extra gore", "Decapitations and visceral combat effects for physical strikes", L"gore",L"enabled",1,0,1,1},
+    {"Decapitation frequency", "Off, Crits only, Dynamic (35%), High (65%), or Always", L"gore",L"decapitation",2,0,4,1},
+    {"Severed head physics", "Spawns a physics-driven severed head in the 3D world", L"gore",L"head_physics",1,0,1,1},
     {"Shield grip offset", "Slides the shield along the forearm so the hand reaches its grip", L"gameplay",L"shield_grip_cm",0,-10,40,1},
     {"Shield out from the arm", "Moves the shield away from the forearm (+) or into it (-)", L"gameplay",L"shield_out_cm",0,-30,30,1},
     {"Shield up", "Moves the shield across the forearm, square to Out", L"gameplay",L"shield_up_cm",0,-30,30,1},
@@ -174,7 +177,7 @@ inline float Normalize(Key key,float value){
     if(key==EnemySight)return float(enemysight::NormalizePercent(value));
     if(key==VitalsTilt)return vitals::NormalizeTilt(value);
     if(HapticKey(key))return haptics::NormalizeStrength(value);
-    if((key==ControllerLabels||key==VitalsLocation||key==NavigationLocation||key==RenderResolution||key==MenuDistance||key==TooltipTiming||key==ProjectileAimAssist||key==GroundAim||key==SpellLock||key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale)&&(value<d.min||value>d.max||value!=std::round(value)))return d.defaultValue;
+    if((key==ControllerLabels||key==VitalsLocation||key==NavigationLocation||key==RenderResolution||key==MenuDistance||key==TooltipTiming||key==ProjectileAimAssist||key==GroundAim||key==SpellLock||key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale||key==DecapitationRate)&&(value<d.min||value>d.max||value!=std::round(value)))return d.defaultValue;
     value=std::clamp(value,d.min,d.max);
     return d.step==1?std::round(value):value;
 }
@@ -379,6 +382,7 @@ inline bool AimedMonsterUsed(const Values& v){return v[TargetHighlight]>0||v[Spe
 // matters with another row's choice, or for another class or weapon.
 inline bool RowShown(Key key,const Values& v,const Context& c){
     switch(key){
+        case DecapitationRate:case SeveredHeadPhysics:return v[ExtraGore]>.5f;
         case AimHighlights:case HighlightLeft:return v[TargetHighlight]>0;   // the outline's own rows
         case AimFollowsView:return AimedMonsterUsed(v);
         case GroundAim:return GroundSkillClass(c);
@@ -398,17 +402,19 @@ inline bool RowShown(Key key,const Values& v,const Context& c){
 }
 // Two settings that belong together share a row, a stepper each: the left
 // hand's outline color and the right's; NVIDIA's flow quality and its scale.
-inline Key PairOf(Key key){return key==HighlightLeft?HighlightRight:key==FrameGenPreset?FrameGenScale:Count;}
+inline Key PairOf(Key key){return key==HighlightLeft?HighlightRight:key==FrameGenPreset?FrameGenScale:key==DecapitationRate?SeveredHeadPhysics:Count;}
 inline bool Paired(Key key){return PairOf(key)!=Count;}
 inline const char* RowLabel(Key key,const Context& c){
     if(key==HighlightLeft)return "Hand colors";
     if(key==FrameGenPreset)return "NVIDIA optical flow";
+    if(key==DecapitationRate)return "Decapitation";
     if(key==SpellLock&&!BowSkillClass(c))return "Spells go to the aimed monster";
     return Definitions[key].label;
 }
 inline const char* RowDetail(Key key){
     if(key==HighlightLeft)return "Each hand's monster: range or a hue";
     if(key==FrameGenPreset)return "Quality and scale; change live";
+    if(key==DecapitationRate)return "Frequency (left) and severed head physics (right)";
     return Definitions[key].detail;
 }
 // Skills go to the aimed monster, spell_lock bits: 1 spells, 2 bow skills.
@@ -432,13 +438,13 @@ inline Rect PairDecrease(int row,int side){return {PairX(side),RowY+row*RowStep,
 inline Rect PairValue(int row,int side){return {PairX(side)+56,RowY+row*RowStep,238,52};}
 inline Rect PairIncrease(int row,int side){return {PairX(side)+298,RowY+row*RowStep,52,52};}
 // Every row a page can show, in order (Rows leaves out those that cannot apply).
-inline int CatalogCount(Page page){return page==Page::Haptics?2+haptics::CategoryCount:page==Page::Combat?8:page==Page::Aim?10:page==Page::Shield?5:page==Page::VR?10:page==Page::Video?7:page==Page::Performance?8:page==Page::HUD?10:0;}
+inline int CatalogCount(Page page){return page==Page::Haptics?2+haptics::CategoryCount:page==Page::Combat?10:page==Page::Aim?10:page==Page::Shield?5:page==Page::VR?10:page==Page::Video?7:page==Page::Performance?8:page==Page::HUD?10:0;}
 inline Key CatalogKey(Page page,int row){
     constexpr Key hapticRows[]={HapticStrength,HapticMelee,HapticShortMelee,HapticBowDraw,HapticBowRelease,HapticSpell,HapticInteraction,HapticAlert};
     if(page==Page::Haptics)return hapticRows[row];
     // Melee is Unleashed only: Melee rules left the page and the settings on
     // 2026-10-23 ([gameplay] melee_rules is ignored).
-    constexpr Key combat[]={MeleeHitSpeed,MeleeThrustSpeed,ShieldBashSpeed,StrainVignette,OfflinePlayers,HeartbeatStart,EnemySight,CompanionAi};
+    constexpr Key combat[]={MeleeHitSpeed,MeleeThrustSpeed,ShieldBashSpeed,StrainVignette,OfflinePlayers,HeartbeatStart,EnemySight,CompanionAi,ExtraGore,DecapitationRate};
     if(page==Page::Combat)return combat[row];
     // the aimed monster, the staff, the outline: strength, which hands, their colors; the ground skills, circles, the bow path laser, the throws
     // AimFollowsView below every row that brings it, so turning one on moves no row above the pointer
@@ -581,7 +587,7 @@ public:
             const auto key=Key(hit.index);const auto& d=Definitions[key];
             if(d.max==1)draft[key]=draft[key]>.5f?0.f:1.f;
             else if(key==OfflinePlayers)draft[key]=std::clamp(draft[key]+float(hit.delta),0.f,8.f);
-            else if(key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale)draft[key]=std::clamp(draft[key]+float(hit.delta),d.min,d.max);
+            else if(key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale||key==DecapitationRate)draft[key]=std::clamp(draft[key]+float(hit.delta),d.min,d.max);
             else if(key==SpellLock)draft[key]=LockStep(draft[key],hit.delta,context);
             else if(key==ProjectileAimAssist||key==GroundAim)draft[key]=float((int(draft[key])+(hit.delta<0?2:1))%3);   // cycles
             else if(key==MapTopDown)draft[key]=float((int(draft[key])+(hit.delta<0?3:1))%4);   // Isometric, Top-down, Full map, Full top-down, round
