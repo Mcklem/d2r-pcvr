@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cache original 3D potion meshes and textures, the arrow's and the thrown traps', from the installed game.
+"""Cache original 3D potion meshes and textures, the throwing potions', the arrow's and the thrown traps', from the installed game.
 
 Standard-library Python; Battle.net also needs CascLib on Windows. Cache contains Blizzard
 assets and stays in the user's installation, never in the mod's release.
@@ -13,9 +13,12 @@ from pathlib import Path
 from game_assets import open_assets
 from potion_assets import Granny, texture
 
-VERSION = 3   # the cache; 2 adds the arrow, 3 the thrown traps
+VERSION = 4   # the cache; 2 adds the arrow, 3 the thrown traps, 4 the throwing potions
 FORMAT = 1    # each .pvr file's layout
 CODES = tuple(f'{kind}p{tier}' for kind in 'hm' for tier in range(1, 6)) + ('rvs','rvl','yps','wms','vps')
+# The gas and oil potions thrown by hand (#292): each flies as its own bottle
+# (the weapon item's model, normalized as the belt potions are).
+THROWN = ('gps', 'gpm', 'gpl', 'ops', 'opm', 'opl')
 # The basic arrow, drawn on the bow while the game's own nocked arrow is not
 # showing (in town the game stops drawing missiles).
 ARROW = 'arw'
@@ -30,7 +33,7 @@ TOSS = {'tfb': 'data/hd/missiles/expansion_fire_trauma_missile.json',
         'tst': 'data/hd/character/enemy/chargeboltsentry.json',
         'twk': 'data/hd/character/enemy/wakeofdestruction.json'}
 TOSS_SIZE = .14   # metres: the model's largest side
-FILES = tuple(code + '.pvr' for code in CODES + (ARROW,) + tuple(TOSS))
+FILES = tuple(code + '.pvr' for code in CODES + THROWN + (ARROW,) + tuple(TOSS))
 
 
 def encode(meshes, tex):
@@ -126,14 +129,14 @@ def prepare(game, destination=None, force=False, casclib=None):
             try:
                 previous=json.loads(metadata.read_text())
                 if previous['version']==VERSION and previous['build']==assets.build_hash and all(
-                    hashlib.sha256((destination/(code+'.pvr')).read_bytes()).hexdigest()==previous['sha256'][code] for code in CODES+(ARROW,)+tuple(TOSS)):
+                    hashlib.sha256((destination/(code+'.pvr')).read_bytes()).hexdigest()==previous['sha256'][code] for code in CODES+THROWN+(ARROW,)+tuple(TOSS)):
                     return previous
             except (ValueError,KeyError,OSError):
                 pass
         dictionary={k:v for row in json.loads(assets.read('data/hd/items/items.json')) for k,v in row.items()}
         output, sources={},{}
-        for code in CODES:
-            asset='data/hd/items/misc/'+dictionary[code]['asset']
+        for code in CODES+THROWN:
+            asset=('data/hd/items/weapon/' if code in THROWN else 'data/hd/items/misc/')+dictionary[code]['asset']
             unit=json.loads(assets.read(asset+'.json'))
             model=unit['dependencies']['models'][0]['path'].lower().replace('.model','_lod0.model')
             albedo=next(t['path'].lower() for t in unit['dependencies']['textures'] if t['path'].lower().endswith('_alb.texture'))
@@ -149,7 +152,7 @@ def prepare(game, destination=None, force=False, casclib=None):
             output[code]=encode_toss(Granny(assets.read(model)).meshes(),texture(assets.read(albedo)))
             sources[code]={'model':model,'albedo':albedo}
         # Decode/validate all assets before replacing any live cache files.
-        result={'version':VERSION,'build':assets.build_hash,'models':len(CODES),'arrow':True,'toss':len(TOSS),'sources':sources,
+        result={'version':VERSION,'build':assets.build_hash,'models':len(CODES),'thrown':len(THROWN),'arrow':True,'toss':len(TOSS),'sources':sources,
                 'sha256':{code:hashlib.sha256(data).hexdigest() for code,data in output.items()}}
         for code,data in output.items():
             temp=destination/(code+'.pvr.tmp');temp.write_bytes(data);os.replace(temp,destination/(code+'.pvr'))

@@ -28,15 +28,17 @@ int main(){
           WritePrivateProfileStringW(L"interactions",L"map_rotate",L"1",name),"write existing wrist-map choices");
     vrsettings::Poll(name);
     Check(vrsettings::Read().values[MapTopDown]==1&&vrsettings::Read().values[MapRotate]==1,"HUD uses the existing wrist-map saved keys");
-    for(int choice:{0,1}){
+    // Map view cycles Isometric, Top-down, Full map, Full top-down; Rotate map toggles.
+    for(int choice:{2,3,0,1}){
         const auto current=vrsettings::Read();Model map;map.Open(current);map.Click({Kind::Tab,int(Page::HUD)});
         auto click=[&](Rect box){return HitTest(Page::HUD,(box.x+box.w*.5f)/Width,(box.y+box.h*.5f)/Height);};
         map.Click(click(HudMapViewBox));map.Click(click(HudMapRotateBox));
         const auto request=map.Click({Kind::Apply});
         Check(vrsettings::Submit(request)&&vrsettings::Poll(name),"save HUD map choices through the normal transaction");
-        const auto saved=vrsettings::Read();
-        Check(saved.values[MapTopDown]==choice&&saved.values[MapRotate]==choice&&
-              Int(path,L"interactions",L"map_top_down")==choice&&Int(path,L"interactions",L"map_rotate")==choice,"both HUD map choices survive INI reload");
+        const auto saved=vrsettings::Read();const int rotate=choice%2;
+        Check(saved.values[MapTopDown]==choice&&saved.values[MapRotate]==rotate&&
+              Int(path,L"interactions",L"map_top_down")==choice&&Int(path,L"interactions",L"map_rotate")==rotate,"both HUD map choices survive INI reload");
+        Check(MapViewTopDown(saved.values[MapTopDown])==(choice%2==1)&&MapViewFull(saved.values[MapTopDown])==(choice>=2),"the view's top-down and full parts");
         Check(Changed(saved.values,current.values)==request.changed&&Int(path,L"custom",L"keep")==12345,"map saves preserve unrelated settings");
     }
     Check(before.values[LootLabelSize]==45,"missing loot size uses original shipped percentage");
@@ -52,14 +54,14 @@ int main(){
         Check(saved.values[LootLabelSize]==70&&Int(path,L"hud",L"labels_size")==70,"loot size survives INI reload");
         Check(Changed(saved.values,current.values)==(ChangeMask{1}<<LootLabelSize)&&Int(path,L"custom",L"keep")==12345,"loot change preserves all other settings");
     }
-    Check(before.values[StrainSpeed]==1,"existing profiles retain Medium strain buildup");
-    for(int choice:{0,2,1}){
-        const auto current=vrsettings::Read();auto values=current.values;values[StrainSpeed]=float(choice);
+    Check(before.values[StrainVignette]==1,"existing profiles show the guard strain vignette");
+    for(int choice:{0,1}){
+        const auto current=vrsettings::Read();auto values=current.values;values[StrainVignette]=float(choice);
         const Request request{current.values,values,Changed(current.values,values),current.sequence+1};
-        Check(vrsettings::Submit(request)&&vrsettings::Poll(name),"save guard strain buildup");
+        Check(vrsettings::Submit(request)&&vrsettings::Poll(name),"save the guard strain vignette switch");
         const auto saved=vrsettings::Read();
-        Check(saved.values[StrainSpeed]==choice&&Int(path,L"gameplay",L"guard_strain_speed")==choice,"buildup survives reload");
-        Check(Changed(saved.values,current.values)==request.changed&&Int(path,L"custom",L"keep")==12345,"buildup preserves other settings");
+        Check(saved.values[StrainVignette]==choice&&Int(path,L"gameplay",L"guard_strain_vignette")==choice,"the vignette switch survives reload");
+        Check(Changed(saved.values,current.values)==request.changed&&Int(path,L"custom",L"keep")==12345,"the vignette switch preserves other settings");
     }
     Check(before.values[HeartbeatStart]==60,"missing heartbeat start uses 60%");
     for(int choice:{50,0,90}){

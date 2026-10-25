@@ -14,10 +14,11 @@ using Microsoft::WRL::ComPtr;
 namespace {
 constexpr const char* Codes[]={"hp1","hp2","hp3","hp4","hp5","mp1","mp2","mp3","mp4","mp5","rvs","rvl","yps","wms","vps"};
 constexpr unsigned Count=15;   // the potions, all required; then the extras, each optional
-// The arrow (the bow's), then the traps and bombs thrown by hand (#224, toss::Model).
-constexpr const char* Extras[]={"arw","tfb","tsw","tbs","tst","twk"};
-constexpr float ExtraExtent[]={.45f,.1f,.1f,.1f,.1f,.1f};
-constexpr unsigned ExtraCount=6;
+// The arrow (the bow's), then the traps and bombs thrown by hand (#224, toss::Model),
+// then the gas and oil potions, which fly as their own bottles when thrown (#292).
+constexpr const char* Extras[]={"arw","tfb","tsw","tbs","tst","twk","gps","gpm","gpl","ops","opm","opl"};
+constexpr float ExtraExtent[]={.45f,.1f,.1f,.1f,.1f,.1f,.2f,.2f,.2f,.2f,.2f,.2f};
+constexpr unsigned ExtraCount=12,TossExtras=5;
 struct Vertex {float p[3],n[3],uv[2],glass;};
 struct Asset {std::vector<Vertex> vertices;std::vector<uint32_t> indices;unsigned w,h,format;std::vector<std::vector<uint8_t>> mips;};
 void Require(bool condition,const char* error){if(!condition)throw std::runtime_error(error);}
@@ -101,7 +102,7 @@ bool Models::Initialize(ID3D12Device* device,ID3D12CommandQueue* queue,DXGI_FORM
         // bow's draw guide and throws traps with nothing in the hand.
         std::string arrowNote;
         for(unsigned i=0;i<ExtraCount;++i) {
-            try{assets.push_back(Load(folder/(std::string(Extras[i])+".pvr"),ExtraExtent[i]));codes.push_back(code(Extras[i]));if(i)++p->tosses;else p->arrow=true;}
+            try{assets.push_back(Load(folder/(std::string(Extras[i])+".pvr"),ExtraExtent[i]));codes.push_back(code(Extras[i]));if(!i)p->arrow=true;else if(i<=TossExtras)++p->tosses;}
             catch(const std::exception& e){if(!i)arrowNote=e.what();}
         }
         p->meshCount=unsigned(assets.size());

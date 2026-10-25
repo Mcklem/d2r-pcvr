@@ -19,8 +19,9 @@ inline Element Classify(int skill) {
 }
 // The spell effect whose own textures a hand shows (the renderer's sprite
 // looks). Other skills take the closest look of their element.
-enum class Look { FireBolt, Fireball, ChargedBolt, IceBolt, IceBlast };
+enum class Look { FireBolt, Fireball, ChargedBolt, IceBolt, IceBlast, Torch };
 inline Look SpellLook(int skill,Element element) {
+    if(skill==999)return Look::Torch;
     switch(skill) {
     case 47: case 56: return Look::Fireball;
     case 45: case 55: case 59: case 64: return Look::IceBlast;

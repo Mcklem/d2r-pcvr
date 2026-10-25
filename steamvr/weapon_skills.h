@@ -2,9 +2,10 @@
 #include <cmath>
 #include "skill_slots.h"
 #include <cstdint>
+#include <string_view>
 
 namespace framevr::weaponskills {
-inline constexpr int Attack=0,Throw=2,Smite=97,Strafe=26,DoubleThrow=140;
+inline constexpr int Attack=0,Throw=2,Smite=97,Strafe=26,DoubleThrow=140,Werewolf=223,Werebear=228;
 enum class Action { Native, Arrow, Volley, Shield };
 inline Action Classify(int skill) {
     switch(skill) {
@@ -48,6 +49,18 @@ inline bool JavelinMissile(int missile) {
         default:return false;
     }
 }
+// Throwing potions (Weapons.txt type tpot): Rancid Gas, Oil, Choking Gas,
+// Exploding, Strangling Gas and Fulminating Potion. Their missiles (Missiles.txt
+// 44-49, CollideType 6) pass over monsters, stop at walls and burst where they
+// land, so a hand throw picks the spot like a tossed trap (toss.h). By item
+// code, for when the game's ItemTypes has no tpot row (gamestate.cpp).
+inline bool ThrowingPotion(std::string_view code) {
+    while(!code.empty()&&code.back()==' ')code.remove_suffix(1);
+    return code=="gps"||code=="ops"||code=="gpm"||code=="opm"||code=="gpl"||code=="opl";
+}
+// The right trigger's skills that throw the potion in hand: Throw, or Attack
+// (Skills.txt leaves tpot out of Attack, so the game is expected to throw).
+inline bool PotionThrow(int skill){return skill==Attack||skill==Throw;}
 // What a physical release can carry: a bow's arrow skills; a thrown weapon's
 // javelin skills, and the Barbarian's Double Throw (Skills.txt srvdofunc 74,
 // no srvmissile: each throw flies the throwing hand's own weapon).
@@ -113,14 +126,14 @@ class Pulse {
     double started=0,until=0;
 public:
     void Cancel(){*this=Pulse{};}
-    bool Start(int nextSlot,int nextId,int nextOwner,uint64_t nextContext,double now) {
+    bool Start(int nextSlot,int nextId,int nextOwner,uint64_t nextContext,double now,double hold=0) {
         if(nextSlot<0||nextSlot>=skills::Count||nextId<0||!std::isfinite(now)||now<until)return false;
         // Shield contact uses the left trigger's alternate bank. SkillPad
         // needs 50 ms at the native consumer before exposing its button; a
         // 65 ms producer pulse can disappear between the game's polls.
         // Allow bank preparation plus two native ticks and XR scheduling.
         // FinishShieldSkill still cancels immediately when Smite executes.
-        const double duration=nextId==Smite?.180:.065;
+        const double duration=hold>0?hold:nextId==Smite?.180:.065;
         slot=nextSlot;id=nextId;owner=nextOwner;context=nextContext;started=now;until=now+duration;return true;
     }
     int Get(int currentSlot,int currentId,int currentOwner,uint64_t currentContext,double now) {

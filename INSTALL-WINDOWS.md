@@ -12,7 +12,7 @@ item/skill icons and potion models from your own installed game and keeps
 them in local caches. Do not redistribute those caches or your game files.
 
 This preview accepts your **Steam copy of Diablo II: Resurrected
-3.3.93787** or **Battle.net copy of D2R 3.3.93847** (experimental).
+3.3.94995** (or 3.3.93787) or **Battle.net copy of D2R 3.3.93847** (experimental).
 Use a **local offline character**. For Battle.net, see
 [Battle.net preview packages](#battlenet-preview-packages).
 The game runs on your PC and streams to the headset.

@@ -66,6 +66,20 @@ and **ReShade 6.8.0 with full add-on support** from [reshade.me](https://reshade
 These binaries are not bundled in the release ZIP. The original dependency
 licenses and terms govern them. Pinned archive checksums are in `steamvr/install.py`.
 
+On native Windows the installer also downloads **OFXR Bridge 0.2.1 (build V116)**
+by tig3rmast3r, an experimental OpenXR API layer for frame generation, from its
+[GitHub release](https://github.com/tig3rmast3r/OFXR-Bridge/releases/tag/0.2.1).
+Source: [tig3rmast3r/OFXR-Bridge](https://github.com/tig3rmast3r/OFXR-Bridge),
+release commit `dad56acafc6e1dde219940427738b926cf2ea555`. OFXR Bridge is
+licensed under LGPL-3.0-or-later; it statically links AMD FidelityFX Optical Flow
+(MIT) and uses NVIDIA's Optical Flow SDK headers. Setup installs its unmodified
+layer DLL with its `LICENSE`, `THIRD_PARTY.md` and `licenses/` in
+`mods/D2R-PCVR/d2rloader/plugins/ofxr`, plus a layer manifest and settings file
+that Setup writes; its tray program is not installed. The mod loads the layer
+only while VR Settings > Perf > Frame generation is on. It is not bundled in the
+release ZIP, and its archive checksum is pinned in `steamvr/install.py`. If the
+download fails, frame generation is unavailable and the rest of the mod installs.
+
 The portable ZIP setup downloads the official **CPython 3.12.10 x64 embeddable
 package** from [python.org](https://www.python.org/downloads/release/python-31210/)
 into the extracted mod folder. It checks the archive's SHA-256 and the interpreter's

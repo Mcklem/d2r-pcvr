@@ -177,6 +177,11 @@ bool Cast(const Shot& shot,uintptr_t game,uintptr_t player) {
     using DispatchFn=int(*)(uintptr_t,uintptr_t,int,int,int,int,int);
     return reinterpret_cast<DispatchFn>(d2rsig::Addr(DispatchRva))(game,player,shot.skill,shot.level,1,0,0)!=0;
 }
+void WarnMana(uint64_t session,uint32_t playerId) {
+    if(!feedbackReady.load())return;
+    std::lock_guard lock(feedbackMutex);
+    castWarning.Request(session,playerId,GetTickCount64(),framevr::spellcast::Failure::Mana);
+}
 void Feedback(uint64_t session,uintptr_t player,uint32_t id,bool active) {
     auto reason=framevr::spellcast::Failure::None;
     {

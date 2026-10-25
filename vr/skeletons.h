@@ -28,6 +28,11 @@ struct Input {
     float scale = 1.0f;         // arm reach on top of the hero/user height ratio
     float userHeadM = 1.7f;     // the user's head above the floor
     float armSpanM = 0;        // calibrated grip-to-grip T-pose span; zero keeps authored proportions
+    // Druid shapeshift form the player is in (framevr::shapeshift: 1 Werewolf, 2 Werebear,
+    // from states 139/140), and [shapeshift] wolf_height / bear_height as fractions.
+    int shapeForm = 0;
+    float formHeight[2] = {1.0f, 1.0f};
+    bool firstPerson = false;   // the player's own view (not third person, top view or a flat menu): a form is grafted
     uint32_t handsValid = 0;    // bit 0 right, bit 1 left
     uint32_t poseStamp = 0;     // input stamp that produced this pose (native XR)
     uint32_t worldEpoch = 0;    // snap-turn/recenter generation for that world placement
@@ -107,6 +112,9 @@ struct Input {
 inline const char* const kHeroClasses[8] = {"amazon", "sorceress", "necromancer", "paladin", "barbarian", "druid", "assassin", "warlock"};
 // The hero's class as last posed: an index into kHeroClasses, -1 not known.
 int HeroClass();
+// Which rig was last posed as the hero (0 a person's, 1 werewolf, 2 werebear) within the
+// last 100 ms; -1 none (framevr::shapeshift::PosedRig).
+int PosedForm();
 // The weapon attach bones' sizes in this pose as the game animates them ([0] right): ~1 shown,
 // ~0 the game hides what hangs there - for vrcam's log.
 void AttachSizes(float out[2]);
@@ -151,10 +159,11 @@ void SetFresh(FreshFn fn);
 // 0 nothing learned yet, 1 the bind pose is read and used, -1 it did not read as a pose (no lock)
 int LockState();
 // The hero's eyes standing (model space y, from his own rig - each class has
-// its height) and how far a jump lifts him now (model units, 0 on the ground;
-// rawLift: the hips' rise before the stride's bob is cut). False until a pose
-// of the hero has been seen in the last second.
-bool HeroEye(float* eyeY, float* lift, float* rawLift = nullptr);
+// its height; a shapeshift form its own, eased over half a second when the rig
+// changes) and how far a jump lifts him now (model units, 0 on the ground;
+// rawLift: the hips' rise before the stride's bob is cut; settled: the height
+// the ease is heading for). False until a pose of the hero has been seen in the last second.
+bool HeroEye(float* eyeY, float* lift, float* rawLift = nullptr, float* settled = nullptr, float* scaleEye = nullptr);
 #if D2RVR_FIRST_PERSON
 // staff_free_left: the staff as last posed - its direction (from the left
 // hand's place on it toward the right hand, as the game's grip has them) in
@@ -182,6 +191,9 @@ struct MeleeWeaponPose {
     uint32_t weaponType=0;
     float castingAxis[3]{}; // final visible shaft, including staff's chosen axis/sign
     float gripAxis[3]{}; // collision blade direction relative to its driving controller grip
+    float length=0,radius=0; // game world units: a shapeshift form's claw, sized from the drawn paw (0 = by weapon type)
+    float tipHead[3]{}; // metres from eye in head frame (x right, y up, z back)
+    float dirHead[3]{}; // shaft direction in head frame
 };
 bool MeleeWeapon(MeleeWeaponPose& out,int hand=0);
 bool ShieldWeapon(MeleeWeaponPose& out);

@@ -737,11 +737,44 @@ void ClientKill(uintptr_t unit) {
     originalClientKill(unit);
     if(retirement){std::lock_guard lock(mutex);clientRetirements.Finish(retirement);Recount();}
 }
+// A thrown potion's own missile, hidden in flight (#292): its visual entities
+// are shrunk and sent far below the world (rows 0-2 the scaled basis, 12-14
+// the translation, as SpellMatrix writes them). Descendants inherit only the
+// root's translation, so the move is what hides the meshes and effects; the
+// burst plays where the missile itself lands.
+inline constexpr float HiddenDrop=100000;
+struct HiddenPotion {uint32_t entity=0;uint64_t until=0;};
+std::array<HiddenPotion,12> hiddenPotions{};
+struct PotionClaim {uintptr_t unit=0;uint32_t id=0;uint64_t until=0;} potionClaim;   // the client missile whose visual is hidden
+std::atomic<unsigned> hiddenPotionCount{0},potionsHidden{0},hiddenWrites{0};   // hiddenWrites: transforms rewritten for the last claim
+std::atomic<uint64_t> potionExpected{0};
+bool HiddenPotionMatrix(uintptr_t out,uint32_t entity,uintptr_t component) {
+    const uint64_t now=GetTickCount64();bool hide=false;unsigned left=0;
+    {
+        std::lock_guard lock(mutex);
+        for(auto& h:hiddenPotions) {
+            if(h.entity&&now>h.until)h={};
+            if(h.entity==entity&&entity)hide=true;
+            left+=h.entity!=0;
+        }
+    }
+    hiddenPotionCount=left;
+    std::array<float,16> m{};
+    if(!hide||!Read(out,m))return false;
+    for(int row=0;row<3;++row)for(int column=0;column<3;++column)m[size_t(row*4+column)]*=1e-4f;
+    m[13]-=HiddenDrop;
+    ++hiddenWrites;
+    framevr::WriteMemory(reinterpret_cast<void*>(out),m.data(),sizeof m);
+    framevr::WriteMemory(reinterpret_cast<void*>(component+0x40),m.data(),sizeof m);
+    framevr::WriteMemory(reinterpret_cast<void*>(component+0x80),m.data(),sizeof m);
+    return true;
+}
 uintptr_t Transform(uintptr_t out,uint32_t entity,uintptr_t component) {
     const auto result=originalTransform(out,entity,component);
     propscan::Transformed();
     skel::CrossbowRendered(entity,component,out);
     skel::ShieldRendered(entity,component,out);
+    if(hiddenPotionCount.load(std::memory_order_relaxed)&&HiddenPotionMatrix(out,entity,component))return result;
     if(!renderCount.load(std::memory_order_relaxed))return result;
     std::array<float,16> matrix{},previous{};bool found=false,held=false,heldVisible=false;
     uint64_t heldSession=0,heldRevision=0;uintptr_t heldClient=0;uint32_t heldId=0;
@@ -1144,6 +1177,30 @@ bool Visual(uint32_t entity,uintptr_t unit,bool hasReleasePoint,bool isRoot) {
         }
     }
     return false;
+}
+void ExpectPotion(uint64_t now){potionExpected=now;}
+bool HidePotion(uint32_t entity,uintptr_t unit,bool& first) {
+    first=false;uint32_t header[3]{};
+    if(!entity||(entity&0xfffff)==0xfffff||!Read(unit,header)||header[0]!=3)return false;
+    const uint64_t now=GetTickCount64();
+    {
+        std::lock_guard lock(mutex);
+        if(potionClaim.unit!=unit||potionClaim.id!=header[2]||now>potionClaim.until) {
+            const uint64_t expected=potionExpected.load();
+            if(!expected||now<expected||now-expected>3000)return false;   // the throw animation, and the art loading the first time
+            if(potionClaim.unit){char line[120];snprintf(line,sizeof line,"Frame potion throw: the last hidden potion's transforms rewritten %u times",hiddenWrites.exchange(0));framevr::logging::Write(line);}
+            else hiddenWrites=0;
+            potionClaim={unit,header[2],now+4000};potionExpected=0;first=true;++potionsHidden;   // one missile per throw
+        }
+        auto* slot=&hiddenPotions[0];
+        for(auto& h:hiddenPotions) {
+            if(h.entity==entity){slot=&h;break;}
+            if(!h.entity||h.until<slot->until)slot=&h;
+        }
+        *slot={entity,potionClaim.until};
+    }
+    ++hiddenPotionCount;
+    return true;
 }
 bool OwnsVisual(uintptr_t unit) {
     uint32_t h[3]{};if(!Read(unit,h)||h[0]!=3)return false;

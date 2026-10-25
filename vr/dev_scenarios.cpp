@@ -14,6 +14,8 @@
 #include "../steamvr/logging.h"
 namespace gamestate {uint64_t LocalPlayer();bool MenuOpen();}
 namespace framevr {void SetTurnsKeepOwn(int);int TurnsKeepOwn();}   // transport: [stereo] turns_keep_own
+namespace framevr {void SetTurnsSharp(bool);bool TurnsSharp();}     // and turns_sharp
+namespace framevr {void SetTurnsFill(bool);bool TurnsFill();}       // and turns_fill
 
 namespace devscenarios {
 namespace {
@@ -105,6 +107,26 @@ void __cdecl Commands(const PluginContext*,void* token) noexcept {
                                 "Frame development: by turns takes the drawn eye's picture wherever it reaches");
         Finish(r,Result::TurnsUpdated,claim);return;
     }
+    if(r.index==framevr::dev::TurnsSharpChoice) {
+        bool sharp;
+        {
+            std::lock_guard lock(mutex);if(claim!=ticket)return;
+            sharp=!framevr::TurnsSharp();
+        }
+        framevr::SetTurnsSharp(sharp);
+        framevr::logging::Write(sharp?"Frame development: by turns reads the eye not drawn sharp (Catmull-Rom)":"Frame development: by turns reads the eye not drawn soft (bilinear)");
+        Finish(r,Result::SharpUpdated,claim);return;
+    }
+    if(r.index==framevr::dev::TurnsFillChoice) {
+        bool fill;
+        {
+            std::lock_guard lock(mutex);if(claim!=ticket)return;
+            fill=!framevr::TurnsFill();
+        }
+        framevr::SetTurnsFill(fill);
+        framevr::logging::Write(fill?"Frame development: by turns removes frame-old ghosts beside near things":"Frame development: by turns keeps the eye's own picture beside near things");
+        Finish(r,Result::FillUpdated,claim);return;
+    }
     if(!execute){
         framevr::logging::Write("Frame development: console command export unavailable");
         Finish(r,Result::Refused,claim);return;
@@ -185,6 +207,24 @@ void __cdecl Gear(const PluginContext*,void* callbackToken) noexcept {
         spec.itemLevel=framevr::dev::NormalKit(r.index)?1:99;spec.seedMode=Items::SeedMode::Random;
         spec.quantity=spec.durability=Items::DefaultValue;spec.stateFlags=Items::ItemStateIdentified;
         if(ammo)spec.quantity=250;
+        if(r.index==framevr::dev::TorchChoice) {
+            if(i==0||i==1) {
+                spec.quality=Items::Quality::Normal;
+                spec.socketCount=1;
+                spec.itemLevel=1;
+            } else if(i==2||i==3) {
+                spec.quality=Items::Quality::Normal;
+                spec.itemLevel=1;
+            } else if(i==4) {
+                spec.quality=Items::Quality::Unique;
+                spec.qualityRecordId=Items::RandomQualityRecord;
+                spec.flags=Items::ItemCreateFlagBit(Items::ItemCreateFlag::AllowDuplicateUnique);
+                spec.itemLevel=99;
+            } else if(i==5) {
+                spec.quality=Items::Quality::Magic;
+                spec.itemLevel=30;
+            }
+        }
         spec.destination.structSize=sizeof spec.destination;
         spec.destination.container=Items::ItemContainer::Inventory;
         spec.destination.placement=Items::Placement::Automatic;
@@ -243,7 +283,7 @@ void Init(const D2RL::PluginContext* ctx) {
     framevr::logging::Write("Frame development: isolated pcvr-dev environment enabled; class presets require disposable offline expansion characters");
 }
 bool DebugDraws(){return enabled&&debugDraws.load();}
-void Capture(framevr::interaction::Snapshot& s){s.developer=enabled;s.devDebugDraws=DebugDraws();s.devTurnsKeepOwn=enabled?framevr::TurnsKeepOwn():0;}
+void Capture(framevr::interaction::Snapshot& s){s.developer=enabled;s.devDebugDraws=DebugDraws();s.devTurnsKeepOwn=enabled?framevr::TurnsKeepOwn():0;s.devTurnsSharp=enabled&&framevr::TurnsSharp();s.devTurnsFill=enabled&&framevr::TurnsFill();}
 void Request(const framevr::interaction::Request& r) {
     const bool valid=Valid(r);
     const auto run=threads?(framevr::dev::IsKit(r.index)?threads->runOnGameThread:threads->runOnUiThread):nullptr;

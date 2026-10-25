@@ -4,6 +4,8 @@ import argparse
 import configparser
 from datetime import datetime
 import hashlib
+import http.client
+import io
 import json
 import os
 from pathlib import Path
@@ -38,6 +40,27 @@ RESHADE_HASH = 'afe4c8f13048306307983b8b3d41d5bf00a86820440b0e57dea10950e1176445
 SDK_VERSION = '10.0.26100.9169'
 SDK_HASH = '475269434dcd808a67853773272f972c3229c0e10c3ddc821290e70cc0f6904d'
 COMPILER_HASH = '3bd6d7acfe8a0a84acd166fba1a537ce68bd21c8edce2bd9bb863cfa034136d4'
+# OFXR Bridge by tig3rmast3r (LGPL-3.0-or-later), the experimental frame
+# generation layer behind VR Settings > Perf > Frame generation. Fetched like
+# D2RLoader and ReShade, never attached to our releases, and optional: without
+# it the rest installs. Only its layer and licenses are installed, with a
+# manifest and settings written here: no tray app and no registry entry, as
+# the mod names the layer for its own process (steamvr/frame_generation.h).
+OFXR_URL = 'https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.1/OFXR-Bridge-v0.2.1-V116.zip'
+OFXR_HASH = 'db224491cbc9553a51fe55d08623d25864c4ec0a3d49bd76e9d6c4d9b2410c67'
+OFXR_ARCHIVE = 'OFXR-Bridge-v0.2.1-V116.zip'
+OFXR_LAYER = 'XR_APILAYER_XRFrameBridge_diagnostic'
+OFXR_BUILD = 116
+OFXR_DIR = mod_identity.PLUGIN.parent / 'ofxr'
+OFXR_SETTINGS = OFXR_DIR / 'ofxr_bridge.ini'
+# The layer reads this beside its DLL. No control_event key: that is the tray's
+# disarm switch, and without it the layer runs while the mod names it. The mod
+# asks for its own backend at each start; the bridge's in-headset FPS number
+# stays off.
+OFXR_DEFAULT_SETTINGS = (b'[ofxr]\r\nenabled=1\r\nframe_generation=ofxr\r\nmotion_vectors=off\r\nbackend=fidelityfx\r\n'
+                         b'nvidia_preset=medium\r\nnvidia_input_scale=50\r\nnvidia_bidirectional=0\r\n\r\n'
+                         b'[diagnostics]\r\nlogging_enabled=0\r\nmax_file_mb=32\r\nflush_each_event=0\r\n\r\n'
+                         b'[overlay]\r\nposition=off\r\n')
 RECORD = mod_identity.RECORD
 
 
@@ -205,6 +228,51 @@ def download_verified(url, path, digest, max_bytes=100 * 1024 * 1024):
         raise dependency_checksum_error(f'saved dependency {path}', (received,), saved)
 
 
+def frame_generation_manifest():
+    """An explicit OpenXR layer manifest beside the layer: the mod adds its
+    folder to XR_API_LAYER_PATH and names the layer in xrCreateInstance."""
+    return (json.dumps({'file_format_version': '1.0.0', 'api_layer': {
+        'name': OFXR_LAYER, 'library_path': f'./{OFXR_LAYER}.dll', 'api_version': '1.0',
+        'implementation_version': str(OFXR_BUILD),
+        'description': f'OFXR Bridge V{OFXR_BUILD}, enabled by D2R PCVR for its own process'}}, indent=2) + '\n').encode('utf-8')
+
+
+def download_frame_generation(path):
+    """Optional: a failed download (network, checksum or disk, the last two
+    raised as SystemExit) leaves frame generation unavailable and installs the
+    rest. Returns whether the pinned archive is in the cache."""
+    try:
+        download_verified(OFXR_URL, path, OFXR_HASH)
+    except (OSError, SystemExit, http.client.HTTPException) as error:
+        print(f'OFXR Bridge download failed; frame generation will be unavailable: {error}')
+        return False
+    return True
+
+
+def frame_generation_files(archive):
+    """OFXR Bridge's layer, licenses and manifest for OFXR_DIR; {} unless the
+    pinned archive is in the dependency cache."""
+    data = read_dependency(archive, missing_ok=True)
+    if data is None:
+        return {}
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != OFXR_HASH:
+        print(f'OFXR Bridge archive checksum mismatch ({digest}); frame generation is not installed.')
+        return {}
+    files = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            files[OFXR_DIR / f'{OFXR_LAYER}.dll'] = z.read(f'ofxr/{OFXR_LAYER}.dll')
+            for name in z.namelist():
+                if name in ('LICENSE', 'THIRD_PARTY.md') or name.startswith('licenses/') and not name.endswith('/'):
+                    files[OFXR_DIR / safe_relative(name)] = z.read(name)
+    except (zipfile.BadZipFile, KeyError) as error:
+        print(f'OFXR Bridge archive unusable ({error}); frame generation is not installed.')
+        return {}
+    files[OFXR_DIR / f'{OFXR_LAYER}.json'] = frame_generation_manifest()
+    return files
+
+
 def safe_relative(name):
     # Apply Windows path rules even when preparing/installing on Linux.
     path = PurePosixPath(name.replace('\\', '/'))
@@ -267,7 +335,7 @@ def main():
     ap.add_argument('--plugin', type=Path, default=ROOT / 'build-frame/windows-native/d2rl-pcvr.dll')
     ap.add_argument('--openxr-loader', type=Path, help='Windows x64 openxr_loader.dll; required on native Windows')
     ap.add_argument('--backup-dir', type=Path, default=ROOT / 'build-frame/backups')
-    ap.add_argument('--download-deps', action='store_true', help='Fetch pinned D2RLoader and ReShade from their official sites')
+    ap.add_argument('--download-deps', action='store_true', help='Fetch pinned D2RLoader, ReShade and (Windows) OFXR Bridge from their official sites')
     ap.add_argument('--store', choices=['auto', 'steam', 'battlenet'], default='auto')
     ap.add_argument('--experimental-battlenet', action='store_true', help='Enable Battle.net 3.3.93847 for local offline compatibility testing')
     ap.add_argument('--casclib', type=Path, default=ROOT / 'bin/CascLib.dll', help='Pinned Unicode x64 CascLib 3.0 for Battle.net asset reading')
@@ -342,6 +410,7 @@ def main():
     archive = args.deps / 'D2RLoader-1.3.1-beta.zip'
     reshade = args.deps / 'reshade-6.8/ReShade64.dll'
     compiler = args.deps / 'd3dcompiler47/modern/d3dcompiler_47.dll'
+    ofxr = args.deps / OFXR_ARCHIVE
     if args.download_deps:
         download_verified('https://d2rloader.net/downloads/D2RLoader-1.3.1-beta.zip', archive, LOADER_HASHES)
         setup = args.deps / 'ReShade_Setup_6.8.0_Addon.exe'
@@ -351,6 +420,9 @@ def main():
         with zipfile.ZipFile(setup) as z:
             reshade.parent.mkdir(parents=True, exist_ok=True)
             reshade.write_bytes(z.read('ReShade64.dll'))
+        if os.name == 'nt':
+            # Frame generation needs the Windows OpenXR loader (Proton has none).
+            download_frame_generation(ofxr)
         if os.name != 'nt':
             # Wine's compiler stayed busy throughout multi-minute tests of the
             # effect. Use Microsoft's current SDK redist privately under the
@@ -397,6 +469,10 @@ def main():
         payload[Path('d2rloader/runtime/d3dcompiler_47.dll')] = compiler.read_bytes()
     if args.openxr_loader:
         payload[mod_identity.OPENXR_LOADER] = args.openxr_loader.read_bytes()
+    frame_generation = frame_generation_files(ofxr)
+    if frame_generation:
+        payload.update(frame_generation)
+        print('Prepared OFXR Bridge 0.2.1 for VR Settings > Perf > Frame generation (experimental, off by default).')
     # The launcher's descriptor of this mod (the D2R VR Launcher lists mods\*\vrmod-manifest.json). It is journaled like
     # every other file, so a restore or removal takes it away with the mod.
     payload[mod_identity.MOD_DIR / 'vrmod-manifest.json'] = (ROOT / 'vrmod-manifest.json').read_bytes()
@@ -595,6 +671,8 @@ def main():
     # ReShade's paths are relative to its base, the mod's reshade\ folder (the plugin sets it).
     put_config(mod_identity.RESHADE_DIR / 'ReShade.ini', b'[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\nTextureSearchPaths=.\\reshade-shaders\\Textures\nPresetPath=.\\D2R_Frame_ReShade.ini\n[INPUT]\nKeyOverlay=36,0,0,0\n')
     put_config(mod_identity.RESHADE_DIR / 'D2R_Frame_ReShade.ini', b'Techniques=D2R_DepthFog@D2R_DepthFog.fx\n')
+    if frame_generation:
+        put_config(OFXR_SETTINGS, OFXR_DEFAULT_SETTINGS)
     put(mod_identity.RESHADE_DIR / 'reshade-shaders/Shaders/D2R_DepthFog.fx', (ROOT / 'reshade/D2R_DepthFog.fx').read_bytes())
     for texture in (ROOT / 'reshade/sky').glob('*.png'):
         put(mod_identity.RESHADE_DIR / 'D2R_Sky_ours' / texture.name, texture.read_bytes())

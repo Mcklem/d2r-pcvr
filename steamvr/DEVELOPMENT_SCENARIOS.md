@@ -78,10 +78,13 @@ setup first. Return to normal play with the ordinary VR shortcut.
 
 Open either hand's wheel and choose **DEV**. Its tabs are grouped by purpose:
 
-- **Character:** level 10, 30, 60 and 90 presets; heal life/mana.
+- **Character:** level 10, 30, 60 and 90 presets; heal life/mana; unlock quests and
+  waypoints; a **Throwing potions** kit (one stack each of Rancid, Choking and
+  Strangling Gas and Oil, Exploding and Fulminating Potion, to equip in the right
+  hand and throw; on this page as Equipment is full).
 - **Equipment:** starter primary/alternate gear, class unique primary/alternate
   gear, crossbow + bolts, bow + arrows, a small shield, **Render debug draws**,
-  **By turns own picture**, a **Throwing kit** and a **Potion kit** (four Super
+  **By turns own picture**, **By turns filter**, **By turns ghosts**, a **Throwing kit** and a **Potion kit** (four Super
   Healing, two Full Rejuvenation, two Antidote and two Thawing potions, normal
   items in the inventory: put them in the belt to toss at the mercenary).
 - **Act I - II:** towns, combat areas and inspection destinations.
@@ -138,7 +141,7 @@ Double Throw.
 
 Select **DEV > Equipment > Render debug draws** to toggle the shield guard
 overlay. It starts Off each launch and does not change combat rules or saved
-settings. Equip a shield, select Unleashed melee rules, close the menu, and
+settings. Equip a shield (melee is Unleashed), close the menu, and
 compare the outline with the visible shield while moving and rotating it.
 
 - **Cyan:** measured shield bounds used by the blocking check.
@@ -186,6 +189,28 @@ else and no saved setting; editing the ini's value applies that value again.
 Compare Tyrael's wings, a waypoint's flame and spells against the scene
 behind them, the sword against the sky and monsters' heads close up, with
 the same view in each state.
+
+## By turns filter
+
+Select **DEV > Equipment > By turns filter** to switch, for the session, how
+the eye not drawn reads the pictures it is made from with Stereo rendering:
+By turns. **SHARP** (the default, `[stereo] turns_sharp=1`): Catmull-Rom,
+kept within the nearest texels. **SOFT** (0): bilinear, as before. The
+button shows the current state, and the frame log records each switch. It
+changes no saved setting. Compare text on loot labels and in the distance,
+ground textures and fine edges, looking with one eye then the other.
+
+## By turns ghosts
+
+Select **DEV > Equipment > By turns ghosts** to switch, for the session, the
+strips beside near things that only the eye not drawn sees. **FIXED** (the
+default, `[stereo] turns_fill=1`): where its frame-old picture there shows
+something nearer since gone, what is behind beside the strip instead. **OLD**
+(0): its own frame-old picture, as before. Watch a monster walking across
+in front of a wall a few metres away, and the edges of things while you
+strafe: with OLD a frame-old copy of the monster can trail beside it in one
+eye. The button shows the current state, and the frame log records each
+switch. It changes no saved setting.
 
 ## Locations
 

@@ -180,11 +180,31 @@ headset frame are drawn:
   close moves with the hero for that frame. The depth is the same copy the
   added fog reads (DLSS's corner included). Until both eyes have one, a pair
   is drawn from the hero's first step to 0.3 s after the last.
+  The pictures turned, moved and laid over the eye not drawn land between
+  texels nearly always; read bilinear, a half-texel step averaged two and
+  every other frame in each eye was softer than Both eyes. They are read
+  Catmull-Rom instead (`[stereo] turns_sharp=1`, live; in developer mode also
+  DEV > Equipment > By turns filter), kept within the four nearest texels so
+  it adds no ring or halo: at half a texel, stripes 4 px apart keep about a
+  third more contrast, and a texel's centre reads exactly that texel. On an
+  RTX 5090 it costs no measurable GPU time (the eye not drawn 0.55 ms at
+  3072 square, 0.97 ms at 4096, either way). 0 reads bilinear.
+  Beside anything near, the eye not drawn sees a strip the drawn eye cannot,
+  and keeps its own picture from a frame back there; a monster that stood
+  there a frame ago and has walked on was left in it, a ghost beside it in
+  one eye. Such a strip is always of what is behind (the drawn eye's view of
+  it is blocked by something nearer), so where the eye's own picture there is
+  nearer than the farther end of the strip along the row by more than 2 px of
+  parallax, the picture beside that end goes there instead; where it shows
+  what is behind, its own texture stays (`[stereo] turns_fill=1`, live; in
+  developer mode also DEV > Equipment > By turns ghosts; 0 as before). The
+  ends are looked for up to 128 px of a 4096-wide eye either side. On an RTX
+  5090 it adds 0.1 ms at 3072 square and 0.23 ms at 4096.
 
 By turns draws a pair on a snap turn, outside first person, in open menus,
 during stereo captures and on any frame without a reusable image for both eyes.
-With **Desktop shows one eye**, the kept left image covers the right frames on
-the monitor.
+With `[render] desktop_one_eye` (On by default), the kept left image covers the
+right frames on the monitor.
 
 Replay (both eyes from one CPU pass, adapted from upstream) was a third
 choice until 2026-10-20. On the owner's PC it halved the CPU work a frame but
@@ -213,13 +233,51 @@ the mod's own work and the wait for the headset. It says whether the CPU's part
 fits the headset's frame (11.1 ms at 90 Hz); past it, late frames wait a whole
 refresh. Drawing grows with what is in view, the draw distances and the game's
 shadows, and hardly with resolution. The game's own graphics options are shown
-as it last saved them; change those in its Options > Video. **ReShade depth**
-(`[render] reshade_depth`) switches ReShade's Generic Depth add-on, which looks
-at every draw call to find the depth buffer; in VR the fog and sky read the
-mod's own depth (on the flat menu panel and outside VR they need ReShade's).
-The plugin writes it into ReShade.ini's `[ADDON]
-DisabledAddons` before ReShade loads, so a change applies after a restart;
-without the key ReShade.ini is left as it is.
+as it last saved them; change those in its Options > Video.
+
+VR Settings > Perf > **Frame generation** (experimental, Off by default) runs
+[OFXR Bridge](https://github.com/tig3rmast3r/OFXR-Bridge) by tig3rmast3r
+(LGPL-3.0-or-later), an OpenXR API layer that adds a frame made by optical flow
+between two the game draws. On native Windows, Setup downloads its pinned
+0.2.1 release (build V116; the SHA-256 is in `install.py`) and installs the
+layer, its licenses, a layer manifest and `ofxr_bridge.ini` in
+`mods\D2R-PCVR\d2rloader\plugins\ofxr`. Its tray program is not installed and
+nothing is registered: while the setting is on, the mod adds that folder to
+`XR_API_LAYER_PATH` for its own process and names the layer in
+`xrCreateInstance` (`steamvr/frame_generation.h`). Turning it on or off takes a
+restart; Off while it is loaded asks it to step aside at once. FidelityFX runs
+on any graphics card; NVIDIA uses the optical flow hardware of RTX and GTX 1660
+cards, with its quality (Slow, Medium, Fast) and scale (100%, 75%, 50%) on a
+row under it, sent to the loaded layer live through its control API. The Perf
+page's last line and the log say whether it is off, waiting for a restart,
+active, bypassed or failed. While it runs it doubles the frame time the game
+is given, so the game draws every other headset frame (45 of 90) and the
+bridge makes the rest: Both eyes then shows each eye half its frames for real,
+By turns only a quarter (22 a second, where By turns alone ran 83-89 frames on
+the owner's PC). So it runs with Both eyes only: by turns the loaded bridge is
+asked to step aside, and Both eyes brings it back, both live; the Perf line
+says it is paused. VR Settings turns it on only with Both eyes (once on, it
+can still be changed or turned off). The bridge takes over every color swapchain whose images are listed
+through it (three more swapchains and an optical flow pipeline each); with the
+mod's panels SteamVR ran out of swapchains, and menus fell back to the flat
+panel. While it is loaded the mod lists the panels' images through the
+runtime's own `xrEnumerateSwapchainImages`, below the bridge, so it takes over
+the two eyes only; the log says so, or why not. If the loader does not list the layer (a game run
+as administrator ignores `XR_API_LAYER_PATH`) or the instance fails with it,
+the game starts without it; Proton's WineOpenXR has no API layers. The
+generated frames come from color alone, so moving things and head turns can
+show artifacts, and the Perf page's frame rate counts the frames the game
+draws, not the generated ones. The layer needs the Microsoft Visual C++ x64
+runtime. Its settings are `[render] frame_generation` (0 Off, 1 FidelityFX,
+2 NVIDIA), `frame_generation_preset` (0 Slow, 1 Medium, 2 Fast) and
+`frame_generation_scale` (0 100%, 1 75%, 2 50%).
+
+`[render] reshade_depth` in `d2r_pcvr.ini` (not in VR Settings) switches
+ReShade's Generic Depth add-on, which looks at every draw call to find the
+depth buffer; in VR the fog and sky read the mod's own depth (on the flat menu
+panel and outside VR they need ReShade's). The plugin writes it into
+ReShade.ini's `[ADDON] DisabledAddons` before ReShade loads, so a change
+applies after a restart; without the key ReShade.ini is left as it is.
 
 The choice is stored as `[stereo] rendering` (0 Both eyes, 1 By turns,
 2 Replay; missing or invalid is By turns) and applies live. Every 10 seconds the log reports a

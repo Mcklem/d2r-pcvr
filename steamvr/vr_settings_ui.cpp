@@ -6,6 +6,7 @@
 #include "wide_text.h"
 // Retain an exact summary fingerprint in the DLL for the release packager.
 extern "C" __declspec(dllexport) const char* D2RPCVR_ReleaseNotesIdentity(){return framevr::releasenotes::ContentMarker;}
+static_assert(framevr::releasenotes::ReleaseLines.size()<=size_t(framevr::settings::NotesMaxLines),"release_notes.py MAX_LINES and NotesMaxLines agree");
 namespace framevr::settings {
 static int HelpTextHeight(HDC dc,HFONT font,const char* value,int width) {
     const auto wide=framevr::WideText(value);
@@ -19,6 +20,9 @@ static void ValueLabel(Key key,float value,const Context& c,char* label,size_t s
     else if(key==Foveation){const char* modes[]={"Off","Fixed","Eye tracked"};std::snprintf(label,size,"%s",modes[int(value)]);}
     else if(key==FoveationStrength)std::snprintf(label,size,"%s",FoveationStrengthNames[int(value)]);
     else if(key==StereoRendering)std::snprintf(label,size,"%s",StereoRenderingNames[std::clamp(int(value),0,int(std::size(StereoRenderingNames))-1)]);
+    else if(key==FrameGeneration)std::snprintf(label,size,"%s",framegen::ModeNames[std::clamp(int(value),0,2)]);
+    else if(key==FrameGenPreset)std::snprintf(label,size,"%s",framegen::PresetNames[std::clamp(int(value),0,2)]);
+    else if(key==FrameGenScale)std::snprintf(label,size,"%s",framegen::ScaleNames[std::clamp(int(value),0,2)]);
     else if(key==VitalsLocation||key==NavigationLocation)std::snprintf(label,size,"%s",vitals::LocationNames[int(value)]);
     else if(key==RenderResolution)std::snprintf(label,size,"%s",resolution::Choices[int(value)]);
     else if(key==MenuDistance)std::snprintf(label,size,"%s",MenuDistanceNames[int(value)]);
@@ -33,10 +37,7 @@ static void ValueLabel(Key key,float value,const Context& c,char* label,size_t s
     else if(key==BowLaser){if(value<0)std::snprintf(label,size,"Off");else std::snprintf(label,size,"%s %.0f\xc2\xb0",HueName(value),value);}
     else if(key==ThrowLift){if(value==0)std::snprintf(label,size,"Off");else std::snprintf(label,size,"%+.0f\xc2\xb0",value);}
     else if(key==Dominant)std::snprintf(label,size,"%s",value>.5f?"Left":"Right");
-    else if(key==MeleeRules)std::snprintf(label,size,"%s",MeleeRulesNames[value>.5f?1:0]);
     else if(key==OfflinePlayers){if(value==0)std::snprintf(label,size,"Game default");else std::snprintf(label,size,"Players %.0f",value);}
-    else if(key==StrainDark)std::snprintf(label,size,"%s",StrainColorNames[std::clamp(int(std::lround(value)),0,2)]);
-    else if(key==StrainSpeed)std::snprintf(label,size,"%s",StrainSpeedNames[int(value)]);
     else if(key==HeartbeatStart){if(value==0)std::snprintf(label,size,"Off");else std::snprintf(label,size,"%.0f%% life",value);}
     else if(key==EnemySight){if(value==100)std::snprintf(label,size,"100%% (Default)");else std::snprintf(label,size,"%.0f%%",value);}
     else if(key==CompanionAi)std::snprintf(label,size,"%s",value>.5f?"Enabled":"Legacy");
@@ -54,8 +55,9 @@ static void ValueLabel(Key key,float value,const Context& c,char* label,size_t s
     else if(key==Waist||key==BeltForward)std::snprintf(label,size,"%.1f cm",value*100);
     else std::snprintf(label,size,"%.0f",value);
 }
+int ReleaseNotesPages(){return NotesPages(int(releasenotes::ReleaseLines.size()));}
 std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,const calibration::Flow* body,const controllers::Labels& detected,int help,GameVideo game,bool monoAudio,
-                           const PerformanceReadout& performance,bool depthRestart){
+                           const PerformanceReadout& performance,const framegen::Readout& frameGen){
     const bool showHelp=!body&&help!=NoHelp&&HelpText(help)[0];
     BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=AtlasWidth;
     info.bmiHeader.biHeight=-Height;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
@@ -121,10 +123,17 @@ std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,co
         text(releasenotes::ReleaseTitle,{40,195,1200,45},true);
         text(releasenotes::Author,{40,241,1200,35});
         text(releasenotes::ProjectUrl,{40,281,1200,35},false,false,RGB(116,220,219));
+        const int lines=int(releasenotes::ReleaseLines.size()),pages=NotesPages(lines),shown=std::clamp(m.notesPage,0,pages-1);
         int y=330;
-        for(const char* line:releasenotes::ReleaseLines){
+        for(int i=shown*NotesPerPage;i<std::min(lines,(shown+1)*NotesPerPage);++i) {
             fill({40,y-3,1200,35},(y/36)%2?RGB(19,31,39):RGB(22,36,44));
-            text(line,{54,y,1170,35});y+=36;
+            text(releasenotes::ReleaseLines[size_t(i)],{54,y,1170,35});y+=36;
+        }
+        if(pages>1) {   // a long release: Previous / Next under the lines
+            button(NotesPrevBox,"Previous",{Kind::NotesPage,0,-1},false,shown>0);
+            button(NotesNextBox,"Next",{Kind::NotesPage,0,1},false,shown<pages-1);
+            char label[48];std::snprintf(label,sizeof label,"Page %d of %d",shown+1,pages);
+            text(label,{NotesPageBox.x,NotesPageBox.y+6,NotesPageBox.w,34},false,true,quiet);
         }
         char credits[160];std::snprintf(credits,sizeof credits,"Credits: %s",releasenotes::Credits);
         text(credits,{40,848,1200,28},false,false,quiet);
@@ -136,7 +145,7 @@ std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,co
         const auto leftAlternates=labels.Button(1,3)+" / "+labels.Button(1,4);
         const auto rightFaces=labels.Button(0,1)+" / "+labels.Button(0,2)+" / grip + face";
         const Help left[]={{"Stick","Walk"},{leftFaces.c_str(),"Assigned left-hand skills"},{leftAlternates.c_str(),"Alternate left-hand skills"},{"Trigger","Assigned left-hand skill"},{"Stick click","Toggle left wheel; right laser edits"},{"Grip + stick click","Inventory / character / skills menu"},{"Grip near belt","Grab a potion"}};
-        const Help right[]={{"Stick sideways / click","Turn / toggle right wheel"},{"Trigger","Assigned right skill / grab bow string"},{"Stick up / hold down","Run or walk / show all loot labels"},{rightFaces.c_str(),"Interact by default / assigned skills"},{"Dominant grip at shoulder","Either shoulder: swap weapon sets I / II"},{"Trigger with bow / javelin","Draw & release / throw in WEAPON mode"},{"Left Grip + Right Trigger","Laser context click in game panels"}};
+        const Help right[]={{"Stick sideways / click","Turn / toggle right wheel"},{"Trigger","Assigned right skill / grab bow string"},{"Stick up / hold down","Run or walk / loot labels; zooms a looked-at map"},{rightFaces.c_str(),"Interact by default / assigned skills"},{"Dominant grip at shoulder","Either shoulder: swap weapon sets I / II"},{"Trigger with bow / javelin","Draw & release / throw in WEAPON mode"},{"Left Grip + Right Trigger","Laser context click in game panels"}};
         for(int i=0;i<7;++i)for(int side=0;side<2;++side){
             const auto& h=(side?right:left)[i];const int x=side?658:40,y=252+i*58;
             fill({x,y,582,56},i%2?RGB(19,31,39):RGB(22,36,44));
@@ -167,7 +176,7 @@ std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,co
             text("Map view",{58,193,210,36},true);
             text("Rotate map",{675,193,250,36},true);
             const bool enabled=m.ready&&!m.Busy();
-            button(HudMapViewBox,MapViewNames[m.Get()[MapTopDown]>.5f?1:0],{Kind::Change,MapTopDown,1},false,enabled);
+            button(HudMapViewBox,MapViewNames[std::clamp(int(m.Get()[MapTopDown]),0,3)],{Kind::Change,MapTopDown,1},false,enabled);
             button(HudMapRotateBox,m.Get()[MapRotate]>.5f?"On":"Off",{Kind::Change,MapRotate,1},false,enabled);
         }else if(m.page==Page::Performance&&(DeferOffered(m.Get())||GameVideoWarning(game))){
             // Warnings in amber under the status, two lines at most: the GPU
@@ -207,14 +216,16 @@ std::vector<uint8_t> Paint(const Model& m,Hit hover,const char* runtimeStatus,co
         }
         if(m.page==Page::Performance){
             // The last second's frames, whether the CPU's part fits the
-            // headset's frame, the game's own options, a restart to come.
+            // headset's frame and the game's own options.
             const COLORREF teal=RGB(116,220,219),warn=RGB(236,186,96);
             const auto line=PerformanceLine(performance),verdict=PerformanceVerdict(performance);
             text(line.c_str(),{58,PerformanceBox.y+2,1170,30},false,false,performance.valid?teal:quiet);
             if(!verdict.empty())text(verdict.c_str(),{58,PerformanceBox.y+33,1170,29},false,false,performance.CpuMs()>performance.budgetMs?warn:quiet);
             const auto gameLine=GameVideoLine(game);
             text(gameLine.empty()?GameVideoUnsaved:gameLine.c_str(),{58,GameVideoBox.y+2,1170,29},false,false,quiet);
-            if(depthRestart)text(DepthRestartNote,{58,DepthRestartBox.y+2,1170,29},false,false,warn);
+            const auto frameGenLine=framegen::Line(frameGen);
+            text(frameGenLine.c_str(),{58,FrameGenBox.y+2,1170,29},false,false,
+                 framegen::Warning(frameGen)?warn:frameGen.state==framegen::State::Active?teal:quiet);
         }
         if(m.page==Page::Combat){
             // The ninth row ends at 800; without the offline adapter its notice replaces the difficulty note.

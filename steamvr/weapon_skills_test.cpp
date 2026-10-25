@@ -303,5 +303,11 @@ int main() {
         assert(bashes==2);++sample.skillContext;sample.time+=.02;assert(!e.Step(sample,sweep));
         sample.active=false;sample.time+=.02;assert(!e.Step(sample,sweep));
     }
-    std::puts("Weapon skills: release/cancellation/fallback, shield ownership/pose/strokes and native dispatch guards passed");
+    {   // Throwing potions: the six gas and oil potions, by code (space padded as Items rows are), thrown by Attack or Throw.
+        for(const char* code:{"gps","ops","gpm","opm","gpl","opl","opm ","gps "})assert(weaponskills::ThrowingPotion(code));
+        for(const char* code:{"hp5","rvl","yps","wms","vps","jav","tkf","tax","op","opmx",""})assert(!weaponskills::ThrowingPotion(code));
+        assert(weaponskills::PotionThrow(weaponskills::Attack)&&weaponskills::PotionThrow(weaponskills::Throw));
+        assert(!weaponskills::PotionThrow(-1)&&!weaponskills::PotionThrow(weaponskills::DoubleThrow)&&!weaponskills::PotionThrow(251));
+    }
+    std::puts("Weapon skills: release/cancellation/fallback, shield ownership/pose/strokes, throwing potions and native dispatch guards passed");
 }

@@ -176,6 +176,7 @@ not generate melee velocity. The layout currently assumes a right-handed player.
 | Draw and shoot | Pull string hand back at least 12 cm (28 cm total separation), then release trigger |
 | Throw a javelin, throwing knife or axe | Any javelin, throwing knife or throwing axe equipped in WEAPON mode, right trigger bound to Attack, Throw or nothing: hold right trigger, make a deliberate throwing motion, release to throw along the hand's motion. The game's own Throw fires the weapon's own missile and consumes its quantity; a knife flies point first, an axe tumbles end over end. With a javelin, Poison Javelin, Lightning Bolt, Plague Javelin or Lightning Fury on the right trigger (or loaded from a face button, like the bow quiver) rides the throw: the skill's own mana, damage and effects. A Barbarian with a throwing weapon in each hand and Double Throw on the right trigger (or loaded) throws with both hands: the left trigger throws the left weapon, and each throw is one native Double Throw of that hand's weapon. Trigger-free jabs and swings stay available |
 | Throw a trap or bomb | An Assassin's Fire Blast, Shock Web, Blade Sentinel, sentry or wake on the right trigger: press it and the game's own bomb or trap model appears in the hand; throw and let go, and the native cast lands where the arc meets the floor, within the skill's reach (the throw picks the spot only). With Bottle physics on, the arc is traced through the physics world as you let go, so a wall, a table top or a prop stops it and the cast lands there; running carries the throw either way. A quick press casts where you point; held still for a moment, the native cast holds and repeats as before. Weapon skill gestures Off keeps the trigger native |
+| Throw a gas or oil potion | A stack of throwing potions (Rancid, Choking or Strangling Gas; Oil, Exploding or Fulminating) in the right hand, right trigger bound to Attack or Throw: press it, throw and let go. With Bottle physics on, the potion leaves the hand as its own bottle (the game's model) and flies in the physics world until it first touches the floor, a wall, a table top or a prop; there it shatters. The game's own Throw goes as the bottle leaves the hand, aimed where that flight lands (the same physics world's trace), and its potion flies hidden, so the native gas cloud or blast follows the shatter there, within the game's reach. Off (or without the cached model) the game's own Throw lands the potion where the arc meets the floor; running carries the throw and Throw lift raises it. A quick press or a still hold throws as before. The potion hand never swings as a melee weapon. Potions in the left hand keep the native button. Weapon skill gestures Off keeps the trigger native |
 | Cancel active grab/draw | Right B; release inputs before starting again |
 | Physical belt potion | Reach to an original 3D bottle on the front belt and hold **Right Grip** to grab; left-hand grip also works |
 | Drink | Keep grip held, bring the bottle's opening to your mouth and tip nearly horizontal for 0.25 seconds; release to return an unused potion |
@@ -186,8 +187,9 @@ not generate melee velocity. The layout currently assumes a right-handed player.
 | Seated weapon selection | Utility wheel → **Weapon I** or **Weapon II** |
 | Stow/draw | Utility wheel → **Stow weapons** / **Draw weapons**; native equipped stats stay unchanged |
 | Health/mana | Check the back of your left wrist, or choose **Palm** in **VR Settings > HUD** and hold your left palm upward in front of you briefly. No button required; automatic alerts are off by default |
-| Show all nearby loot labels (Alt) | Hold the **right stick down** to hold the native Show Items action; let go to restore normal drop/hover labels. Push it **up** to toggle running / walking. Listed in **VR Settings > Controls** |
+| Show all nearby loot labels (Alt) | Hold the **right stick down** to hold the native Show Items action; let go to restore normal drop/hover labels. Push it **up** to toggle running / walking. Neither while you look at the wrist / palm map, which they zoom instead. Listed in **VR Settings > Controls** |
 | Explored minimap | Hold Left Y ? **MAP** in the bottom tabs; point right laser + trigger. **SPELLS** returns to skills; releasing Left Y closes the menu |
+| Zoom the minimap | Look at the wrist / palm map; right stick up zooms in, down zooms out. No run / walk toggle or loot labels meanwhile; left / right still turns, except during a zoom push; looking away returns the stick |
 | Quest journal | Open the native tabbed game menu with Left X / Frame Left A, then select Journal. The duplicate wheel entry is removed |
 | Journal controls | Right laser + trigger uses native page controls/act tabs; Right B follows native back; Left X performs native X |
 | Inventory drop / sort | Native X (Quest Left X / Frame Left A) / press and hold right stick click; right-stick click no longer swaps in gameplay |
@@ -223,6 +225,25 @@ The minimap and compass form one navigation display on your left hand.
 together, independently of health/mana. When both displays share a hand face,
 navigation sits above the vitals; otherwise it sits directly at the hand anchor.
 The wheel's **MAP** tab remains available even when navigation is **Off**.
+
+**Zoom:** while the wrist or palm map is shown and you look at it (its center
+within about 22 degrees of where your head points; it holds until about 30, so a
+glance at the edge does not flicker), the right stick's up / down zooms it:
+up zooms in about your hero, up to 4x; down zooms out to 1x, the whole native
+map, where it stops. Only a mostly vertical push zooms, and during it left /
+right does not turn until the stick is back near the center. A light tick marks
+each quarter step (faster as it zooms in), a firmer one either end. While you
+look at the map, right stick up / down does nothing else (it does not toggle
+running or show loot labels); left / right still turns. Wrist and palm share one
+zoom, and the wheel's **MAP** tab shows it (change it at the wrist). It is not
+saved: every new game starts at 1x, so a player who has forgotten the control
+still sees the whole map.
+
+**Full map:** **VR Settings > HUD > Map view** = **Full map** or **Full top-down**
+shows the game's full (Tab) map on the wrist instead of its corner map, in the same
+two views. 1x is the game's widest zoom (0.125); up zooms in to 16x, redrawn by the
+game closer as you go so it stays sharp. It is a screen-sized window around your
+hero, not the whole level, and it is not drawn in your view while the wrist shows it.
 
 The label above the compass shows your current **act (I-V)** and **area name**,
 including named dungeon floors. It follows the same wrist/palm placement and
@@ -390,13 +411,13 @@ tabs and a **Reset eye height** button:
 |---|---|
 | Controls | Left/right controller reference for movement, menus, melee, bow, spells, potions, holsters and height reset |
 | VR | Controller labels, motion combat, seated belt position, dominant hand, smooth/snap turning, belt height and reach, weapon skill gestures and ordinary mob bars |
-| Video | Added sky, fog and dungeon ceilings, and the experimental Sorceress elemental hand effects (Off by default) |
+| Video | Added sky, fog and dungeon ceilings, the experimental Sorceress elemental hand effects (Off by default), bottle and prop physics, and the torch club's flame (On; its light stays when it is off) |
 | HUD | Health/mana location and tilt, optional resource alerts, navigation location, menu distance and tooltip timing |
-| Combat | Melee rules, swing hit speed and thrust speed |
+| Combat | Swing hit speed and thrust speed |
 | Aim | Whether spells and bow skills go to the aimed monster, the staff aiming where your arm points, and the aimed monster's outline: strength, which hands show it, and each hand's color (by range or one hue), where ground skills land (the game's aim, where you point or the aimed monster), landing circles, and whether the aim follows your view (the eyes' 17-degree tunnel, the hands within 30 degrees of your head, a raised hand aiming alone). Every option that changes how a cast aims is Off (Game) by default |
 | Shield | Where a held shield sits on the forearm: grip offset, out and up (all 0 by default), how far it follows the wrist, and its roll about the forearm |
 | Haptics | Overall strength and separate melee, bow draw, bow/throw release, spell, interaction and resource-alert strengths; tests follow each action's hands |
-| Perf | Everything that changes the frame rate: stereo rendering (Both eyes / By turns, By turns by default), VR render resolution (Headset by default), terrain and object draw distances, foveation Off / Fixed / Eye tracked and its strength, ReShade depth (after a restart) and desktop one eye; the actual VR source size, a Defer GPU wait button while frames wait for the GPU, and warnings while the game's Vertical Sync is on or its anti-aliasing is not FXAA. Under them, each second's frame rate and where the frame's time goes, whether the CPU's part fits the headset's frame, and the game's own graphics options |
+| Perf | Everything that changes the frame rate: stereo rendering (Both eyes / By turns, By turns by default), VR render resolution (Headset by default), terrain and object draw distances, foveation Off / Fixed / Eye tracked and its strength, frame generation (experimental, Both eyes only: Off / FidelityFX / NVIDIA, with NVIDIA's quality and scale on a row under it); the actual VR source size, a Defer GPU wait button while frames wait for the GPU, and warnings while the game's Vertical Sync is on or its anti-aliasing is not FXAA. Under them, each second's frame rate and where the frame's time goes, whether the CPU's part fits the headset's frame, the game's own graphics options and what frame generation is doing |
 | Notes | The last published release's notes, read-only |
 
 Pages show only the rows that can apply to the character the panel is open
@@ -981,8 +1002,10 @@ See [physical breakables](../docs/PHYSICAL_BREAKABLES.md) for scope and validati
 Only a confirmed physical contact overrides legacy melee grid reach. Native
 line-of-sight, hostile relationship, creature life state, damage, elemental
 resistances/immunities, criticals, leech, procs, durability, death and XP still run.
-**Melee rules** (VR Settings > Combat, `[gameplay] melee_rules`, applied live,
-mid-game) choose between two modes for physical swings and trigger/button melee:
+**Melee rules.** Melee is Unleashed only since 2026-10-23: `[gameplay]
+melee_rules` is ignored and no longer in VR Settings. The Classic rules below
+describe code that stays until it is removed. The two modes for physical swings
+and trigger/button melee were:
 
 - **Unleashed** (`0`, the default): every weapon contact strikes each
   creature once per stroke. No to-hit, block or dodge roll and no attack-speed
@@ -992,7 +1015,7 @@ mid-game) choose between two modes for physical swings and trigger/button melee:
     attack rating, defense and level penalty), read where the game's hit check
     passes it on. `ar_damage_floor` (0) keeps that % of damage at zero chance.
   - **Recovery** (`swing_recovery_damage`, 1): damage x the share of the native
-    attack cycle (class, weapon, IAS, WSM) since the previous landed stroke, to
+    attack cycle (class, weapon, IAS, WSM, skill speed and slows) since the previous landed stroke, to
     the power `swing_recovery_curve` (2), at most 1. With 2, flailing at twice
     the cycle's rate deals half the damage per second (1 would be neutral).
     `swing_recovery_grace` (100 = none) counts a stroke from that % of the cycle
@@ -1004,13 +1027,72 @@ mid-game) choose between two modes for physical swings and trigger/button melee:
     the game resolves them, which follows the blade frame to frame but not
     within a single frame. A riposte is still a clean hit (no falloff) and
     counts as one of the stroke's creatures.
-  Leech, crushing blow and other on-hit effects still run on the unscaled hit.
+  - **On-hit effects** come only from a stroke that waited a full native attack
+    cycle (the breakpoint, from the previous landed stroke on the same recovery
+    clock: per hand when dual wielding, one shared clock for a shapeshift
+    form's two claws), and only on the first creature that stroke lands on.
+    That covers life and mana leech, critical and deadly strike, crushing blow,
+    open wounds, freeze, slow, knockback, flee, blind, prevent monster heal,
+    defense lowered per hit and chance to cast on striking or attack (curses
+    included). Every other contact still lands its scaled damage, with no
+    on-hit effects. `swing_recovery_grace` does not shorten the wait. A riposte
+    always carries them; an unknown cycle counts as full. Elemental damage and
+    its effects (chill, poison) and on-kill effects are unchanged. The game's
+    own roll sites are checked at start (`Frame on-hit gate:`); a part not
+    found stays native. `[debug] melee_trace=1` adds `onhit=1/0` to each
+    traced contact.
+  - **Would-have-hit gate:** a contact's effects other than its damage also
+    need the swing's native roll to have hit (below, *Would-have-hit gate*),
+    so a full-cycle stroke at 60% attack rating chance carries them about 60%
+    of the time, as natively. `would_hit=1/0` (-1: not gated, e.g. a riposte)
+    ends each `melee_trace` contact line.
+  - **Melee skill strikes** (CONTROLS.md): a hand armed with a strike skill
+    (the Druid's Maul, Feral Rage, Rabies, Fire Claws, Hunger and Fury; Bash, Stun, Concentrate, Berserk, Sacrifice, Vengeance, Conversion, Zeal,
+    Power Strike, Impale, Charged Strike, Lightning Strike and Poison Dagger) casts it natively on a full-cycle stroke's first landed
+    contact, inside that contact's scaling and on-hit gate; every other contact
+    stays a basic attack. Classic casts on every paced contact. Developer
+    builds log `Frame melee skills:` (armed contacts, casts, refusals by
+    reason) and add `strike=<skill> cast|basic_strike` to `melee_trace` lines.
+  - **Fury's flurry** (Zeal's the same with a weapon; Classic paces Zeal at its Param2, a whole cycle):
+    the cast lands hit 1 of its 2-5. In Unleashed each
+    later landed stroke of a claw carrying Fury lands the next one, at any
+    speed (only a stroke within 100 ms of the previous Fury hit, one swipe's
+    follow-through, can't): unscaled, with on-hit effects, no mana, on the
+    creature it struck. A later stroke that reaches several creatures lands
+    Fury on its first two (native Fury spreads its hits across nearby
+    monsters); the casting stroke on one. A new cast still needs a full-cycle
+    stroke, so the burst limits itself. In Classic each follow-up waits Fury's Param2 (70%) of
+    the attack cycle after the previous Fury hit, sooner than the shared
+    cadence; earlier strokes stay basic and never delay it. Unused hits lapse
+    after two cycles, a form change or another skill's cast. Developer builds
+    log `Frame melee flurries:` and tag trace lines `cast 1/5`,
+    `flurry 2/5 after N ms`, `flurry 3/5 spread`, `basic_strike flurry_early after N ms`;
+    the on-hit report counts `flurry=`.
   `Frame swing damage:` in the log reports scaled hits and the last factors.
 - **Classic** (`1`): native attack rating, monster defense, block and the
   level penalty decide each attack, and attack speed paces them (below). A rolled
   miss uses up the attack, as a missed swing animation would.
 
-Missile hit checks (arrows, missile spells) keep `contact_hits` in both modes.
+Missile hit checks (arrows, missile spells) keep `contact_hits` in both modes. In
+Unleashed your arrows and throws then follow the contact rules: attack rating
+against the monster's defense scales each projectile's damage at the life write
+(`ar_damage`; no recovery penalty), and the would-have-hit gate decides its other
+effects. `Frame shot damage:` counts scaled hits. Classic: full damage, as before.
+In Unleashed your trigger/button melee (a melee hit check outside a physical
+swing: the trigger's basic attack or melee skill, Smite from the trigger or a
+shield bash) is a stroke like a swing (2026-10-24): it lands, attack rating scales
+its damage at the life write (`ar_damage`), the would-have-hit gate decides its
+other effects, and it shares the swings' recovery. It is measured from your latest
+landed swing on any hand (the recovery damage factor and the on-hit cycle gate, as
+a swing's), and every later swing is measured from it as well as from its own
+clock, so mixing trigger attacks with swings is never faster than swinging. Trigger
+hits never count against each other: the native animation already paces them, and
+a multi-hit cast (Zeal, Fury, Whirlwind) keeps its later hits. Smite always hits
+natively, so it skips attack rating and the would-have-hit gate and only shares the
+recovery. `button_cycles` in `Frame melee:` counts trigger hits; developer builds
+log `Frame trigger melee:` (hits inside a swing's cycle) and `Frame trigger melee
+damage:` (verdicts, scaled hits), and `melee_trace` adds a `trigger target=` line
+per hit. Classic: unchanged.
 In Classic, button melee keeps native monster block only where the game checks
 block inside its hit check; `native block/dodge in melee` in `Frame combat:`
 confirms it. Every weapon contact with a hostile creature taps the controller once
@@ -1031,8 +1113,10 @@ starts it (`button_cycles`), so alternating trigger attacks with swings is no
 faster than swinging. A trigger attack started right after a swing is still
 paced only by its own native animation. This needs the combat hooks, which
 `contact_hits=1` (the default) installs.
-Skill speed (Fanaticism, Frenzy, Burst of Speed, werewolf), slows and dual-wield
-attack sequences are not read yet. An unknown class or weapon class (including
+Skill speed and slows (Fanaticism, Frenzy, Burst of Speed, chill, Decrepify) come
+from the unit's attackrate (ItemStatCost 68, which already subtracts the main
+hand's WSM; `attack_speed.h` `SkillSpeed`); the forms' own cycle is below.
+Dual-wield attack sequences are not read yet. An unknown class or weapon class (including
 classes outside the original seven) leaves the cycle unknown, which does not
 gate hits. Unleashed restores unlimited free-swing contacts. The log
 reports the cycle inputs (`Frame melee attack speed:`) and refused contacts
@@ -1118,20 +1202,18 @@ instead of a random one. Classic keeps the native roll.
   sliders (re-read from Settings.json when the game saves it), times
   `riposte_volume` (100).
 - **Guard strain light**: every blocked hit (not a parry) strains the guard by
-  `guard_strain_per_block` % (10). **VR Settings > Combat > Guard strain** (right stepper: buildup)
-  selects Slow / Medium / Fast (`guard_strain_speed` 0 / 1 / 2, default Medium).
-  Slow halves strain per block; Fast doubles it. With default tuning, full
-  strain takes about 20 / 10 / 5 blocks in a row. The
-  vignette size, lowering/reset time and blocking rules stay the same. Existing
-  custom `guard_strain_per_block` tuning is multiplied, not overwritten. Strain shows as a soft vignette at the
-  rim of the view (a pale white light by default; VR Settings > Combat > **Guard strain
-  color** switches it to a black shadow, `guard_strain_dark` 1, or hides it, `guard_strain_dark` 2
-  (Off: no light, but strain, guard breaks and chip damage still apply); the black is drawn denser by
-  `guard_strain_dark_density` (2.5) so it hides as much as the light, and
-  `guard_strain_color` takes any RRGGBB hex, default FFF7EA), beneath the blood on
-  the visor, creeping inward as it builds;
+  `guard_strain_per_block` % (10), weighted by the attacker's rank: about 10
+  normal-monster blocks in a row reach full strain. There is no buildup speed
+  setting (`guard_strain_speed` is no longer read). Strain shows as a soft black
+  vignette at the rim of the view, drawn denser by `guard_strain_dark_density` (2.5)
+  so it hides more over D2's dark scenes, beneath the blood on the visor, creeping
+  inward as it builds. **VR Settings > Combat > Guard strain vignette**
+  (`guard_strain_vignette`, 1 = On) turns it Off: no shadow, but strain, guard breaks
+  and chip damage still apply. A profile without that key that had chosen the old
+  Guard strain color Off (`guard_strain_dark` 2) stays Off; `guard_strain_dark` and
+  `guard_strain_color` are otherwise no longer read (the rim is black only);
   each block sends one smooth pulse in from the edge. At full strain the guard
-  breaks: the light swells until only `guard_strain_clear` % (10) of the view is
+  breaks: the shadow swells until only `guard_strain_clear` % (10) of the view is
   clear and breathes slowly (`guard_strain_breathe_ms`, 1600), with one alert tap on
   the left controller. The shield keeps blocking throughout; the cost is sight.
   Strain holds while hits keep reaching the shield. Once no hit (block or parry)
@@ -1139,9 +1221,9 @@ instead of a random one. Classic keeps the native roll.
   drains with the shield still up; the next hit stops the drain and restarts the
   wait. Lowering it (or a menu, or losing the shield) drains at once, without the
   wait. Either way full strain drains in `guard_strain_reset_ms` (1500), so a broken guard left alone clears 3 s after the last hit; a broken guard
-  stays broken until the light has fully faded, and raising the shield again part
+  stays broken until the shadow has fully faded, and raising the shield again part
   way keeps what is left. Opacity is `guard_strain_light` (100 %, 0 = none; strain
-  still runs). The light's inner blend is
+  still runs). The shadow's inner blend is
   `guard_strain_softness` % of the visor radius (45) about a fixed midpoint, so it
   fades toward the centre with no visible inner rim. Pulses re-trigger without
   dropping, so rapid blocks hold a swell rather than flashing.
@@ -1196,6 +1278,23 @@ whose `Set(defender, life, ...)` returns to 44D098), so resistances, criticals a
 leech have already run; only the local player's physical swings are scaled - not
 spells, missiles or thorns.
 
+**No flinching (Unleashed, 2026-10-22):** the hero never enters the game's hit
+recovery (GetHit) or block animation when struck; Classic keeps native flinching,
+so FHR and FBR still work there. Natively both lock out casts, button skills and
+movement for their FHR / FBR frames, which a VR body cannot follow and which
+stun-locks in a crowd. The game's unit mode setter (34E5F0) refuses
+those two modes for the local hero's server and client units, so the hero keeps
+whatever it was doing; the hit's damage is unchanged. Physical swings never waited
+on hit recovery anyway (a contact calls the native attack directly). Knockback stays
+native, but ends in Neutral: the game ends every knockback by asking for GetHit, and
+refusing that left the hero in knockback, asking again at each animation end, locked
+in place until save and exit (Duriel's stunning Smite, 2026-10-24). Any flinch asked
+for while in knockback now sets Neutral instead (`knockback_to_neutral=` in the
+`Frame flinch:` line). `[gameplay] player_flinch` (default 0) restores native flinching with 1;
+applied live. Developer builds log `Frame flinch:` counts and, once per distinct
+call chain (at most 8 a session), a `Frame flinch probe:` line naming the game code
+that asked for the flinch.
+
 **Incoming defense (Unleashed):** every monster melee attack and projectile aimed at
 the local player lands - its to-hit roll always succeeds, so only the raised shield
 (or the native block roll without one) stops it. Defense still counts: the native
@@ -1208,6 +1307,43 @@ without the hit-or-miss variance. Spells never roll to hit and are unchanged.
 `[gameplay] enemies_always_hit` (default 1) turns the rule off with 0, restoring
 native monster misses at full damage. Classic always uses the native monster
 chance to hit. The log's `Frame incoming defense:` line counts scaled hits.
+
+**Would-have-hit gate (Unleashed):** contact always lands, both ways - a monster's
+melee hit or missile on you (`enemies_always_hit`) and your physical swing - and
+its damage follows the Unleashed formula above. Every other effect of that attack
+delivers natively: only when the attack's native to-hit roll would have hit. The
+verdict is the game's own, not an average: the forced hit check still advances the
+attacker's real random seed once, and that roll against the clamped chance is what
+the game would have compared. On a would-miss contact:
+- **Off:** the attacker's on-hit procs (crushing blow, open wounds, freeze, slow,
+  knockback, chance to cast on striking, curses such as Amplify from a monster's
+  hit, Iron Maiden on a cursed attacker), the struck unit's when-struck effects
+  (chance to cast when struck, damage taken goes to mana, attacker takes lightning
+  damage, Frozen Armor, Life Tap's heal), life/mana/stamina leech and drain, mana
+  burn, chill, freeze and stun lengths, absorb heal, monster mods' on-hit
+  effects, Thorns' damage return, prevent monster heal, defense lowered per hit,
+  and item wear (your armor when struck, your weapon when you strike).
+- **As a miss:** effects the game fires on a miss as well - chance to cast on
+  attack and attacked-in-melee (attacker takes damage, Shiver Armor) - run as if
+  the attack had missed.
+- **Unchanged:** critical and deadly strike (they multiply the damage, which the
+  chance already scales), blocks, parries, chip, guard strain and the block's
+  shield wear (designed), spells and enchantment procs (never roll to hit),
+  on-kill effects. A riposte is a clean hit and always carries its effects.
+- **Damage over time** - poison and burn - is damage that never reaches the scaled
+  life write: it takes the hit's own factor (Defense, or attack rating x recovery
+  x cleave, a riposte's bonus) on every contact.
+- **Absorb skills** (Energy Shield, Bone Armor, Cyclone Armor, Psychic Ward,
+  Health Link: the absorbdamage event, before the life write) see the contact's
+  damage at its factor and what they leave is scaled back, so they soak and drain
+  their mana or pool at native-average rates.
+On average every effect then lands as often as natively. Your arrows and throws
+and trigger/button melee are covered (above; Smite, which always hits natively, is not gated). Each part is checked against the build
+at start (`Frame would-hit gate: verdict= events= effects= ...`); a part not
+found stays as before (its effects on every contact). `Frame would-hit gate:
+incoming would hit= would miss= swings ...` counts verdicts; developer builds add
+what was switched off (`Frame would-hit gate native:`). `Frame guard native:`
+ends in `would_hit=1/0`.
 `[debug] guard_trace=1` logs every judged hit (`Frame guard trace:`) with the hand
 position, cover angle, swing and attack timing. Its `parry=` field names why a
 raised guard did not parry: `no_swing`, `spent`, `early` (more than 450 ms before
@@ -1329,6 +1465,95 @@ OpenXR quads, stereo-positioned but not depth-tested against the game world.
 The held bottle now uses the original 3D model when the local cache is available. Spell/item icons, belt contents/counts
 and health/mana now use the read-only native snapshot and local icon cache.
 Do not describe this prototype as completed physics combat.
+
+## Druid shapeshift forms in first person
+
+The game draws Werewolf and Werebear with enemy models
+(`data/hd/character/enemy/wolf`, `.../bear`) that carry only claws: no weapon
+or shield bones. While the player has the form's state (139 Werewolf, 140
+Werebear), the skeleton hook takes that model as the hero if it stands within
+2 units of the player and stands (by its hips: the game's werewolf bites with
+its head low, and the head test a person's rig uses left those frames to the
+game). A rig taken as the hero is kept while the game still
+draws it (40 ms, about three frames) unless another is clearly nearer (a summon
+can share the rig), and the druid's own model is not posed while a form rig is
+drawn. The state sample trails the game's swap of the models by up to a few
+hundred ms; a form's rig is taken as soon as the rig the sample still names
+(the druid's, or the other form's) has stopped being drawn, and the druid's
+model as soon as the form's has. This works for any class shifted by an item
+(Beast, Wolfhowl). While a rig is drawn as the hero, it - not the sample - says
+whether the player is in form (the sample can read human for a second or two
+after a load), so the shield guard, the left claw and the form's attack cycle
+never drop out mid-form. Left to the game, a werewolf's first frames
+drew its own unscaled beast leaning out ahead of the eyes (its back in view).
+
+- **Grafted under the player** (first person only; third person and flat menus
+  show the game's form, unscaled). The player sees arms, torso and legs, so the
+  form's body goes where the player's would be. Its torso is held tipped
+  upright about the spine root (the authored werewolf leans 66° with its head
+  below its shoulders), its shoulders sit under the eyes where a person's do
+  (the druid's proportions), and its own neck and head are hidden.
+- **Its own height.** The werewolf's eyes stand at 98 % of the druid's, the
+  werebear's at 112 % (6.93 and 7.92 in the druid's model units, her eyes 7.07;
+  the forms' models are drawn at world scale 1.0 against her 0.95, and the
+  heights and the world's scale are taken across). Only the camera moves: the
+  world keeps the druid's scale (units per metre from the druid's eyes), and
+  the hands and arms hang by that same scale. The rig is drawn at the uniform
+  scale that puts its upright shoulders under those eyes (about 0.76 for the
+  werewolf, 0.92 for the werebear), from the feet. Taking a form eases the eye height over half a
+  second (once per stereo pair); returning to human form takes the druid's at
+  once, and a person's rig is never drawn scaled. `[shapeshift] wolf_height` /
+  `bear_height` (% of the form's own height, 50–150, default 100) adjust it.
+- **No idle sway.** Above the hips the body is held as for every class, and a
+  form's hips are held at rest too. While the form stands still its legs and
+  tail are held; while it walks or runs they take the game's stride, hung from
+  the held hips, with the feet kept at the stride's height by leg IK (150 ms
+  blend either way). At the drawn scale the stride is shorter than the ground
+  covered, so the feet may slide.
+- **Arms on the controllers,** fitted to the player's reach from a person's
+  shoulders rather than the form's (the werebear's shoulders are 3.11 units
+  apart against the druid's 1.72; fitted to the T-pose span from those, its
+  arms were cut to half and a forward reach fell short). Forms may fit down
+  to 0.5 of their authored length, and beyond full reach a form's arm
+  lengthens (up to twice, as the shield arm does) so the paw stays on the
+  controller. Both paws are free hands: the grip curls the claws.
+- **Equipment is stats without a visual.** In form, aiming and holding treat
+  the player as unarmed: no bow draw, crossbow, javelin rod, staff or two-hand
+  grip, and no physical shield: the shield's block chance goes to the native
+  block roll. Physical block, parry, guard strain and chip damage don't apply
+  in form.
+- **Claw strikes.** Each paw is a physical claw: a capsule from the palm's
+  middle to past the middle finger's last joint, half the knuckle span thick,
+  measured on the paw's rest shape hung on the drawn wrist (a grip curls the
+  drawn fingers into a fist; the claw keeps its reach and its forward
+  direction). Both paws strike, with the existing swing and
+  thrust thresholds (release both triggers), the left claw too though a druid
+  never dual-wields; each claw has its own strokes,
+  hit list and cleave, and both share **one recovery** in Unleashed (and one
+  attack cycle in Classic). A claw hit is the native basic attack with the
+  druid's one weapon, so the form's damage, criticals, procs and leech stay
+  native; a weapon contact taps the paw's own controller. Both paws can break
+  barrels and crates. Contacts one batch applies out of time order never run
+  the recovery clock back: a claw timed before the latest landed hit is not
+  recovered. Skills (Fury, Maul,
+  Feral Rage, Rabies, Hunger...) stay trigger/button casts.
+- **The form's attack cycle** (recovery in Unleashed, pacing in Classic) is the
+  D2R 2.4 wereform normal attack (`attack_speed.h` `WereformFrames`): the
+  druid's A1 animation speed and start frame for the weapon class, the
+  increment slowed by the form's A1 length over the human's, the form's own
+  length (Werewolf 13, Werebear 12), and EIAS from item IAS plus the unit's
+  attackrate (ItemStatCost 68: Werewolf and Maul skill speed, auras, less WSM
+  and slows), capped at −85…150. It matches ChthonVII's 2.4 wereform
+  calculator for every weapon class and EIAS. `Frame melee attack speed:`
+  shows `attackrate=` and `form=`; `Frame claws:` counts landed hits per paw.
+
+F10's skeleton dump adds each bone's rest translation (`b x y z`). Each learned
+form rig logs one `Frame shapeshift body:` line (rest-pose head, lean, upright
+shoulders, rig eye, legs, fingers); `VR body pose:` adds `form`, `scale` and
+`legs_held`. Developer builds also log a form rig rejected for standing more
+than 2 units from the player, and, when they change (at most every 5 s), the
+form rig frames posed ahead of the state sample, left to the game (not
+standing, another rig taken) and grafted without the neck anchor.
 
 ## Head-relative sound
 
@@ -1519,6 +1744,30 @@ three eligible melee checks, three accuracy overrides and three block bypasses
 without failures. The final free-swing run recorded 58 physical contacts and
 58 native accepted hits with no rejections; the owner reported "works great."
 Arrow/spell live verification remains open.
+
+### Druid shapeshift gestures
+
+A Druid changes form by performing the transformation, in either melee rules
+mode, while **VR Settings > VR > Weapon skill gestures** is on (as the other
+gesture skills):
+
+- **Werewolf:** cross both arms over your chest (each hand on the opposite side),
+  bow forward over them, then wrench upright while flinging both arms up and
+  outward.
+- **Werebear:** hold both hands above your head for a moment, then slam them
+  down together to waist height or lower.
+
+The gesture presses the controller button the shape skill is assigned to, so the
+skill must be on one of the ten slots; the native cast, mana, cooldown and the
+transformation itself stay native. Performing the gesture again while
+transformed casts the skill again, which returns you to human form; a 1.5 s
+cooldown after each cast stops one sloppy performance from casting twice. A
+performance is ignored while a hand is busy (trigger squeezed, bottle held, bow
+drawn, face wipe), while menus or the wheel are open, and without the skill on a
+button (the log says which skill was not assigned). Both controllers pulse once
+when the cast is issued. Thresholds live in `shapeshift::Tuning`
+(`steamvr/shapeshift_gesture.h`); `shapeshift-gesture-test` walks both
+performances, lazy and partial versions, loot stooping and overhead swings.
 
 ### Ice Bolt visual height correction
 

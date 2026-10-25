@@ -216,6 +216,18 @@ int main() {
         Check(!cast,"a slow reach is neither a quick press nor a throw: nothing is cast");
         s.in.toss=false;s.in.trigger=1;Check(s.Step().skill==0&&!s.out.tossHeld,"any other skill keeps the trigger as before");
     }
+    // A throwing potion (Attack or Throw on the right trigger): tossed like a trap, never swung.
+    for(const int skill:{weaponskills::Attack,weaponskills::Throw}) {
+        Sim s;tossing(s);s.in.selectedSkill=skill;s.in.potion=true;s.Step();
+        Check(s.out.meleeContact==false,"a throwing potion in hand never swings");
+        s.in.trigger=1;s.Step();
+        s.Move({.25f,1.55f,-.2f},4);s.Move({.25f,1.55f,-.9f},5);s.in.trigger=0;s.Step();
+        Check(s.out.tossRelease&&s.out.skill==0&&!s.out.meleeContact,"thrown, one native press of its slot, and no swing after the release");
+        bool swung=false;for(int i=0;i<10;++i)swung|=s.Step().meleeContact;
+        Check(!swung,"nor while it rests in the hand");
+        Sim trap;tossing(trap);trap.Step();
+        Check(trap.out.meleeContact,"a trap's hand still swings its weapon between throws");
+    }
     for(int kind=0;kind<4;++kind) {
         Sim s;s.in.weapon=Weapon::Javelin;s.Step(3);s.in.trigger=1;s.Step();
         if(kind==0)s.Move({.25f,1.25f,-.45f},10); // weak reposition, not a throw

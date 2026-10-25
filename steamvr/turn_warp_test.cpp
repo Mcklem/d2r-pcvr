@@ -324,6 +324,24 @@ static void Move(Gpu& gpu,bool typeless) {
         drawn.keep=0;
         out=gpu.Warp(warp,source.Get(),target.Get(),Identity,slot^=1,&still,&drawn);
         from(2,15,4,true,"keep off: the drawn eye's wall everywhere it reaches");
+        from(32,36,0,false,"its own wall in the strip the drawn eye cannot see stays");
+        // This eye's own picture still showed the post where it stood a frame
+        // ago (columns 28-43): in the strip the drawn eye cannot see (32-35)
+        // it is nearer than the wall behind - a ghost. What is behind beside
+        // the strip goes there instead: the drawn eye's wall at 36 (its 40).
+        const auto old=distances([](UINT x){return x>=28&&x<44?2.f:4.f;});
+        framevr::TurnDepth stale=still;stale.depth=old.Get();
+        out=gpu.Warp(warp,source.Get(),target.Get(),Identity,slot^=1,&stale,&drawn);
+        bool filled=true;
+        for(UINT y=0;y<side;++y)for(UINT x=32;x<36;++x)if(!Same(out[y*side+x],other(40,y))) {
+            if(filled)std::printf("a frame-old post in the strip: pixel %u,%u = %08x, expected %08x\n",x,y,out[y*side+x],other(40,y));filled=false;
+        }
+        Check(filled,"a frame-old post in the strip: what is behind beside it instead");
+        from(16,32,8,true,"the post itself from the drawn eye still");
+        warp.Fill(false);
+        out=gpu.Warp(warp,source.Get(),target.Get(),Identity,slot^=1,&stale,&drawn);
+        from(32,36,0,false,"fill off: the frame-old post stays, as before");
+        warp.Fill(true);
     }
     {   // DLSS: the scene drawn into the top-left quarter of a depth twice the size
         auto big=gpu.Texture(side*2,side*2,DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -333,7 +351,7 @@ static void Move(Gpu& gpu,bool typeless) {
         framevr::TurnDepth corner=moved;corner.depth=big.Get();corner.scale[0]=corner.scale[1]=.5f;
         expect(gpu.Warp(warp,source.Get(),target.Get(),Identity,slot^=1,&corner),0,56,4,"the depth read from its drawn corner");
     }
-    std::printf("Turn depth GPU pass passed (%s target): wall, sky, occlusion, edge, carried, the drawn eye's picture to the pixel, a thin blade, this eye's own where the surface is the same, drawn corner\n",typeless?"typeless":"typed");
+    std::printf("Turn depth GPU pass passed (%s target): wall, sky, occlusion, edge, carried, the drawn eye's picture to the pixel, a thin blade, this eye's own where the surface is the same, a frame-old post in the strip filled, drawn corner\n",typeless?"typeless":"typed");
 }
 
 // Near things only (TurnDepth::keepNear): a 256-pixel wall 4 units away, a
@@ -475,6 +493,47 @@ static void KeepEffects(Gpu& gpu,bool typeless) {
     std::printf("Effects GPU pass passed (%s target): this eye's own kept where either eye's effects layer has something, the drawn eye's elsewhere\n",typeless?"typeless":"typed");
 }
 
+// The sharper read (TurnWarp::Sharpen): a 64-pixel picture of vertical
+// stripes, 4 px a period, turned half a pixel. Bilinear averages each two
+// neighbours; Catmull-Rom keeps more of the stripes' contrast. A whole-pixel
+// turn reads every texel as it is either way, and a hard step from 64 to 192
+// neither undershoots nor overshoots (kept within the nearest texels).
+static void Sharpness(Gpu& gpu,bool typeless) {
+    framevr::TurnWarp warp;
+    Check(warp.Initialize(gpu.device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,nullptr),"pipeline");
+    constexpr UINT side=64;
+    auto source=gpu.Texture(side,side,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto step=gpu.Texture(side,side,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto target=gpu.Texture(side,side,typeless?DXGI_FORMAT_R8G8B8A8_TYPELESS:DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const auto grey=[](uint32_t v){return v|v<<8|v<<16|0xffu<<24;};
+    constexpr uint32_t stripe[4]={40,140,240,140};
+    std::vector<uint32_t> stripes(side*side),steps(side*side);
+    for(UINT y=0;y<side;++y)for(UINT x=0;x<side;++x){stripes[y*side+x]=grey(stripe[x%4]);steps[y*side+x]=grey(x<32?64:192);}
+    gpu.Upload(source.Get(),stripes,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gpu.Upload(step.Get(),steps,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    const std::array<float,9> half{1,0,.5f/side, 0,1,0, 0,0,1},two{1,0,2.f/side, 0,1,0, 0,0,1};
+    const auto contrast=[&](const std::vector<uint32_t>& out){   // the red lane's range over the middle of row 32
+        int lo=255,hi=0;for(UINT x=16;x<48;++x){const int r=out[32*side+x]&255;lo=std::min(lo,r);hi=std::max(hi,r);}
+        return hi-lo;
+    };
+    int slot=0;
+    warp.Sharpen(false);const int soft=contrast(gpu.Warp(warp,source.Get(),target.Get(),half,slot^=1));
+    warp.Sharpen(true);const int sharp=contrast(gpu.Warp(warp,source.Get(),target.Get(),half,slot^=1));
+    std::printf("half a pixel: stripes' contrast %d bilinear, %d Catmull-Rom\n",soft,sharp);
+    Check(sharp>=soft+soft/8,"Catmull-Rom keeps more of the stripes than bilinear");
+    const auto out=gpu.Warp(warp,source.Get(),target.Get(),two,slot^=1);
+    bool same=true;
+    for(UINT y=0;y<side;++y)for(UINT x=0;x<side-2;++x)if(!Same(out[y*side+x],grey(stripe[(x+2)%4]))){
+        if(same)std::printf("whole pixels: pixel %u,%u = %08x, expected %08x\n",x,y,out[y*side+x],grey(stripe[(x+2)%4]));same=false;
+    }
+    Check(same,"a whole-pixel turn reads every texel as it is");
+    const auto edge=gpu.Warp(warp,step.Get(),target.Get(),half,slot^=1);
+    bool within=true;
+    for(UINT y=0;y<side;++y)for(UINT x=0;x<side;++x){const int r=edge[y*side+x]&255;if(r<63||r>193){if(within)std::printf("step: pixel %u,%u red %d\n",x,y,r);within=false;}}
+    Check(within,"a hard step neither undershoots nor overshoots");
+    std::printf("Sharper read passed (%s target): more contrast at half a pixel, whole pixels exact, no ring at a step\n",typeless?"typeless":"typed");
+}
+
 // The game's interface laid back over a picture (TurnWarp::Interface), as the
 // game's last pass lays it: picture * alpha + colour, in the picture's UNORM
 // encoding, its alpha kept; nothing laid where the layer is not.
@@ -526,5 +585,5 @@ static void Lay(Gpu& gpu,bool typeless) {
 
 int main(int argc,char** argv) {try {
     const bool typeless=argc>1&&!std::strcmp(argv[1],"--typeless");
-    Math();Gpu gpu;Precompiled(gpu);Turn(gpu,typeless);Move(gpu,typeless);KeepNear(gpu,typeless);KeepEffects(gpu,typeless);Lay(gpu,typeless);return 0;
+    Math();Gpu gpu;Precompiled(gpu);Turn(gpu,typeless);Move(gpu,typeless);KeepNear(gpu,typeless);KeepEffects(gpu,typeless);Sharpness(gpu,typeless);Lay(gpu,typeless);return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"%s\n",e.what());return 1;}}

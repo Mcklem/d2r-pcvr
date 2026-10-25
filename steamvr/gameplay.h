@@ -48,8 +48,10 @@ struct Input {
     // Double Throw (#224): the left trigger arms the left hand's own throw.
     bool leftThrow=false; float leftTrigger=0;
     float throwLift=0; // degrees above the hand's path (VR Settings > Aim > Throw lift)
-    // The right trigger's skill is a trap or bomb thrown to place (toss::Skill, #224).
-    bool toss=false;
+    // The right trigger's skill is a trap or bomb thrown to place (toss::Skill, #224),
+    // or Attack or Throw with a throwing potion in the right hand (potion): tossed
+    // the same way, and never swung.
+    bool toss=false,potion=false;
     Weapon weapon=Weapon::Unknown;
     MeleeStyle meleeStyle=MeleeStyle::OneHand;
     uint32_t equipment=0;
@@ -278,9 +280,10 @@ public:
             return out; // only the release spends ammunition; never hold A
         }
 
-        // A trap or bomb thrown to place (#224). A quick press casts where you
-        // point; held still it casts natively as before, repeating; thrown, it
-        // goes where its arc lands. The release makes one native press.
+        // A trap or bomb thrown to place (#224), or a throwing potion. A quick
+        // press casts where you point (a potion throws as it did before); held
+        // still it casts natively as before, repeating; thrown, it goes where
+        // its arc lands. The release makes one native press.
         if(in.toss&&selection>=0&&in.weapon!=Weapon::Bow&&in.weapon!=Weapon::Crossbow) {
             if(triggerEdge){tossing.Arm(in.hand[0].p,in.time);tossNative=false;skillPulse.Cancel();out.feedback=1;}
             const bool armed=tossing.armed;
@@ -297,7 +300,7 @@ public:
             out.tossHeld=tossing.armed;
             if(tossNative)out.skill=selection;
             else if(const int pulsed=skillPulse.Get(selection,in.selectedSkill,in.selectedOwner,in.skillContext,in.time);pulsed>=0)out.skill=pulsed;
-            out.meleeContact=!trigger&&!out.tossHeld;
+            out.meleeContact=!trigger&&!out.tossHeld&&!in.potion;   // the game never attacks with a throwing potion
             return out;
         }
 

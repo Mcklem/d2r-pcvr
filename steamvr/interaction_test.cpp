@@ -95,6 +95,25 @@ int main(){
         for(auto page:{MenuPage::Map,MenuPage::Developer,MenuPage::EditSlots,MenuPage::EditSkills,MenuPage::EditItems})
             Check(WheelCell(.1f,.1f,-1,page,1)!=QuickUseCell,"hidden quick control never intercepts another page");
     }
+    {   // Druid: the lower-left box toggles which trigger skill the left claw's strikes cast
+        Sim s;quick(s);s.in.leftStrikes=0;s.Step();
+        Check(s.out.wheel&&s.out.leftStrikes==0,"the wheel shows the left claw's choice");
+        s.in.hover=LeftStrikesCell;s.in.trigger=1;s.Step();
+        Check(s.out.toggleLeftStrikes&&s.out.wheel&&s.out.request.action==Action::None&&s.out.feedback==1,"a click asks to save the other choice; the wheel stays open");
+        Check(!s.Step(40).toggleLeftStrikes,"holding the trigger never toggles again");
+        s.in.trigger=0;s.Step();s.in.leftStrikes=1;s.in.trigger=1;s.Step();
+        Check(s.out.toggleLeftStrikes&&s.out.leftStrikes==1,"a fresh click toggles back");
+        Sim other;quick(other);other.Step();other.in.hover=LeftStrikesCell;other.in.trigger=1;other.Step();
+        Check(other.out.leftStrikes<0&&!other.out.toggleLeftStrikes&&other.out.feedback==3,"another class: no box, and a stray click only buzzes");
+        auto c=Context(s.in.snapshot,s.out,true);auto flipped=s.out;flipped.leftStrikes=0;
+        Check(c!=Context(s.in.snapshot,flipped,true),"a changed choice repaints the box");
+        for(auto page:{MenuPage::Spells,MenuPage::Equipment})for(int hand:{-1,0,1}) {
+            Check(WheelCell(.1f,.77f,-1,page,hand,false,0,true)==LeftStrikesCell,"left claw box shares hit and paint bounds");
+            Check(WheelCell(.1f,.77f,-1,page,hand,false,0,false)!=LeftStrikesCell,"no box for other classes");
+        }
+        for(auto page:{MenuPage::Map,MenuPage::Developer,MenuPage::EditSlots,MenuPage::EditSkills,MenuPage::EditItems})
+            Check(WheelCell(.1f,.77f,-1,page,1,false,0,true)!=LeftStrikesCell,"the left claw box never intercepts another page");
+    }
 
     {
         Sim s;s.in.wheel=true;s.Step(3);s.in.hover=13;s.in.trigger=1;s.Step();

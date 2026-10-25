@@ -38,8 +38,10 @@
 #include "journal_ui.h"
 #include "../steamvr/native_panels.h"
 #include "../steamvr/notice_card.h"
+#include "../steamvr/weapon_skills.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/native_hud.h"
+#include "../steamvr/wrist_full_map.h"
 #include "../steamvr/attack_speed.h"
 #include "../steamvr/dual_wield.h"
 #include <mutex>
@@ -66,6 +68,58 @@ const ThreadService* g_threads = nullptr;
 const WidgetService* g_widgets = nullptr;
 framevr::nativehud::VisibilityOverride g_toolbarVisibility;
 #ifdef D2RVR_NATIVE_OPENXR
+// Map view = Full map (steamvr/wrist_full_map.h): the full map's zoom for the wrist's capture.
+// Two hooks, each installed only when its entry bytes match D2R 3.3.93787 and only once the
+// setting is first on. Both call the original with the same arguments, except that the scale
+// function's zoom is replaced for the wrist's full map; nothing in the game's memory is written.
+//  - the map panel's draw method (RVA 0x14E3480, slot 3 of the panel's vtable 0x1FDC8A8)
+//    records its `this`;
+//  - the scale function (RVA 0xD1940: out, rect, extra, float zoom) gets the wrist's zoom when
+//    every gate holds on that call: the setting on, the wrist capturing, the layout full (the
+//    small flag 0), and the last panel `this` still has the map panel's vtable.
+namespace fullmapzoom {
+constexpr uint64_t PanelMethodRva=0x14E3480,ScaleRva=0xD1940,PanelVtableRva=0x1FDC8A8,SmallRva=0x2a2add0;
+using PanelMethod=uint64_t(*)(void*);
+using ScaleFn=void*(*)(void*,void*,void*,float);
+PanelMethod originalPanel=nullptr;ScaleFn originalScale=nullptr;
+std::atomic<uint64_t> panelSelf{0};
+std::atomic<bool> ready{false};
+uint64_t OnPanelMethod(void* self) {
+    panelSelf.store(reinterpret_cast<uint64_t>(self),std::memory_order_relaxed);
+    return originalPanel(self);
+}
+bool Gates() {
+    namespace fm=framevr::fullmap;
+    const uint64_t self=panelSelf.load(std::memory_order_relaxed);
+    if(!self||!fm::g_on.load(std::memory_order_relaxed)||!fm::g_capture.load(std::memory_order_relaxed))return false;
+    uint32_t small=1;uint64_t vt=0;
+    return framevr::ReadMemory(&small,reinterpret_cast<const void*>(d2rsig::Addr(SmallRva)),4)&&small==0&&
+           framevr::ReadMemory(&vt,reinterpret_cast<const void*>(self),8)&&vt==d2rsig::Addr(PanelVtableRva);
+}
+void* OnScale(void* out,void* rect,void* extra,float zoom) {
+    namespace fm=framevr::fullmap;
+    const float wanted=fm::g_wanted.load(std::memory_order_relaxed);
+    if(wanted>0&&ready.load(std::memory_order_relaxed)&&Gates()) {
+        const float use=fm::ZoomArg(zoom,wanted,true);
+        fm::g_applied.store(fm::GameRounded(use),std::memory_order_relaxed);   // what this draw really shows (hud tags the share)
+        return originalScale(out,rect,extra,use);
+    }
+    return originalScale(out,rect,extra,zoom);
+}
+// UI thread, while the setting is on: once a process.
+void Install() {
+    static bool tried=false;if(tried)return;tried=true;
+    constexpr uint8_t panelEntry[]={0x4c,0x8b,0xdc,0x55,0x53,0x56,0x57,0x41,0x54,0x49,0x8d,0x6b,0xa1};
+    constexpr uint8_t scaleEntry[]={0x4c,0x89,0x44,0x24,0x18,0x53,0x55,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57};
+    const bool a=d2rsig::Hook(PanelMethodRva,panelEntry,sizeof panelEntry,reinterpret_cast<void*>(&OnPanelMethod),reinterpret_cast<void**>(&originalPanel));
+    const bool b=a&&d2rsig::Hook(ScaleRva,scaleEntry,sizeof scaleEntry,reinterpret_cast<void*>(&OnScale),reinterpret_cast<void**>(&originalScale));
+    ready.store(a&&b);
+    char line[220];
+    std::snprintf(line,sizeof line,"Frame full map: zoom hooks %s (map panel 0x14E3480 %s, scale 0xD1940 %s); %s",a&&b?"installed":"NOT installed",
+                  a?"ok":"bytes differ",b?"ok":a?"bytes differ":"not tried",a&&b?"the wrist's full map opens at game zoom 0.125":"the wrist shows the full map at the game's own zoom");
+    framevr::logging::Write(line);
+}
+}
 void MaintainMapLayout(bool capture) {
     // D2R 3.3.93787 native automap mode setter: 0 full, 1 left, 2 right.
     // This updates transient map geometry only, not the saved options file.
@@ -78,9 +132,21 @@ void MaintainMapLayout(bool capture) {
     if(!checked){if(!d2rsig::Check(modeRva,modeSig,sizeof modeSig))return;checked=true;}
     int small=0;uint8_t left=0;
     if(!framevr::ReadMemory(&small,reinterpret_cast<void*>(d2rsig::Addr(0x2a2add0)),sizeof small)||
-       !framevr::ReadMemory(&left,reinterpret_cast<void*>(d2rsig::Addr(0x2a2add5)),sizeof left)||small<0||small>1)return;
-    const int action=layout.Step(capture,small?(left?1:2):0);
+       !framevr::ReadMemory(&left,reinterpret_cast<void*>(d2rsig::Addr(0x2a2add5)),sizeof left)||small<0||small>1){
+        framevr::fullmap::g_layout.store(-1);return;
+    }
+    // Map view = Full map: the wrist borrows the full map (0) instead of the left corner (1)
+    const bool full=framevr::fullmap::g_on.load(std::memory_order_relaxed);
+    if(full)fullmapzoom::Install();
+    const int current=small?(left?1:2):0;
+    const int action=layout.Step(capture,current,full?0:1);
     if(action>=0)reinterpret_cast<void(*)(int)>(d2rsig::Addr(modeRva))(action);
+    framevr::fullmap::g_layout.store(action>=0?action:current);
+    framevr::fullmap::g_capture.store(capture);
+    if(action>=0&&full) {   // the full map's lease, both ways: at most 40 lines a session
+        static int told=0;
+        if(told<40){++told;char line[160];std::snprintf(line,sizeof line,"Frame full map: automap layout %d -> %d (wrist capture %s)",current,action,capture?"on":"off");framevr::logging::Write(line);}
+    }
 }
 using ToolbarUpdate=void(*)(void*);
 ToolbarUpdate g_originalToolbarUpdate=nullptr;
@@ -244,6 +310,9 @@ std::atomic<uint32_t> g_from{0};
 std::atomic<bool> g_leftShield{false};
 std::mutex g_meleeEquipmentMutex;framevr::dualwield::Equipment g_meleeEquipment;
 std::vector<uint32_t> g_shieldTypes;
+std::vector<uint32_t> g_potionTypes;            // ItemTypes tpot: the throwing potions (RightThrowingPotion)
+std::atomic<bool> g_rightPotion{false};
+std::atomic<uint32_t> g_rightPotionCode{0};   // its item code, for the bottle that flies (#292)
 std::atomic<uint32_t> g_handsKey{0};          // what is in the two hands, as one number (HandsKey)             // the hand slot the weapon kind came from: 0 right, 1 left              // D2RVR_TWO_HANDED* bits of what is held
 
 constexpr uint32_t Four(const char* s) { return DataTables::MakeFourCC(s[0], s[1], s[2], s[3]); }
@@ -297,6 +366,7 @@ void CalibrateTypes() {
         uint32_t index=0;
         if(TypeRow(Four(code),&index))g_shieldTypes.push_back(index);
     }
+    if(uint32_t index=0;TypeRow(Four("tpot"),&index))g_potionTypes.push_back(index);
     for (const auto& k : kKinds) {
         uint32_t idx;
         if (TypeRow(Four(k.code), &idx)) g_typeIndex.push_back({idx, k.type});
@@ -404,6 +474,14 @@ bool IsShield(const std::string& code) {
     if(!row||uint32_t(g_typeOffset)+sizeof type>size)return false;
     memcpy(&type,row+g_typeOffset,sizeof type);
     return std::find(g_shieldTypes.begin(),g_shieldTypes.end(),type)!=g_shieldTypes.end();
+}
+// A throwing potion by its item type (tpot); by its code when the types are unknown.
+bool IsThrowingPotion(const std::string& code) {
+    if(code.size()!=4||g_typeOffset<0||g_potionTypes.empty())return framevr::weaponskills::ThrowingPotion(code);
+    uint32_t size=0;const auto* row=ItemRow(Four(code.c_str()),&size);uint16_t type=0;
+    if(!row||uint32_t(g_typeOffset)+sizeof type>size)return false;
+    memcpy(&type,row+g_typeOffset,sizeof type);
+    return std::find(g_potionTypes.begin(),g_potionTypes.end(),type)!=g_potionTypes.end();
 }
 
 // Weapons.txt "speed" (WSM) and "wclass"/"2handedwclass" in an Items row, for
@@ -612,6 +690,8 @@ void __cdecl ReadItems(const PluginContext* ctx, void* token) noexcept {
     // The tracked shield is on the left wrist even when the SDK reports it
     // in body location 4 (observed with the development Paladin).
     g_leftShield=IsShield(code[0])||IsShield(code[1]);
+    g_rightPotion=IsThrowingPotion(code[0]);   // thrown by hand to a spot (transport: motionInput.potion)
+    g_rightPotionCode=g_rightPotion&&code[0].size()>=3?uint32_t(uint8_t(code[0][0]))|uint32_t(uint8_t(code[0][1]))<<8|uint32_t(uint8_t(code[0][2]))<<16|uint32_t(' ')<<24:0u;
     const uint32_t handTypes[2]={KindOf(code[0]),KindOf(code[1])};
     {std::lock_guard lock(g_meleeEquipmentMutex);
         if(g_meleeEquipment.id[0]!=id[0]||g_meleeEquipment.id[1]!=id[1])g_meleeEquipment={};
@@ -716,6 +796,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
         else if (!strcmp(command, "ClosePanel") || !strcmp(command, "UnloadPanel")) g_panels.erase(text);
         else if (!strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panels.clear();
         g_autoMap.store(g_panels.count("AutoMap") ? 1 : 0);
+        framevr::fullmap::g_panel.store(g_panels.count("AutoMap") != 0);
         g_noticePanel.store(g_panels.count("NotificationPanel") != 0);
         g_upperBandMenu.store(std::any_of(g_panels.begin(),g_panels.end(),
             [](const auto& name){return framevr::panels::UpperBand(name);}));
@@ -886,6 +967,8 @@ uint32_t WeaponSet() { return g_set.load(); }
 uint32_t WeaponType() { return g_type.load(); }
 uint32_t HandsHeld() { return g_held.load(); }
 bool LeftShield() {return g_leftShield.load();}
+bool RightThrowingPotion() {return g_rightPotion.load();}
+uint32_t RightThrowingPotionCode() {return g_rightPotionCode.load();}
 uint32_t TwoHanded() { return g_two.load(); }
 uint32_t WeaponHand() { return g_from.load(); }
 uint32_t HandsKey() { return g_handsKey.load(); }

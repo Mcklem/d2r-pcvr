@@ -158,6 +158,9 @@ class TurnWarp {
     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>,4> effects;
     std::array<bool,2> effectsKept{};
     DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;
+    bool sharp=true;   // Sharpen
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> holePipeline;   // Fill
+    bool fill=true;
 public:
     // format: the eye swapchain's typed format, of the source and the target alike.
     // Any thread, for its own object: the shaders compile once for the process,
@@ -180,6 +183,14 @@ public:
     // the drawn eye's picture laid over it; false only when nothing was drawn.
     bool Render(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12Resource* source,ID3D12Resource* target,
                 const std::array<float,9>& homography,int slot,const TurnDepth* depth=nullptr,const TurnDepth* drawn=nullptr);
+    // The pictures, turned, moved and laid over, read Catmull-Rom (the
+    // default) or bilinear ([stereo] turns_sharp): from the next pass on.
+    void Sharpen(bool on){sharp=on;}
+    // The strips beside near things the drawn eye's picture did not reach:
+    // where this eye's own picture there is something nearer since gone, what
+    // is behind beside them instead (the default; [stereo] turns_fill).
+    void Fill(bool on){fill=on;}
+    bool HoleReady() const {return holePipeline!=nullptr;}
     bool InterfaceReady() const {return layerPipeline!=nullptr;}
     // The interface layer (R16G16B16A16_FLOAT, PIXEL_SHADER_RESOURCE) over target
     // (RENDER_TARGET; the eye format's UnormView, or typeless), each pixel from

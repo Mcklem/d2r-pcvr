@@ -221,6 +221,24 @@ bool HasComponent(uintptr_t storage,uint32_t entity) {
 }
 void Release(uintptr_t assets,uintptr_t definition,uint32_t entity,uintptr_t unit) {
     uint32_t type=~0u,missile=~0u;
+    // A gas or oil potion thrown as a physical bottle (#292): the game's own
+    // potion, thrown once that bottle shattered, flies hidden (bowvr::HidePotion).
+    if(enabled.load()&&Read(unit,type)&&type==3&&Read(unit+4,missile)&&missile>=44&&missile<=49&&
+       IsLocalOwner(reinterpret_cast<uintptr_t(*)(uintptr_t)>(d2rsig::Addr(OwnerRva))(unit))) {
+        bool first=false;
+        if(bowvr::HidePotion(entity,unit,first)) {
+            // Without its release point the hero's hand bone no longer places it for
+            // its first half second (the whole flight), so the shrink holds; the
+            // same removal the physical arrows use.
+            const auto registry=d2rsig::Addr(RegistryRva);
+            const bool releasePoint=EntityAlive(registry,entity)&&
+                HasComponent(reinterpret_cast<uintptr_t(*)(uintptr_t)>(d2rsig::Addr(ReleaseStorageRva))(registry),entity);
+            static std::atomic<unsigned> told{0};
+            if(told.fetch_add(1)<24){char line[160];std::snprintf(line,sizeof line,"Frame potion throw: the game's potion (missile %u) %s, entity %u hidden%s",
+                missile,first?"claimed":"another part",entity,releasePoint?", its release point removed":"");framevr::logging::Write(line);}
+            if(releasePoint){reinterpret_cast<void(*)(uintptr_t,uint32_t)>(d2rsig::Addr(RemoveReleaseRva))(registry,entity);++released;return;}
+        }
+    }
     if(enabled.load()&&Read(unit,type)&&type==3&&Read(unit+4,missile)&&
        (framevr::bowflight::BasicMissile(missile)||framevr::bowflight::ThrownMissile(missile)||missile==31||bowvr::OwnsVisual(unit))) {
         const auto owner=reinterpret_cast<uintptr_t(*)(uintptr_t)>(d2rsig::Addr(OwnerRva))(unit);

@@ -51,7 +51,7 @@ int main() {
     for(int id:{-1,0,37,43,54,58,61,63,65,219,357,4095})Check(Classify(id)==Element::None,"utility/passive/unknown neutral");
     Check(SpellLook(36,Element::Fire)==Look::FireBolt&&SpellLook(47,Element::Fire)==Look::Fireball&&
           SpellLook(38,Element::Lightning)==Look::ChargedBolt&&SpellLook(39,Element::Cold)==Look::IceBolt&&
-          SpellLook(45,Element::Cold)==Look::IceBlast,"each hand spell shows its own effect");
+          SpellLook(45,Element::Cold)==Look::IceBlast&&SpellLook(999,Element::Fire)==Look::Torch,"each hand spell shows its own effect");
     Check(SpellLook(51,Element::Fire)==Look::FireBolt&&SpellLook(49,Element::Lightning)==Look::ChargedBolt&&
           SpellLook(44,Element::Cold)==Look::IceBolt&&SpellLook(64,Element::Cold)==Look::IceBlast,"other skills take their element's look");
     {
