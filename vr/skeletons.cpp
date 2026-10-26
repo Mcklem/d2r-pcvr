@@ -3479,9 +3479,10 @@ void DecapitateMonster(uintptr_t self) {
     return;
 #endif
 
-    // Check if a recent decapitation strike occurred within reach
+    // Check if a recent decapitation strike occurred within reach and consume it
+    // Consuming ensures only ONE skeleton is decapitated per lethal strike, preventing living monsters from losing heads.
     framevr::gore::GoreEvent ev{};
-    if (framevr::gore::Queue().FindRecentDecapitation(now, 1500, pos[0], pos[2], 2.5f, ev)) {
+    if (framevr::gore::Queue().ConsumeRecentDecapitation(now, 500, pos[0], pos[2], 1.5f, ev)) {
         int32_t count = 0;
         uintptr_t bones = 0;
         if (!Get(skel + 8, &count) || !Get(skel + 0xC, &bones) || count <= 0 || count > 1024) return;

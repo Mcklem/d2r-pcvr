@@ -317,6 +317,17 @@ void TestEventQueueDecapitationMatching() {
     framevr::gore::GoreEvent stale{};
     bool foundStale = queue.FindRecentDecapitation(t0 + 2000, 1500, 20.1f, 30.1f, 2.5f, stale);
     assert(!foundStale);
+
+    // 4. ConsumeRecentDecapitation: consumes the event so a second nearby monster does NOT match
+    framevr::gore::GoreEvent consumed{};
+    bool foundConsumed = queue.ConsumeRecentDecapitation(t0 + 500, 1500, 20.3f, 30.4f, 2.5f, consumed);
+    assert(foundConsumed);
+    assert(consumed.monsterId == 101);
+
+    // Second monster evaluation immediately fails because the event was consumed
+    framevr::gore::GoreEvent secondMonster{};
+    bool secondMatch = queue.ConsumeRecentDecapitation(t0 + 500, 1500, 20.3f, 30.4f, 2.5f, secondMonster);
+    assert(!secondMatch);
 }
 
 

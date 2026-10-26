@@ -119,8 +119,11 @@ struct D2RVR_GoreQueue {
     $$\mathbf{P}'_{\text{child}} = \mathbf{P}'_{\text{head}} + \Delta \mathbf{P}_0 \cdot R_{\text{tumble}}$$
     $$M'_{\text{child, rot}} = M_{\text{child, 0, rot}} \cdot R_{\text{tumble}}$$
     donde $\Delta \mathbf{P}_0 = \mathbf{P}_{\text{child}, 0} - \mathbf{P}_{\text{head}, 0}$. Esto asegura invariancia métrica absoluta ($|\mathbf{P}'_{\text{child}} - \mathbf{P}'_{\text{head}}| = \text{constante}$ con error $<10^{-6}$), preservando la morfología exacta de la cabeza durante todo el vuelo balístico, rebotes y reposo en el suelo.
-- **Corte Limpio en el Muñón del Cuerpo (`CollapseHeadBones`):**
-  - En el cuerpo decapitado, el cuello conserva su geometría en el pivote del corte (`neck_M_JNT`), dejando un muñón estéticamente limpio y natural sin picos ni estiramientos.
+- **Consumo Atómico de Eventos (`ConsumeRecentDecapitation`):**
+  - Cada evento de decapitación se consume inmediatamente en cuanto es reclamado por un esqueleto dentro de una ventana temporal estricta (500 ms) y de proximidad (1.5 m). Esto evita de raíz que monstruos vivos adyacentes pierdan la cabeza antes de morir al compartir el mismo golpe mortal.
+- **Corte Limpio en el Muñón del Cuerpo (`head_physics=0` por defecto):**
+  - Al ser los modelos de D2R mallas 3D continuas con *smooth skinning* compartido entre cuello y cabeza, separar físicamente el hueso de la cabeza estira los triángulos del cuello creando una membrana deformada que une la cabeza con el cuerpo.
+  - La solución óptima y recomendada es el corte limpio en el muñón (`CollapseHeadBones`): colapsa la cabeza y sus huesos hijos a escala $0.0001f$ en el pivote anatómico del cuello (`neck_M_JNT`). Esto elimina al 100% cualquier estiramiento de malla o conexión anómala, dejando un cadáver decapitado limpio, estéticamente perfecto y auténtico.
 - **Simulador Balístico 3D de Cabeza (`SimulateHeadPhysics`):**
   - Parábola gravitatoria con impulso direccional de corte ($v_{0, y} = 1.20\text{ m/s}$ pop vertical, $v_{0, xz} = 0.85 \cdot \text{normal de impacto}$).
   - Rebotes inelásticos contra el plano de suelo ($Y = 0.0\text{ m}$ en espacio de modelo, restitución $e = 0.35$).
@@ -237,5 +240,5 @@ flowchart LR
 decapitation=2
 ; 1 = Severed head has full 3D physics (tumbling arc, floor bounce at monster ground level, rest)
 ; 0 = Head collapses into neck stump (clean cut body only, no severed head physics)
-head_physics=1
+head_physics=0
 ```

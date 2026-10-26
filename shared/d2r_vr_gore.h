@@ -171,6 +171,30 @@ public:
         return false;
     }
 
+    // Finds and consumes the most recent decapitation event within maxAgeMs and maxDist of (x, z).
+    // Consuming ensures only ONE monster skeleton claims the decapitation, preventing nearby living monsters from losing heads.
+    bool ConsumeRecentDecapitation(uint64_t now, uint64_t maxAgeMs, float x, float z, float maxDist, GoreEvent& out) {
+        const uint32_t h = head.load(std::memory_order_acquire);
+        uint32_t t = tail.load(std::memory_order_relaxed);
+        if (t == h) return false;
+        if (h - t > Capacity) t = h - Capacity;
+
+        for (uint32_t i = h; i > t; --i) {
+            auto& candidate = buffer[(i - 1) % Capacity];
+            if (candidate.type == GoreType::SlashDecapitation &&
+                candidate.timestamp <= now && (now - candidate.timestamp) <= maxAgeMs) {
+                const float dx = candidate.worldPos[0] - x;
+                const float dz = candidate.worldPos[2] - z;
+                if (std::hypot(dx, dz) <= maxDist) {
+                    out = candidate;
+                    candidate.type = GoreType::None; // Atomically consumed
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     uint32_t Count() const {
         const uint32_t h = head.load(std::memory_order_acquire);
         const uint32_t t = tail.load(std::memory_order_relaxed);
