@@ -108,12 +108,23 @@ struct D2RVR_GoreQueue {
 
 ## 4. Detalles de Implementación de los Subsistemas
 
-### 4.1. Decapitación Esquelética en Granny 3D y Corte Limpio de Cuello (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
+### 4.1. Decapitación Esquelética en Granny 3D, Físicas 3D Rígidas y Muñón Limpio (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
 - **Hook en tiempo real:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
-- **Arquitectura de Malla Continua en D2R (Por qué Corte Limpio Siempre):**
-  - Los modelos 3D de monstruos en D2R son mallas orgánicas continuas unificadas con *smooth skinning* compartido entre `neck_M_JNT` y `head_M_JNT`.
-  - Desplazar en traslación el hueso de la cabeza genera estiramiento poligonal elástico (*rubber-banding*) en la piel del cuello, produciendo deformaciones anómalas.
-  - La solución óptima y definitiva es **ejecutar siempre un corte limpio en el muñón (`CollapseHeadBones`)**: el hueso de la cabeza y todos sus descendientes jerárquicos (mandíbula, cuernos, pelo, etc.) se colapsan a escala $0.0001f$ anclándose exactamente en las coordenadas del pivote del cuello (`neck_M_JNT`). Esto elimina por completo cualquier estiramiento o deformación, dejando un cadáver decapitado limpio, estéticamente impecable y auténtico.
+- **Cinemática Rígida de la Cabeza Cercenada (Cero Deformación):**
+  - Anteriormente, multiplicar la rotación de volteo a la izquierda ($R \cdot M_{\text{initial}}$) aplicaba la rotación en el espacio local del hueso, distorsionando el cráneo al no coincidir los ejes, y la ausencia de seguimiento de huesos hijos (mandíbula, cuernos, ojos) desarticulaba la cara.
+  - **Corrección matemática en convención de vectores fila de Granny / DirectX ($v' = v \cdot M$):**
+    $$M_{\text{head, rot}} = M_{\text{initial, rot}} \cdot R_{\text{tumble}}$$
+    Multiplicar a la derecha aplica la rotación en el espacio de modelo/mundo del monstruo de forma matemáticamente exacta y ortonormal.
+  - **Emparentamiento rígido de huesos descendientes (mandíbula, cuernos, ojos, morro):**
+    $$\mathbf{P}'_{\text{child}} = \mathbf{P}'_{\text{head}} + \Delta \mathbf{P}_0 \cdot R_{\text{tumble}}$$
+    $$M'_{\text{child, rot}} = M_{\text{child, 0, rot}} \cdot R_{\text{tumble}}$$
+    donde $\Delta \mathbf{P}_0 = \mathbf{P}_{\text{child}, 0} - \mathbf{P}_{\text{head}, 0}$. Esto asegura invariancia métrica absoluta ($|\mathbf{P}'_{\text{child}} - \mathbf{P}'_{\text{head}}| = \text{constante}$ con error $<10^{-6}$), preservando la morfología exacta de la cabeza durante todo el vuelo balístico, rebotes y reposo en el suelo.
+- **Corte Limpio en el Muñón del Cuerpo (`CollapseHeadBones`):**
+  - En el cuerpo decapitado, el cuello conserva su geometría en el pivote del corte (`neck_M_JNT`), dejando un muñón estéticamente limpio y natural sin picos ni estiramientos.
+- **Simulador Balístico 3D de Cabeza (`SimulateHeadPhysics`):**
+  - Parábola gravitatoria con impulso direccional de corte ($v_{0, y} = 1.20\text{ m/s}$ pop vertical, $v_{0, xz} = 0.85 \cdot \text{normal de impacto}$).
+  - Rebotes inelásticos contra el plano de suelo ($Y = 0.0\text{ m}$ en espacio de modelo, restitución $e = 0.35$).
+  - Fricción y frenado horizontal ($\mu = 2.5$) y amortiguación angular hasta reposo estable.
 - **Lógica de Decapitación Circunstancial (No 100% Ubicua):**
   - Se evita que todo enemigo resulte decapitado siempre de forma monótona o irreal.
   - La probabilidad y condición de corte se calcula en `vr/combat.cpp` en función del daño infligido y la configuración del usuario:
@@ -224,4 +235,7 @@ flowchart LR
 ; decapitation: 0 = Off, 1 = Crits only, 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
 ; Always executed as a clean cut at the neck stump with zero mesh deformation.
 decapitation=2
+; 1 = Severed head has full 3D physics (tumbling arc, floor bounce at monster ground level, rest)
+; 0 = Head collapses into neck stump (clean cut body only, no severed head physics)
+head_physics=1
 ```

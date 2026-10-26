@@ -1340,17 +1340,24 @@ OnHitScope GateOnHit(OnHitScope scope) {
 int LastSwingWouldHit() {return lastSwingVerdict;}
 void ConfigureShotRules(bool unleashed) {shotRules=unleashed;}
 void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
-void ConfigureGore(int decapitationRate) {
+std::atomic<bool> g_headPhysics{true};
+
+void ConfigureGore(int decapitationRate, bool headPhysics) {
     g_decapitationRate.store(std::clamp(decapitationRate, 0, 4));
+    g_headPhysics.store(headPhysics);
 }
 
 void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
-    (void)headPhysics;
     g_decapitationRate.store(enabled ? std::clamp(decapitationRate, 0, 4) : 0);
+    g_headPhysics.store(headPhysics);
 }
 
 int GoreDecapitationRate() {
     return g_decapitationRate.load();
+}
+
+bool GoreHeadPhysics() {
+    return g_headPhysics.load();
 }
 
 void ConfigureRiposte(float bonus,uint32_t windowMs,float volume,const wchar_t* soundFile) {

@@ -105,7 +105,8 @@ void MirrorClientDurability(uint32_t itemId,int value);
 bool LocalPlayerId(uint32_t& id);
 // Returns the maximum fire damage on the equipped item at body location (4=right hand, 5=left hand, 9/10=swap).
 int EquippedFireDamage(int location);
-void ConfigureGore(int decapitationRate);
-void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics = false);
+void ConfigureGore(int decapitationRate, bool headPhysics = true);
+void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics = true);
 int GoreDecapitationRate();
+bool GoreHeadPhysics();
 }

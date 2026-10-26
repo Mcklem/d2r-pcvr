@@ -320,8 +320,113 @@ void TestEventQueueDecapitationMatching() {
 }
 
 
+void TestSeveredHeadPhysicsTrajectory() {
+    printf("[granny-decapitation-test] Suite 6: Severed Head Physics Trajectory & Floor Bounce\n");
+
+    const float p0[3] = {10.0f, 1.8f, 20.0f};
+    const float v0[3] = {1.2f, 1.5f, 0.0f};
+    const float floorY = 0.0f;
+    const float spinAxis[3] = {0.0f, 1.0f, 0.0f};
+    const float spinSpeed = 6.0f;
+
+    // 1. At t = 0: initial position
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(0.0f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(std::fabs(pos[0] - 10.0f) < 1e-4f);
+        assert(std::fabs(pos[1] - 1.8f) < 1e-4f);
+        assert(std::fabs(pos[2] - 20.0f) < 1e-4f);
+    }
+
+    // 2. At t = 0.15s: in flight, rising
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(0.15f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(pos[1] > 1.8f);
+        assert(pos[0] > 10.0f);
+    }
+
+    // 3. At t = 5.0s: settled at floor + head radius
+    {
+        float pos[3] = {};
+        float rot[9] = {};
+        framevr::decap::SimulateHeadPhysics(5.0f, p0, v0, floorY, spinAxis, spinSpeed, pos, rot);
+        assert(std::fabs(pos[1] - 0.12f) < 1e-3f);
+        // Verify rotation matrix orthonormality (length of row 0 ~ 1.0)
+        float lenSq = rot[0]*rot[0] + rot[1]*rot[1] + rot[2]*rot[2];
+        assert(std::fabs(lenSq - 1.0f) < 1e-4f);
+    }
+}
+
+void TestRigidHeadAndChildBonePreservation() {
+    printf("[granny-decapitation-test] Suite 7: Rigid Head Rotation & Zero Child Bone Deformation\n");
+
+    auto& mgr = framevr::decap::Manager();
+    mgr.Clear();
+
+    const uintptr_t skelPhys = 0x2000A0;
+    const uintptr_t skelStump = 0x2000B0;
+    const uint64_t t0 = 10000;
+    const std::vector<uint8_t> inHead = {0, 0, 0, 1, 1}; // 5 bones: 0=root, 1=spine, 2=neck, 3=head, 4=jaw
+
+    const float impulse[3] = {1.0f, 1.2f, 0.0f};
+
+    // 1. Instance with head physics ENABLED
+    mgr.RegisterDecapitation(skelPhys, 501, 3, 2, inHead, t0, 0.0f, impulse, true);
+
+    // 2. Instance with clean stump (head physics DISABLED)
+    mgr.RegisterDecapitation(skelStump, 502, 3, 2, inHead, t0, 0.0f, impulse, false);
+
+    std::vector<MockMatrix> posesA = {
+        MockMatrix::Translation(0, 0, 0),        // Root
+        MockMatrix::Translation(0, 1.0f, 0),     // Spine
+        MockMatrix::Translation(0, 1.5f, 0),     // Neck
+        MockMatrix::Translation(0, 1.8f, 0),     // Head
+        MockMatrix::Translation(0.15f, 1.7f, 0)  // Jaw: offset (0.15, -0.1, 0)
+    };
+    std::vector<MockMatrix> posesB = posesA;
+
+    const float dx0 = posesA[4].m[12] - posesA[3].m[12];
+    const float dy0 = posesA[4].m[13] - posesA[3].m[13];
+    const float dz0 = posesA[4].m[14] - posesA[3].m[14];
+    const float initialDist = std::sqrt(dx0*dx0 + dy0*dy0 + dz0*dz0);
+
+    // First frame initialization at t0
+    float pA[3] = {}, pB[3] = {};
+    mgr.ApplyCollapse(skelPhys, posesA.data(), 5, t0, pA);
+    mgr.ApplyCollapse(skelStump, posesB.data(), 5, t0, pB);
+
+    // Advance 500 ms in physics flight
+    mgr.ApplyCollapse(skelPhys, posesA.data(), 5, t0 + 500, pA);
+    mgr.ApplyCollapse(skelStump, posesB.data(), 5, t0 + 500, pB);
+
+    // Instance A (physics):
+    // 1. Head has moved from initial (0, 1.8, 0)
+    assert(posesA[3].m[12] > 0.05f); // horizontal movement
+    // 2. Relative distance between jaw and head is EXACTLY preserved (ZERO mesh deformation)
+    const float dx1 = posesA[4].m[12] - posesA[3].m[12];
+    const float dy1 = posesA[4].m[13] - posesA[3].m[13];
+    const float dz1 = posesA[4].m[14] - posesA[3].m[14];
+    const float flyingDist = std::sqrt(dx1*dx1 + dy1*dy1 + dz1*dz1);
+    assert(std::fabs(flyingDist - initialDist) < 1e-4f);
+
+    // 3. Rotation matrices are orthonormal (length 1.0)
+    const float headRow0Len = posesA[3].m[0]*posesA[3].m[0] + posesA[3].m[1]*posesA[3].m[1] + posesA[3].m[2]*posesA[3].m[2];
+    assert(std::fabs(headRow0Len - 1.0f) < 1e-4f);
+
+    // Instance B (stump): head and jaw collapsed to 0.0001f at neck pivot
+    assert(std::fabs(posesB[3].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(posesB[3].m[13] - 1.5f) < 1e-4f);
+    assert(std::fabs(posesB[4].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(posesB[4].m[13] - 1.5f) < 1e-4f);
+
+    mgr.Clear();
+}
+
 void TestCleanStumpBoneCollapsing() {
-    printf("[granny-decapitation-test] Suite 6: Clean Stump Bone Collapsing & Zero Mesh Deformation\n");
+    printf("[granny-decapitation-test] Suite 8: Clean Stump Bone Collapsing & Zero Mesh Deformation\n");
 
     auto& mgr = framevr::decap::Manager();
     mgr.Clear();
@@ -417,9 +522,11 @@ int main() {
     TestMatrixCollapseMath();
     TestDecapitationManagerLifecycle();
     TestEventQueueDecapitationMatching();
+    TestSeveredHeadPhysicsTrajectory();
+    TestRigidHeadAndChildBonePreservation();
     TestCleanStumpBoneCollapsing();
     TestMultipleConcurrentDecapitations();
-    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (7/7 SUITES) ===\n");
+    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (9/9 SUITES) ===\n");
     return 0;
 }
 
