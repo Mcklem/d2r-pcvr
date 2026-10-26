@@ -3502,7 +3502,7 @@ void DecapitateMonster(uintptr_t self) {
             const auto inHead = framevr::decap::BuildDescendantMask(count, parents, headBone);
 
             const bool headPhys = combat::GoreHeadPhysics();
-            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, pos[1], ev.impactNormal, headPhys);
+            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, 0.0f, ev.impactNormal, headPhys);
 
             uintptr_t world = 0;
             int32_t wpCount = 0;

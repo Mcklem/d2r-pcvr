@@ -244,6 +244,43 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
     outRot[8] = c + z * z * k;
 }
 
+// 4x4 matrix helpers for rigid skeletal manipulation in model space
+struct DecapMat {
+    float m[16] = {
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,0,1
+    };
+};
+
+inline DecapMat DecapMul(const DecapMat& a, const DecapMat& b) {
+    DecapMat r{};
+    for (int row = 0; row < 4; ++row) {
+        for (int k = 0; k < 4; ++k) {
+            const float x = a.m[row * 4 + k];
+            for (int col = 0; col < 4; ++col) {
+                r.m[row * 4 + col] += x * b.m[k * 4 + col];
+            }
+        }
+    }
+    return r;
+}
+
+inline DecapMat DecapInvAffine(const DecapMat& a) {
+    const float* m = a.m;
+    const float c00 = m[5]*m[10] - m[6]*m[9], c01 = m[6]*m[8] - m[4]*m[10], c02 = m[4]*m[9] - m[5]*m[8];
+    const float det = m[0]*c00 + m[1]*c01 + m[2]*c02;
+    const float id = std::fabs(det) > 1e-12f ? 1.0f / det : 0.0f;
+    DecapMat r{};
+    r.m[0] = c00*id;                       r.m[1] = (m[2]*m[9] - m[1]*m[10])*id; r.m[2] = (m[1]*m[6] - m[2]*m[5])*id;
+    r.m[4] = c01*id;                       r.m[5] = (m[0]*m[10] - m[2]*m[8])*id; r.m[6] = (m[2]*m[4] - m[0]*m[6])*id;
+    r.m[8] = c02*id;                       r.m[9] = (m[1]*m[8] - m[0]*m[9])*id;  r.m[10] = (m[0]*m[5] - m[1]*m[4])*id;
+    for (int j = 0; j < 3; ++j) r.m[12+j] = -(m[12]*r.m[j] + m[13]*r.m[4+j] + m[14]*r.m[8+j]);
+    r.m[15] = 1.0f;
+    return r;
+}
+
 // State of an active decapitated monster instance
 struct DecapInstance {
     uintptr_t skeletonInstance = 0;
@@ -253,7 +290,10 @@ struct DecapInstance {
     int headBone = -1;
     int neckBone = -1;
     std::vector<uint8_t> inHead;
-    float initialPivot[3] = {};
+    float neckPivot[3] = {};
+    float headInitialPos[3] = {};
+    DecapMat initialHeadMat{};
+    std::vector<DecapMat> initialRelMats;
     float velocity[3] = {};
     float spinAxis[3] = {0.0f, 1.0f, 0.0f};
     float spinSpeed = 0.0f;
@@ -293,14 +333,17 @@ public:
         inst.floorY = floorY;
         inst.headPhysics = headPhysics;
 
-        if (impulse) {
-            inst.velocity[0] = impulse[0];
-            inst.velocity[1] = std::max(1.5f, impulse[1]);
-            inst.velocity[2] = impulse[2];
+        if (impulse && (std::fabs(impulse[0]) > 1e-4f || std::fabs(impulse[2]) > 1e-4f)) {
+            float hx = impulse[0], hz = impulse[2];
+            float hlen = std::hypot(hx, hz);
+            if (hlen > 1e-4f) { hx /= hlen; hz /= hlen; }
+            inst.velocity[0] = hx * 0.75f;
+            inst.velocity[1] = 0.90f; // realistic pop
+            inst.velocity[2] = hz * 0.75f;
         } else {
-            inst.velocity[0] = 1.2f;
-            inst.velocity[1] = 1.8f;
-            inst.velocity[2] = 1.2f;
+            inst.velocity[0] = 0.5f;
+            inst.velocity[1] = 0.90f;
+            inst.velocity[2] = 0.5f;
         }
 
         // Compute spin axis perpendicular to trajectory
@@ -313,7 +356,7 @@ public:
         } else {
             inst.spinAxis[0] = 0.0f; inst.spinAxis[1] = 1.0f; inst.spinAxis[2] = 0.0f;
         }
-        inst.spinSpeed = 8.5f;
+        inst.spinSpeed = 5.5f;
 
         instances_[self] = std::move(inst);
         return true;
@@ -347,22 +390,45 @@ public:
 
         auto& inst = it->second;
 
-        // Initialize initial pivot on first pose if needed
+        // Initialize initial pivot and capture relative child poses on first frame
         if (!inst.initialized) {
-            const int pivotBone = (inst.neckBone >= 0 && inst.neckBone < boneCount) ? inst.neckBone : inst.headBone;
-            inst.initialPivot[0] = worldPoses[pivotBone].m[12];
-            inst.initialPivot[1] = worldPoses[pivotBone].m[13];
-            inst.initialPivot[2] = worldPoses[pivotBone].m[14];
-            if (inst.floorY == 0.0f || !std::isfinite(inst.floorY)) {
-                inst.floorY = inst.initialPivot[1] - 1.3f;
+            const int neck = (inst.neckBone >= 0 && inst.neckBone < boneCount) ? inst.neckBone : inst.headBone;
+            if (neck >= 0 && neck < boneCount) {
+                inst.neckPivot[0] = worldPoses[neck].m[12];
+                inst.neckPivot[1] = worldPoses[neck].m[13];
+                inst.neckPivot[2] = worldPoses[neck].m[14];
             }
+
+            const int head = (inst.headBone >= 0 && inst.headBone < boneCount) ? inst.headBone : inst.neckBone;
+            if (head >= 0 && head < boneCount) {
+                inst.headInitialPos[0] = worldPoses[head].m[12];
+                inst.headInitialPos[1] = worldPoses[head].m[13];
+                inst.headInitialPos[2] = worldPoses[head].m[14];
+
+                for (int k = 0; k < 16; ++k) {
+                    inst.initialHeadMat.m[k] = worldPoses[head].m[k];
+                }
+
+                const DecapMat invHead = DecapInvAffine(inst.initialHeadMat);
+                inst.initialRelMats.resize(boneCount);
+                const size_t n = std::min<size_t>(static_cast<size_t>(boneCount), inst.inHead.size());
+                for (size_t i = 0; i < n; ++i) {
+                    if (inst.inHead[i]) {
+                        DecapMat cur{};
+                        for (int k = 0; k < 16; ++k) cur.m[k] = worldPoses[i].m[k];
+                        inst.initialRelMats[i] = DecapMul(cur, invHead);
+                    }
+                }
+            }
+            // In model space, ground floor is always Y = 0.0f
+            inst.floorY = 0.0f;
             inst.initialized = true;
         }
 
         if (outPivot) {
-            outPivot[0] = inst.initialPivot[0];
-            outPivot[1] = inst.initialPivot[1];
-            outPivot[2] = inst.initialPivot[2];
+            outPivot[0] = inst.neckPivot[0];
+            outPivot[1] = inst.neckPivot[1];
+            outPivot[2] = inst.neckPivot[2];
         }
 
         if (!inst.headPhysics) {
@@ -370,43 +436,41 @@ public:
             return true;
         }
 
-        // Severed head physics simulation
+        // Severed head physics simulation in model space
         const float t = (now > inst.decapitatedAt) ? float(now - inst.decapitatedAt) / 1000.0f : 0.0f;
         float headPos[3] = {};
         float headRot[9] = {};
-        SimulateHeadPhysics(t, inst.initialPivot, inst.velocity, inst.floorY,
+        SimulateHeadPhysics(t, inst.headInitialPos, inst.velocity, inst.floorY,
                             inst.spinAxis, inst.spinSpeed, headPos, headRot);
 
         if (inst.headBone >= 0 && inst.headBone < boneCount) {
-            auto& headMat = worldPoses[inst.headBone];
-            const float origRot[9] = {
-                headMat.m[0], headMat.m[1], headMat.m[2],
-                headMat.m[4], headMat.m[5], headMat.m[6],
-                headMat.m[8], headMat.m[9], headMat.m[10]
-            };
+            // Compute full 4x4 matrix for head bone: tumbled rotation applied to initial orientation
+            DecapMat newHeadMat{};
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 3; ++c) {
-                    headMat.m[r * 4 + c] = headRot[r * 3 + 0] * origRot[0 * 3 + c] +
-                                          headRot[r * 3 + 1] * origRot[1 * 3 + c] +
-                                          headRot[r * 3 + 2] * origRot[2 * 3 + c];
+                    newHeadMat.m[r * 4 + c] = headRot[r * 3 + 0] * inst.initialHeadMat.m[0 * 4 + c] +
+                                              headRot[r * 3 + 1] * inst.initialHeadMat.m[1 * 4 + c] +
+                                              headRot[r * 3 + 2] * inst.initialHeadMat.m[2 * 4 + c];
                 }
             }
-            headMat.m[12] = headPos[0];
-            headMat.m[13] = headPos[1];
-            headMat.m[14] = headPos[2];
+            newHeadMat.m[12] = headPos[0];
+            newHeadMat.m[13] = headPos[1];
+            newHeadMat.m[14] = headPos[2];
+            newHeadMat.m[15] = 1.0f;
 
-            // Child bones in inHead follow head bone translation and orientation
+            for (int k = 0; k < 16; ++k) {
+                worldPoses[inst.headBone].m[k] = newHeadMat.m[k];
+            }
+
+            // Child bones (jaw, eyes, horns, teeth, snout, ears) rigidly follow the head bone
+            // using their exact rest relative transform - preventing any mesh stretching or deformation
             const size_t n = std::min<size_t>(static_cast<size_t>(boneCount), inst.inHead.size());
             for (size_t i = 0; i < n; ++i) {
-                if (int(i) != inst.headBone && inst.inHead[i]) {
-                    auto& childMat = worldPoses[i];
-                    const float dx = childMat.m[12] - inst.initialPivot[0];
-                    const float dy = childMat.m[13] - inst.initialPivot[1];
-                    const float dz = childMat.m[14] - inst.initialPivot[2];
-
-                    childMat.m[12] = headPos[0] + (headRot[0] * dx + headRot[1] * dy + headRot[2] * dz);
-                    childMat.m[13] = headPos[1] + (headRot[3] * dx + headRot[4] * dy + headRot[5] * dz);
-                    childMat.m[14] = headPos[2] + (headRot[6] * dx + headRot[7] * dy + headRot[8] * dz);
+                if (int(i) != inst.headBone && inst.inHead[i] && i < inst.initialRelMats.size()) {
+                    const DecapMat childPosed = DecapMul(inst.initialRelMats[i], newHeadMat);
+                    for (int k = 0; k < 16; ++k) {
+                        worldPoses[i].m[k] = childPosed.m[k];
+                    }
                 }
             }
         }
