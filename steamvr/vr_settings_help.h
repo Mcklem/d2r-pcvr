@@ -79,9 +79,7 @@ inline const char* HelpText(int id) {
         case EnemySight:return "Scales how far away hostile monsters notice and approach you in offline VR, from 100% (game default) up to 300% (three times as far). 100% keeps the game's original sight distance and restores the unmodified table values. Friendly NPCs, mercenaries and summons are unchanged.";
         case LeftHandStrikes:return "Druid only. A melee skill on a trigger (Maul, Feral Rage, Fire Claws, Rabies, Hunger, Fury) casts when that hand's claw lands a full-cycle stroke; faster strokes stay basic attacks. Toggle it in the skill wheel's lower-left box. Weapon skill gestures Off keeps every strike basic.";
         case CompanionAi:return "Enhanced VR Mercenary overhaul: dynamic detection range matching enemy sight, elastic 40 sub-tile combat leash, and an anti-stuck watchdog that safely relocates the ally to your rear flank if trapped. Legacy restores vanilla AI constants and behavior.";
-        case ExtraGore:return "Master switch for hostile violence effects in VR. Enables real-time skeletal decapitations and anatomical impact haptics when slaying monsters with physical weapons.";
-        case DecapitationRate:return "How often humanoid monsters are decapitated by lethal strikes with cutting weapons. Crits only requires a critical strike, deadly strike, lethal riposte, or overkill damage (>150% HP). Dynamic (35%) balances realism with visceral combat. Severed head physics controls whether the severed head flies into the world.";
-        case SeveredHeadPhysics:return "When enabled, the monster's severed head flies off with realistic ballistic impulse, gravity, and tumbling rotation, bouncing and rolling along the dungeon floor. Off cleanly collapses the head at the neck stump.";
+        case Decapitations:return "Physical decapitation on lethal strikes, cleanly cut at the neck stump with no mesh deformation. Off: disabled. Crits only: criticals or overkill (>150% HP). Dynamic (35%): recommended balance. Always (100%): every lethal cut decapitates.";
         case MeleeHitSpeed:return "Minimum weapon movement speed for a swing to count as a strike. Lower it for easier swings; raise it to require faster movement. Default: 12 m/s. Both melee modes use this value. Shield bash has its own threshold.";
         case ShieldBashSpeed:return "Minimum tracked hand speed for a physical shield bash, including assigned Smite. Default: 2 m/s. Move the hand at least 12 cm in one deliberate stroke; wrist twisting alone does not attack. The speed must still be met at contact. Applies in both melee modes; blocking, parries and trigger attacks are unchanged.";
         case MeleeThrustSpeed:return "Minimum forward speed for a stab along your weapon's tip. Default: 2 m/s. Move forward at least 12 cm, then pull back before stabbing again. This is separate from swing speed and applies in both melee modes.";
@@ -131,8 +129,8 @@ inline int HelpChoices(int id) {
         case RenderResolution:return int(std::size(resolution::Choices));
         case ControllerLabels:return int(controllers::Choice::Count);
         case MapTopDown:return 4;
-        case Dominant:case AimHighlights:case CompanionAi:case ExtraGore:case SeveredHeadPhysics:return 2;
-        case DecapitationRate:return 5;
+        case Dominant:case AimHighlights:case CompanionAi:return 2;
+        case Decapitations:return 5;
         case GroundAim:return int(std::size(GroundAimNames));
         case LeftHandStrikes:return int(std::size(LeftHandStrikesNames));
         case SpellLock:return int(std::size(SpellLockNames));
@@ -144,26 +142,14 @@ inline ChoiceHelp HelpChoice(int id,float value) {
     if(!count||!std::isfinite(value))return {};
     const int c=std::clamp(int(std::lround(value)),0,count-1);
     switch(id) {
-        case ExtraGore:{
-            static constexpr const char* names[]={"Off","Enabled"};
+        case Decapitations:{
+            static constexpr const char* names[]={"Off","Crits only","Dynamic (35%)","High (65%)","Always (100%)"};
             static constexpr const char* text[]={
-                "Extra gore is disabled. Monsters die with default animations and no decapitations.",
-                "Extra gore is enabled. Cutting weapons can sever monster heads and deliver specialized anatomical haptics."};
-            return {names[c],text[c]};}
-        case DecapitationRate:{
-            static constexpr const char* names[]={"Off","Crits only","Dynamic 35%","High 65%","Always"};
-            static constexpr const char* text[]={
-                "Decapitation is turned off; monsters always keep their heads on lethal strikes.",
-                "Decapitations only trigger on critical hits, deadly strikes, ripostes, or high overkill (>150% HP).",
-                "Recommended: 35% chance on lethal cuts, guaranteed on critical strikes and ripostes.",
-                "Frequent decapitations: 65% chance on lethal cuts, guaranteed on critical strikes.",
-                "Every lethal blow from a cutting weapon severs the enemy's head."};
-            return {names[c],text[c]};}
-        case SeveredHeadPhysics:{
-            static constexpr const char* names[]={"Head: Off","Head: On"};
-            static constexpr const char* text[]={
-                "The head vanishes cleanly into the neck stump without spawning a flying head prop.",
-                "The severed head launches with 3D ballistic trajectory, tumbling in the air and rolling on the floor."};
+                "Monsters never decapitate on death.",
+                "Triggers on critical hits, lethal ripostes, and massive overkill (>150% HP).",
+                "Recommended balance: 35% chance on lethal cuts, guaranteed on crits.",
+                "Frequent decapitations: 65% chance on lethal cuts, guaranteed on crits.",
+                "Every lethal cutting strike cleanly severs the neck stump."};
             return {names[c],text[c]};}
         case Foveation:{
             static constexpr const char* names[]={"Off","Fixed","Eye tracked"};

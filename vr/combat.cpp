@@ -44,9 +44,7 @@ using BlockFn=int(*)(uintptr_t,uintptr_t,uintptr_t,int,int);
 using DodgeFn=int(*)(uintptr_t,uintptr_t,int);
 HitFn originalHit=nullptr;SeedFn originalSeed=nullptr;BlockFn originalBlock=nullptr;DodgeFn originalDodge=nullptr;
 std::atomic<bool> enabled{false},ready{false};
-std::atomic<bool> g_goreEnabled{true};
 std::atomic<int> g_decapitationRate{2}; // 0 = Off, 1 = Crits, 2 = Dynamic 35%, 3 = High 65%, 4 = Always
-std::atomic<bool> g_headPhysics{true};
 bool hitIn=false,seedIn=false,blockIn=false,dodgeIn=false,rollChecked=false;
 // One atomic value keeps freshness and id coherent, including native id zero.
 std::atomic<uint64_t> localIdentity{0},localSession{0};
@@ -712,12 +710,12 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
                 }
                 const uint32_t weaponType=gamestate::WeaponType();
                 const int strikingHand=swingTarget!=NoSwing?swingHand:0;
-                const bool isGoreActive=g_goreEnabled.load();
+                const int rate = g_decapitationRate.load();
+                const bool isGoreActive = (rate > 0);
 
                 // Circumstantial decapitation check
                 bool shouldDecapitate=false;
                 if(isGoreActive && framevr::gore::IsCuttingWeapon(weaponType) && lethal) {
-                    const int rate = g_decapitationRate.load();
                     const auto now = GetTickCount64();
                     const bool isRiposte = (riposteMonster.load() == header[2] && now < riposteUntil.load());
                     const int damageDealt = before - value;
@@ -1342,14 +1340,17 @@ OnHitScope GateOnHit(OnHitScope scope) {
 int LastSwingWouldHit() {return lastSwingVerdict;}
 void ConfigureShotRules(bool unleashed) {shotRules=unleashed;}
 void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
-void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
-    g_goreEnabled.store(enabled);
-    g_decapitationRate.store(decapitationRate);
-    g_headPhysics.store(headPhysics);
+void ConfigureGore(int decapitationRate) {
+    g_decapitationRate.store(std::clamp(decapitationRate, 0, 4));
 }
 
-bool GoreHeadPhysics() {
-    return g_headPhysics.load();
+void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
+    (void)headPhysics;
+    g_decapitationRate.store(enabled ? std::clamp(decapitationRate, 0, 4) : 0);
+}
+
+int GoreDecapitationRate() {
+    return g_decapitationRate.load();
 }
 
 void ConfigureRiposte(float bonus,uint32_t windowMs,float volume,const wchar_t* soundFile) {

@@ -108,24 +108,20 @@ struct D2RVR_GoreQueue {
 
 ## 4. Detalles de Implementación de los Subsistemas
 
-### 4.1. Decapitación Esquelética en Granny 3D y Prop Físico de Cabeza (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
+### 4.1. Decapitación Esquelética en Granny 3D y Corte Limpio de Cuello (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
 - **Hook en tiempo real:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
+- **Arquitectura de Malla Continua en D2R (Por qué Corte Limpio Siempre):**
+  - Los modelos 3D de monstruos en D2R son mallas orgánicas continuas unificadas con *smooth skinning* compartido entre `neck_M_JNT` y `head_M_JNT`.
+  - Desplazar en traslación el hueso de la cabeza genera estiramiento poligonal elástico (*rubber-banding*) en la piel del cuello, produciendo deformaciones anómalas.
+  - La solución óptima y definitiva es **ejecutar siempre un corte limpio en el muñón (`CollapseHeadBones`)**: el hueso de la cabeza y todos sus descendientes jerárquicos (mandíbula, cuernos, pelo, etc.) se colapsan a escala $0.0001f$ anclándose exactamente en las coordenadas del pivote del cuello (`neck_M_JNT`). Esto elimina por completo cualquier estiramiento o deformación, dejando un cadáver decapitado limpio, estéticamente impecable y auténtico.
 - **Lógica de Decapitación Circunstancial (No 100% Ubicua):**
-  - Se evita que todo enemigo con cabeza resulte decapitado de forma monótona o irreal.
+  - Se evita que todo enemigo resulte decapitado siempre de forma monótona o irreal.
   - La probabilidad y condición de corte se calcula en `vr/combat.cpp` en función del daño infligido y la configuración del usuario:
-    - **Modo 0 (Off):** Decapitación desactivada.
+    - **Modo 0 (Off):** Decapitación desactivada; los monstruos siempre conservan su cabeza.
     - **Modo 1 (Crits Only):** Exclusivamente en golpes críticos (riposte letal, factor multiplicador de daño melee $\ge 1.5$, o daño excesivo *overkill* que supere el $150\%$ de la vida restante del monstruo).
-    - **Modo 2 (Dynamic 35%):** Garantizado en críticos/riposte/overkill, y con un $35\%$ de probabilidad en cortes letales estándar con armas afiladas.
+    - **Modo 2 (Dynamic 35%):** Garantizado en críticos/riposte/overkill, y con un $35\%$ de probabilidad en cortes letales estándar con armas afiladas (Recomendado).
     - **Modo 3 (High 65%):** Garantizado en críticos/riposte/overkill, y con un $65\%$ de probabilidad en cortes letales estándar.
-    - **Modo 4 (Always):** $100\%$ de decapitaciones en todo golpe letal cortante.
-- **Física Balística 3D de la Cabeza Cercenada:**
-  - Cuando la opción de físicas de cabeza está activa (`SeveredHeadPhysics = 1`), la cabeza no desaparece: el hueso `headBone` y todos sus huesos descendientes (mandíbula, cuernos, barba, etc.) se desprenden con física balística tridimensional en tiempo real:
-    - **Impulso de corte:** Vector de velocidad $\mathbf{v}_0$ derivado de la dirección del golpe del jugador y la inercia del arma (con elevación vertical y dispersión lateral).
-    - **Trayectoria y gravedad:** Simulación parabólica $\mathbf{P}(t) = \mathbf{P}_0 + \mathbf{v}_0 t - \frac{1}{2} \mathbf{g} t^2$ con $g = 9.81\text{ m/s}^2$.
-    - **Rebote en el suelo:** Detección de cota de suelo del monstruo (`floorY`) con coeficiente de restitución inelástico $e = 0.35$ en rebotes primario y secundario.
-    - **Fricción y reposo:** Amortiguación exponencial horizontal ($\mu = 2.5$) hasta el reposo definitivo en el suelo.
-    - **Giro y volteo (*Tumble rotation*):** Rotación angular tridimensional continua alrededor de un eje perpendicular al vector de vuelo calculada mediante la fórmula de rotación de Rodrigues.
-  - Si el usuario prefiere un acabado limpio (`SeveredHeadPhysics = 0` o "Clean Stump"), el hueso de la cabeza y sus hijos se colapsan a escala $0.0001f$ anclados exactamente al pivote del cuello cercenado.
+    - **Modo 4 (Always 100%):** Todo golpe mortal con arma cortante cercena limpiamente la cabeza.
 - **Monstruos cualificados:** Inicialmente humanoides bípedos con jerarquía esquelética estándar:
   - Caídos / Chamanes (`Fallen`, `FallenShaman`).
   - Zombis / Demonios famélicos (`Zombie`, `HungryDead`).
@@ -184,13 +180,19 @@ flowchart LR
 7. **Verificación automatizada:** Test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 7 suites completas pasando (144/144 tests globales pasando).
 
 ### Fase 3: Integración en Menú de Ajustes VR (`VR Settings > Combat`) [COMPLETADA]
-*Objetivo: Permitir al usuario calibrar y alternar las opciones de gore directamente desde el visor en tiempo de ejecución.*
-1. **Controles en `Page::Combat`:**
-   - `Extra Gore`: `Off (Disabled)` / `World Only (Rec)` / `Full (Visor Ichor)`.
-   - `Decapitation Rate`: `Off` / `Crits Only` / `Dynamic 35%` / `High 65%` / `Always 100%`.
-   - `Severed Head Physics`: `Roll & Bounce (3D)` / `Clean Stump`.
-2. **Optimización de UI:** Emparejamiento horizontal de `DecapitationRate` y `SeveredHeadPhysics` mediante `PairOf`, manteniendo el catálogo en exactamente 10 filas (`CatalogCount == 10`) sin colisionar con el área de mensajes del pie de página. Ocultación reactiva de opciones dependientes cuando `Extra Gore` está desactivado.
-3. **Persistencia en `d2r_pcvr.ini`:** Sección `[gore]` leída y propagada a `combat::ConfigureGore(...)` y `skeletons.cpp`.
+*Objetivo: Permitir al usuario calibrar la frecuencia de decapitación directamente desde el visor en tiempo de ejecución de forma clara e intuitiva.*
+1. **Control Unificado en `Page::Combat` (Fila 8):**
+   - **`Decapitations`**: Selector escalonado con botones `[-]` y `[+]`:
+     - `Off`: Decapitaciones desactivadas.
+     - `Crits only`: Solo golpes críticos, riposte letal y daño masivo overkill (>150% HP).
+     - `Dynamic (35%)`: Garantizado en críticos/overkill y 35% en cortes estándar (Recomendado).
+     - `High (65%)`: Garantizado en críticos/overkill y 65% en cortes estándar.
+     - `Always (100%)`: En el 100% de los golpes letales con armas cortantes.
+2. **Optimización de UI y Distribución:**
+   - Se unificó la configuración eliminando sub-opciones complejas o emparejamientos propensos a confusión en una única fila dedicada y siempre visible (9 filas totales en `Page::Combat`), encajando perfectamente con margen holgado sobre la zona de dificultad y el pie de página.
+   - Decapitación siempre ejecutada como corte limpio en muñón (`Clean Stump`), evitando estiramientos de malla.
+3. **Persistencia en `d2r_pcvr.ini`:**
+   - Clave `[gore] decapitation=2` sincronizada en el repositorio y en los árboles de mod instalados (`mods/D2R-PCVR` y `mods/pcvr-dev`).
 4. **Verificación automatizada:** Test nativo `vr-settings-test` (144/144 tests superados).
 
 ### Fase 4: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo)
@@ -218,11 +220,8 @@ flowchart LR
 
 ```ini
 [gore]
-enabled=1                 ; 0 = Apagado, 1 = Solo Mundo (Recomendado), 2 = Completo (con salpicaduras efímeras en visor)
-decapitation=2            ; 0 = Off, 1 = Crits Only, 2 = Dynamic 35%, 3 = High 65%, 4 = Always 100%
-head_physics=1            ; 0 = Clean Stump (cuello limpio), 1 = Roll & Bounce (cabeza cercenada con físicas 3D)
-weapon_blood=1            ; 1 = Las armas acumulan sangre y gotean
-arterial_spray=1          ; 1 = Chorro de partículas D3D12 en decapitaciones
-corpse_explosion_fx=1     ; 1 = Onda de choque y salpicadura por explosión de cadáveres
-haptics_intensity=1.0     ; Modulador de fuerza háptica para gore (0.0 a 1.5)
+; Decapitations and hostile extra gore effects in VR (VR Settings > Combat > Decapitations)
+; decapitation: 0 = Off, 1 = Crits only, 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
+; Always executed as a clean cut at the neck stump with zero mesh deformation.
+decapitation=2
 ```
