@@ -292,6 +292,7 @@ struct Settings {
     std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
     std::atomic<bool>  skyHidePanels{true}; // no sky while a side panel shifts the picture
+    std::atomic<bool>  skyRims{true};       // [sky] cover_rims: the sky over the dark rim round things against it (SkyOverRims)
     std::atomic<bool>  fogCaves{false};     // [fog] caves: opt-in added indoor fog; native lighting/effects remain
     std::atomic<bool>  ceilOn{false};       // [ceiling] enabled: a vault over the void in caves (first person only)
     std::atomic<float> ceilHeight{30.0f};   // [ceiling] height: over the hero's floor, world units
@@ -845,6 +846,7 @@ void LoadSettings() {
     #ifdef D2RVR_NATIVE_OPENXR
     framevr::profile::Request(GetPrivateProfileIntW(L"debug",L"profile_capture",0,g_iniPath));
     billboards::ConfigurePortalCenters(IniB(L"debug",L"portal_centers",true));
+    billboards::ConfigureBoneArmorHeight(IniF(L"render",L"bone_armor_height",-1));   // missing: default, just above the floor
     framevr::profile::ConfigureGpu(IniB(L"debug",L"profile_gpu",true));
     framevr::profile::ConfigureHooks(IniB(L"debug",L"profile_hooks",true));
     framevr::ConfigureDeferredWait(IniB(L"render",L"defer_gpu_wait",false));
@@ -856,6 +858,7 @@ void LoadSettings() {
     framevr::ConfigureTurnsKeepEffects(IniF(L"stereo",L"turns_effects_level",0.02f),IniF(L"stereo",L"turns_effects_reach",32));
     framevr::ConfigureTurnsSharp(IniB(L"stereo",L"turns_sharp",true));
     framevr::ConfigureTurnsFill(IniB(L"stereo",L"turns_fill",true));
+    framevr::ConfigureTurnsRims(IniB(L"stereo",L"turns_rims",true));
     framevr::ConfigureEyeTracking(IniB(L"render",L"eye_tracked_foveation",false));
     framevr::ConfigureGameplay(IniB(L"gameplay",L"motion_controls",false));
     framevr::ConfigureQuiver(IniB(L"bow",L"quiver",true),IniB(L"bow",L"quiver_preview",true));
@@ -864,6 +867,8 @@ void LoadSettings() {
     framevr::ConfigureBottlePhysics(IniB(L"interactions",L"bottle_physics",true));
     framevr::ConfigurePropPhysics(IniB(L"interactions",L"prop_physics",true));
     projectiles::Configure(IniB(L"gameplay",L"motion_controls",false),IniF(L"gameplay",L"arrow_speed",2.f),IniB(L"gameplay",L"arrow_direct_release",true));
+    // Movement speed (VR Settings > VR): % of the way from the no-gear base run speed to the gear's (-10 walks).
+    projectiles::ConfigureRunSpeed(framevr::runspeed::NormalizePercent(IniF(L"gameplay",L"run_speed_pct",100)));
     bowvr::Configure(IniB(L"gameplay",L"motion_controls",false));
     combat::Configure(IniB(L"gameplay",L"motion_controls",false)&&IniB(L"gameplay",L"contact_hits",true));
     // Melee is Unleashed only (the owner, 2026-10-23): every weapon contact
@@ -1285,6 +1290,11 @@ void LoadSettings() {
     g_set.nightBright.store(std::clamp(IniF(L"sky", L"night_brightness", 0.25f), 0.0f, 1.0f));
     g_set.skyAlways.store(IniB(L"sky", L"always", false));
     g_set.skyHidePanels.store(IniB(L"sky", L"hide_with_panels", true));
+    {   // as the By turns switches: only a change of the ini's own value overrides DEV's
+        static int read = -1;
+        const int rims = IniB(L"sky", L"cover_rims", true) ? 1 : 0;
+        if (read != rims) { read = rims; g_set.skyRims.store(rims != 0); }
+    }
     LoadOutdoorBiomes();
     g_set.ceilOn.store(IniB(L"ceiling", L"enabled", false));
     g_set.ceilHeight.store(std::clamp(IniF(L"ceiling", L"height", 30.0f), 1.0f, 500.0f));
@@ -7164,8 +7174,10 @@ void MeleeContactHand(int hand) {
         case D2RVR_TYPE_SPEAR:case D2RVR_TYPE_POLEARM:length=1.5f;break;
         default:if(gamestate::TwoHanded()&D2RVR_TWO_HANDS_ON)length=1.1f;break;
     }
-    // A shapeshift form's claw: the capsule the skeleton hook measured on the drawn paw.
-    if(pose.length>0&&pose.radius>0){length=std::clamp(pose.length/upm,.05f,.6f);radius=std::clamp(pose.radius/upm,.02f,.15f);}
+    // A shapeshift form's claw: the capsule the skeleton hook measured on the drawn paw,
+    // at least 0.22 m long (a claw weapon is 0.28) and 25% thicker, floor 0.06 m: the bare
+    // paw fell short of big-footprint, long-armed monsters (Brutes/Yetis) (Cal, 2026-10-24).
+    if(pose.length>0&&pose.radius>0){length=std::clamp(pose.length/upm,.22f,.6f);radius=std::clamp(pose.radius/upm*1.25f,.06f,.15f);}
     // The checked UI-thread accessor refreshes the native local unit across
     // warps. Do not gate swings on aim-hook traffic or camera proximity.
     uintptr_t nativeHero=0;
@@ -9051,6 +9063,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
     for (const SkyView& v : sv) sky = sky && v.proj_ok && v.axes_ok && v.proj[0] != 0.0f && v.proj[1] != 0.0f;
     SetBool(rt, "SkyOn", sky);
     SetBool(rt, "ArcaneSkyOn", sky && arcane);
+    SetBool(rt, "SkyOverRims", g_set.skyRims.load());
     {   // camera and eye projection setup for depth fog and dynamic lighting
 
 
@@ -9929,6 +9942,14 @@ DWORD WINAPI UpdateThread(void*) {
 }
 
 }  // namespace
+
+namespace d2rcam {
+// DEV > Character > Sky over rims switches [sky] cover_rims for the session.
+void SetSkyOverRims(bool on) {
+    if (g_set.skyRims.exchange(on) != on) Log(on ? "vrcam: the sky goes over the dark rim round things against it" : "vrcam: the dark rim round things against the sky stays");
+}
+bool SkyOverRims() { return g_set.skyRims.load(); }
+}
 
 #ifdef D2RVR_NATIVE_OPENXR
 // [render] reshade_depth (d2r_pcvr.ini only): ReShade's

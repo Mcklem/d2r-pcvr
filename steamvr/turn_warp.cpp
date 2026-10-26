@@ -100,6 +100,15 @@ float Nearest(float2 uv) {
     const float4 d4=drawnDepth.GatherRed(edge,uv*depthInfo.yz);
     return max(max(max(d4.x,d4.y),max(d4.z,d4.w)),1e-6);
 }
+// The texel a point of the picture lies in. A cell across an edge sorts each
+// pixel into its two layers by this one texel: by the four round it (Nearest)
+// each layer, a fraction of a texel apart, could sort a texel out of both, and
+// it was left a hole - the eye's own older picture through it, a stripe off
+// a roof's ridge (turn captures, 2026-10-25).
+float Texel(float2 uv) {
+    float w,h;drawnDepth.GetDimensions(w,h);
+    return drawnDepth.Load(int3(min(int2(uv*depthInfo.yz*float2(w,h)),int2(w,h)-1),0));
+}
 // The farthest and the nearest of them.
 float2 Range(float2 uv) {
     const float4 d4=drawnDepth.GatherRed(edge,uv*depthInfo.yz);
@@ -150,7 +159,7 @@ bool Effect(Pixel p) {
     return max(source,target)>=effects.z;
 }
 float4 PS(Pixel p):SV_Target {
-    if(p.split!=0&&(Nearest(p.uv)>abs(p.split))!=(p.split>0))discard;   // the other layer's pixel
+    if(p.split!=0&&(Texel(p.uv)>abs(p.split))!=(p.split>0))discard;   // the other layer's pixel
     if(keep.x>0) {   // where this eye's own picture shows the same surface, it stays (round near things: keep.z; effects: effects.z)
         const int3 at=int3(p.position.xy,0);
         const float there=ownDepth.Load(at);
@@ -239,6 +248,28 @@ float4 PS(float4 position:SV_Position):SV_Target {
 }
 )";
 constexpr float HoleReach=128;   // how far along the row a strip's ends are looked for: a 4096-wide eye's pixels
+// TurnWarp::Rims: a depth, the void within TurnRimPixels of something taken
+// as the nearest depth there (TurnRimPixels). Through the turn's root
+// signature: the depth at t0.
+constexpr char RimShader[]=R"(
+Texture2D<float> input : register(t0);   // reverse-Z: nearer is larger, 0 the void
+static const int Rim=2;   // TurnRimPixels
+float4 VS(uint id:SV_VertexID):SV_Position {
+    const float2 uv=float2(id==1?2:0,id==2?2:0);
+    return float4(uv.x*2-1,1-uv.y*2,0,1);
+}
+float PS(float4 position:SV_Position):SV_Target {
+    const int2 at=int2(position.xy);
+    const float d=input.Load(int3(at,0));
+    if(d>0)return d;   // anything with depth keeps its own
+    uint width,height;input.GetDimensions(width,height);
+    const int2 last=int2(width,height)-1;
+    float nearest=0;
+    [unroll] for(int y=-Rim;y<=Rim;++y)[unroll] for(int x=-Rim;x<=Rim;++x)
+        if(x*x+y*y<=Rim*Rim+1)nearest=max(nearest,input.Load(int3(clamp(at+int2(x,y),0,last),0)));
+    return nearest;
+}
+)";
 // TurnDepth::keepEffects: the strongest channel of one of the game's effects
 // targets over each block, blended as the larger into the block (Effects),
 // then spread as the near blocks are (NearShader's Spread).
@@ -266,9 +297,9 @@ constexpr float Ahead=1e-3f;   // the depth shader's: a grid point's depth-buffe
 // near passes' block texture between; after both slots, two an eye for the
 // interface (Interface's `at`), then four an eye for Effects (its layer's
 // two targets, the two between), then a grid's table an eye for the strips
-// (Fill).
+// (Fill), then two an eye for the rims (this eye's depth, the drawn eye's).
 constexpr UINT GridDescriptors=8,SlotDescriptors=2*GridDescriptors+1,InterfaceDescriptors=2*SlotDescriptors,EffectsDescriptors=InterfaceDescriptors+4,
-               HoleDescriptors=EffectsDescriptors+8,HeapDescriptors=HoleDescriptors+2*GridDescriptors;
+               HoleDescriptors=EffectsDescriptors+8,RimDescriptors=HoleDescriptors+2*GridDescriptors,HeapDescriptors=RimDescriptors+4;
 // The shaders' bytecode, compiled once a process: the compiles were about 106
 // of the 112 ms Initialize took on the render thread at every new session
 // (RTX 5090 / Ryzen 9 5950X, 2026-10-20). Copied out of the compiler's blobs,
@@ -276,8 +307,8 @@ constexpr UINT GridDescriptors=8,SlotDescriptors=2*GridDescriptors+1,InterfaceDe
 // failed for the process; its pass is then unavailable as before.
 struct Compiled {
     bool compiler=false;
-    std::vector<uint8_t> vs,ps,layer,depthVs,depthPs,nearVs,nearReduce,nearSpread,effectsReduce,holeVs,holePs;
-    std::string errors,depthErrors,nearErrors,effectsErrors,holeErrors;   // the first failure's messages of each group
+    std::vector<uint8_t> vs,ps,layer,depthVs,depthPs,nearVs,nearReduce,nearSpread,effectsReduce,holeVs,holePs,rimVs,rimPs;
+    std::string errors,depthErrors,nearErrors,effectsErrors,holeErrors,rimErrors;   // the first failure's messages of each group
 };
 const Compiled& Shaders() {
     static std::once_flag once;static Compiled c;
@@ -304,6 +335,8 @@ const Compiled& Shaders() {
             build(EffectsShader,sizeof(EffectsShader)-1,"turn-effects","Reduce","ps_5_0",c.effectsReduce,&c.effectsErrors);
             build(HoleShader,sizeof(HoleShader)-1,"turn-holes","VS","vs_5_0",c.holeVs,&c.holeErrors);
             build(HoleShader,sizeof(HoleShader)-1,"turn-holes","PS","ps_5_0",c.holePs,&c.holeErrors);
+            build(RimShader,sizeof(RimShader)-1,"turn-rims","VS","vs_5_0",c.rimVs,&c.rimErrors);
+            build(RimShader,sizeof(RimShader)-1,"turn-rims","PS","ps_5_0",c.rimPs,&c.rimErrors);
         }catch(...) {}   // out of memory: what did not finish stays unavailable
         if(module)FreeLibrary(module);
     });
@@ -393,6 +426,20 @@ bool TurnWarp::Initialize(ID3D12Device* device,DXGI_FORMAT targetFormat,void (*l
     }
     else if(log&&!shaders.holeErrors.empty())log(shaders.holeErrors.c_str());
     if(!holePipeline&&log)log("Frame OpenXR: by turns - filling the strips beside near things unavailable; they keep the eye's own picture");
+    // The rims' pass is optional: without it they stay with the void.
+    if(!shaders.rimVs.empty()&&!shaders.rimPs.empty()) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC rim{};
+        rim.pRootSignature=root.Get();rim.VS=Code(shaders.rimVs);rim.PS=Code(shaders.rimPs);
+        rim.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+        rim.SampleMask=UINT_MAX;rim.RasterizerState=state.RasterizerState;
+        rim.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        rim.NumRenderTargets=1;rim.RTVFormats[0]=DXGI_FORMAT_R32_FLOAT;rim.SampleDesc.Count=1;
+        D3D12_DESCRIPTOR_HEAP_DESC targets{};targets.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;targets.NumDescriptors=UINT(rims.size());
+        if(FAILED(device->CreateGraphicsPipelineState(&rim,IID_PPV_ARGS(&rimPipeline)))||
+           FAILED(device->CreateDescriptorHeap(&targets,IID_PPV_ARGS(&rimTargets)))){rimPipeline.Reset();rimTargets.Reset();}
+    }
+    else if(log&&!shaders.rimErrors.empty())log(shaders.rimErrors.c_str());
+    if(!rimPipeline&&log)log("Frame OpenXR: by turns - moving the rims round things against the void with them unavailable; they stay with the void");
     // The near passes are optional: without them "near things only" keeps none.
     const auto nearFail=[&](const char* why){
         nearRoot.Reset();reducePipeline.Reset();spreadPipeline.Reset();nearTargets.Reset();
@@ -649,6 +696,44 @@ bool TurnWarp::Render(ID3D12Device* device,ID3D12GraphicsCommandList* list,ID3D1
         pass(spreadPipeline.Get(),outAt,2,1,0);
         pass(spreadPipeline.Get(),between,out,0,1);
     };
+    // Each depth with the void round things taken as theirs (TurnRimPixels),
+    // this eye's own into rims[0], the drawn eye's into rims[1]; everything
+    // after reads those. A depth of another size than the first keeps its own.
+    TurnDepth ownRimmed,drawnRimmed;
+    if(rimsOn&&rimPipeline) {
+        const auto readable=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        const UINT rtvStep=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        const int rims0=int(RimDescriptors+2*slot)-int(SlotDescriptors*slot);   // this eye's two, from the slot's start
+        const auto rimmed=[&](const TurnDepth* d,int n,TurnDepth& out)->const TurnDepth* {
+            const auto size=d->depth->GetDesc();
+            auto rtv=rimTargets->GetCPUDescriptorHandleForHeapStart();rtv.ptr+=SIZE_T(rtvStep)*n;
+            if(rims[n]){const auto r=rims[n]->GetDesc();if(r.Width!=size.Width||r.Height!=size.Height)return d;}   // one size a session
+            else {
+                D3D12_HEAP_PROPERTIES heapProps{};heapProps.Type=D3D12_HEAP_TYPE_DEFAULT;
+                D3D12_RESOURCE_DESC r{};r.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;r.Width=size.Width;r.Height=size.Height;
+                r.DepthOrArraySize=r.MipLevels=1;r.Format=DXGI_FORMAT_R32_FLOAT;r.SampleDesc.Count=1;r.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+                if(FAILED(device->CreateCommittedResource(&heapProps,D3D12_HEAP_FLAG_NONE,&r,readable,nullptr,IID_PPV_ARGS(&rims[n])))){rims[n].Reset();return d;}
+                device->CreateRenderTargetView(rims[n].Get(),nullptr,rtv);
+            }
+            D3D12_SHADER_RESOURCE_VIEW_DESC depthView=srv;depthView.Format=d->format;
+            device->CreateShaderResourceView(d->depth,&depthView,descriptor(rims0+n));
+            D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition={rims[n].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,readable,D3D12_RESOURCE_STATE_RENDER_TARGET};
+            list->ResourceBarrier(1,&b);
+            list->OMSetRenderTargets(1,&rtv,FALSE,nullptr);
+            const D3D12_VIEWPORT whole{0,0,float(size.Width),float(size.Height),0,1};const D3D12_RECT wholeRect{0,0,LONG(size.Width),LONG(size.Height)};
+            list->RSSetViewports(1,&whole);list->RSSetScissorRects(1,&wholeRect);
+            list->SetGraphicsRootSignature(root.Get());list->SetPipelineState(rimPipeline.Get());
+            auto table=sourceGpu;table.ptr+=UINT64(step)*(rims0+n);list->SetGraphicsRootDescriptorTable(0,table);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);list->DrawInstanced(3,1,0,0);
+            std::swap(b.Transition.StateBefore,b.Transition.StateAfter);list->ResourceBarrier(1,&b);
+            out=*d;out.depth=rims[n].Get();out.format=DXGI_FORMAT_R32_FLOAT;
+            return &out;
+        };
+        if(usable(depth))depth=rimmed(depth,0,ownRimmed);
+        if(other)drawn=rimmed(drawn,1,drawnRimmed);
+        list->RSSetViewports(1,&viewport);list->RSSetScissorRects(1,&rect);
+    }
     const bool own=usable(depth);
     if(own)grid(*depth,source,0,0,false,false,false);
     if(other) {

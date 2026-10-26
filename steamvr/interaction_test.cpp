@@ -78,19 +78,19 @@ int main(){
         s.Step();s.in.hover=8;s.in.trigger=1;s.Step();Check(s.out.request.action==Action::BindItem&&!s.out.request.index&&!s.out.request.item.handle,"clear slot uses explicit empty assignment");
     }
     {
-        Sim s;quick(s);s.in.hover=RunWalkCell;s.in.trigger=1;s.Step();
-        Check(s.out.request.action==Action::RunWalk&&!s.out.wheel,"run/walk dispatches native toggle");
-        Check(s.Step(40).request.action==Action::None,"holding run/walk never toggles repeatedly");
-        Sim stick;stick.in.runWalk=true;stick.Step();
-        Check(stick.out.request.action==Action::RunWalk&&stick.out.feedback==1&&stick.out.feedbackHand==0,"right stick up toggles run / walk without the wheel");
-        stick.in.runWalk=false;Check(stick.Step().request.action==Action::None,"once per push");
-        Sim stale;stale.in.snapshot.session=99;stale.in.runWalk=true;stale.Step();
-        Check(stale.out.request.action==Action::None&&stale.out.feedback==3,"an unknown character buzzes instead");
+        Sim s;quick(s);
+        // The movement slider's gait: the transport asks for the game's run / walk toggle when the
+        // hero moves in the other gait; the engine sends it like any native action, without a tick.
+        Sim gait;gait.in.gaitToggle=true;gait.Step();
+        Check(gait.out.request.action==Action::RunWalk&&gait.out.feedback==0,"a gait mismatch sends the native run / walk toggle silently");
+        gait.in.gaitToggle=false;Check(gait.Step().request.action==Action::None,"once per mismatch the transport reports");
+        Sim stale;stale.in.snapshot.session=99;stale.in.gaitToggle=true;stale.Step();
+        Check(stale.out.request.action==Action::None&&stale.out.feedback==0,"an unknown character: no toggle, no buzz");
         auto c=Context(s.in.snapshot,s.out,true);s.in.snapshot.quick.items[0].quantity--;
         Check(c!=Context(s.in.snapshot,s.out,true),"count changes invalidate paint and old click eligibility");
         for(auto page:{MenuPage::Spells,MenuPage::Equipment}) {
             Check(WheelCell(.1f,.1f,-1,page,1)==QuickUseCell,"quick slot shares hit and paint bounds");
-            Check(WheelCell(.85f,.07f,-1,page,1)==RunWalkCell,"run/walk shares hit and paint bounds");
+            Check(WheelCell(.85f,.14f,-1,page,1)==-1,"no RUN / WALK box or movement slider on the wheel (VR Settings > VR > Movement speed)");
         }
         for(auto page:{MenuPage::Map,MenuPage::Developer,MenuPage::EditSlots,MenuPage::EditSkills,MenuPage::EditItems})
             Check(WheelCell(.1f,.1f,-1,page,1)!=QuickUseCell,"hidden quick control never intercepts another page");

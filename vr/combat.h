@@ -103,6 +103,9 @@ bool LocalPlayerUnit(uintptr_t& unit);
 // UI thread: a worn item's new durability onto the local player's client item.
 void MirrorClientDurability(uint32_t itemId,int value);
 bool LocalPlayerId(uint32_t& id);
+// A unit's full stat (D2Common GetUnitStat, layer 0: base + items + states). False
+// when the game's stat getter is not as expected. Any game thread.
+bool UnitStat(uintptr_t unit,int stat,int& value);
 // Returns the maximum fire damage on the equipped item at body location (4=right hand, 5=left hand, 9/10=swap).
 int EquippedFireDamage(int location);
 void ConfigureGore(int decapitationRate, bool headPhysics = true);

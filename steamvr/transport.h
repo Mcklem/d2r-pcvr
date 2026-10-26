@@ -59,6 +59,14 @@ bool TurnsSharp();
 void ConfigureTurnsFill(bool on);
 void SetTurnsFill(bool on);
 bool TurnsFill();
+// [stereo] turns_rims (1): by turns, the rim the game's picture has round
+// anything against the sky (its colour, the sky's depth) goes with it
+// (TurnWarp::Rims); 0 it stays with the sky as before, a dark outline beside
+// roofs and treetops in every other frame. Applied when the ini's value
+// changes; DEV > Equipment switches it for the session (Set), and reads it back.
+void ConfigureTurnsRims(bool on);
+void SetTurnsRims(bool on);
+bool TurnsRims();
 void ConfigureEyeTracking(bool enabled);
 void ConfigureGameplay(bool enabled);
 void ConfigureQuiver(bool enabled,bool preview); // [bow] quiver, quiver_preview

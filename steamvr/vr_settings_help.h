@@ -77,6 +77,8 @@ inline const char* HelpText(int id) {
         case ShieldFollow:return "How much a held shield turns with your wrist. 0% straps it to your forearm, so bending the wrist leaves it still; 100% turns it with your hand. Twisting the forearm turns it at every value. 50% by default, in 10% steps.";
         case ShieldRoll:return "Turns the shield around the forearm; + toward the little finger. 0 = the attach's own facing. -180 to +180 degrees in 5-degree steps; +90 suits a controller held palm down.";
         case EnemySight:return "Scales how far away hostile monsters notice and approach you in offline VR, from 100% (game default) up to 300% (three times as far). 100% keeps the game's original sight distance and restores the unmodified table values. Friendly NPCs, mercenaries and summons are unchanged.";
+        case RunSpeed:return "Walk walks; every step above runs. Base run is your class's run with no speed bonus (gear, Faster Run/Walk or skills), then 10% steps of the way up to Full run (default), the full speed your gear and skills give. Never faster than the game. Movement skills keep their own speed. Stick toggle, beside it, switches with the right stick.";
+        case RunWalkToggle:return "On: push the right stick up to switch between walking and Movement speed's run - from Walk, the full run. Not while a wheel is open or while you look at the wrist map. A new character, or a change of Movement speed, starts at Movement speed again. Off by default; right stick up then does nothing.";
         case LeftHandStrikes:return "Druid only. A melee skill on a trigger (Maul, Feral Rage, Fire Claws, Rabies, Hunger, Fury) casts when that hand's claw lands a full-cycle stroke; faster strokes stay basic attacks. Toggle it in the skill wheel's lower-left box. Weapon skill gestures Off keeps every strike basic.";
         case CompanionAi:return "Enhanced VR Mercenary overhaul: dynamic detection range matching enemy sight, elastic 40 sub-tile combat leash, and an anti-stuck watchdog that safely relocates the ally to your rear flank if trapped. Legacy restores vanilla AI constants and behavior.";
         case Decapitations:return "Physical decapitation on lethal strikes, cleanly cut at the neck stump with no mesh deformation. Off: disabled. Crits only: criticals or overkill (>150% HP). Dynamic (35%): recommended balance. Always (100%): every lethal cut decapitates.";
@@ -294,7 +296,7 @@ inline int HelpAt(Page page,float u,float v,bool controllerMenu=false,const Valu
         if(DeferBox.Contains(x,y)&&(!values||DeferOffered(*values)))return DeferGpuWait;
         if(PerformanceBox.Contains(x,y))return HelpPerformance;
         if(GameVideoBox.Contains(x,y))return HelpGameVideo;
-        if(FrameGenBox.Contains(x,y))return HelpFrameGen;
+        if(FrameGenBox.Contains(x,y)&&(!values||(*values)[StereoRendering]<.5f))return HelpFrameGen;   // not drawn by turns
     }
     if(page==Page::HUD){
         if(Rect{40,181,570,52}.Contains(x,y))return MapTopDown;

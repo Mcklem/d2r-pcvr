@@ -1,6 +1,7 @@
 // D2R 3.3.93787: client/server missile creation, path velocity, and the HD
 // release-point handoff. Kept separate from posing the held bow.
 #include <windows.h>
+#include <intrin.h>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "bow.h"
 #include "crossbow.h"
 #include "../steamvr/telegraph.h"
+#include "../steamvr/run_speed.h"
 
 namespace gamestate {uint64_t LocalPlayer();}
 
@@ -49,6 +51,9 @@ VelocityFn originalVelocity=nullptr;
 ReleaseFn originalRelease=nullptr;
 std::atomic<bool> enabled{false},direct{true},speedHooksReady{false},allReady{false};
 std::atomic<float> speed{2.f};
+std::atomic<int> runSpeed{framevr::runspeed::DefaultPercent};
+std::atomic<bool> stickFullRun{false};   // the right stick's switch runs although Movement speed walks (runspeed::StickToggle)
+std::atomic<uint64_t> gaitSeen{0};   // GetTickCount64() << 3 | tired << 2 | gait (1 walk, 2 run)
 bool clientIn=false,serverIn=false,velocityIn=false,releaseIn=false;
 std::atomic<unsigned> accelerated[2]{},released{},observed[2]{};
 std::atomic<int> before[2]{},after[2]{};
@@ -184,13 +189,54 @@ uintptr_t Server(uintptr_t game,uintptr_t params) {
     if(unit)bowvr::Created(game,params,unit);
     return unit;
 }
+// Run speed slider: the local hero's path (path+0x40 = its unit, type 0, id
+// = the local player's) in run mode (3), on the client and the server alike so
+// the two never disagree. velocitypercent (67, absolute: 150 = a run with no
+// bonus, item FRW already inside it) gives the class's no-gear base
+// (run_speed.h); stat 96 is only logged. Anything else stays native.
+int RunVelocity(uintptr_t path,int native) {
+    if(native<=0)return native;
+    uintptr_t unit=0,back=0;uint32_t h[4]{};uint32_t id=0;   // type, class, id, mode
+    if(!Read(path+0x40,unit)||!Read(unit,h)||h[0]!=0||!Read(unit+0x38,back)||back!=path||!combat::LocalPlayerId(id)||h[2]!=id)return native;
+    int stamina=-1,maxStamina=-1;
+    if(const uint32_t mode=h[3];mode==2||mode==3||mode==6) {
+        // Out of stamina the game walks whatever its run / walk toggle says, and keeps walking
+        // while it recovers (runspeed::Stamina). Stamina (10) and its maximum (11).
+        static std::mutex staminaMutex;static framevr::runspeed::Stamina staminaState;
+        bool tired=false;
+        if(combat::UnitStat(unit,10,stamina)&&combat::UnitStat(unit,11,maxStamina)) {
+            std::lock_guard lock(staminaMutex);tired=staminaState.Tired(h[2],mode,stamina,maxStamina);
+        }
+        gaitSeen=(GetTickCount64()<<3)|(tired?4u:0u)|(mode==3?2u:1u);
+    }
+    int vp=0,frw=0;
+    const bool stats=combat::UnitStat(unit,67,vp)&&combat::UnitStat(unit,96,frw);
+    const int percent=stickFullRun.load()?framevr::runspeed::MaxPercent:runSpeed.load();
+    const int adjusted=h[3]==3&&stats?framevr::runspeed::Scaled(native,vp,percent):native;
+#ifdef D2RVR_DEVELOPER
+    {   // Developer builds: every velocity the game gives the hero, to check the hook point
+        // (which modes come through, client and server) - at most 4 lines a second.
+        static std::atomic<ULONGLONG> second{0};static std::atomic<int> lines{0};static std::atomic<unsigned> skipped{0};
+        const ULONGLONG now=GetTickCount64()/1000;
+        if(second.exchange(now)!=now)lines=0;
+        if(lines.fetch_add(1)<4) {
+            uintptr_t game=0,self=0;const bool server=melee::LocalServer(game,self)&&self==unit;
+            char text[320];std::snprintf(text,sizeof text,"Frame run speed: %s hero mode %u velocity %d -> %d (stat67 %d, item frw %d%s, bonus %d, base %.0f, slider %d%%, stamina %d/%d) from rva 0x%llX%s",
+                server?"server":"client",h[3],native,adjusted,vp,frw,stats?"":" UNREAD",stats?framevr::runspeed::BonusPoints(vp):0,framevr::runspeed::BaseOf(native,vp),percent,stamina>>8,maxStamina>>8,
+                (unsigned long long)(reinterpret_cast<uintptr_t>(_ReturnAddress())-d2rsig::Addr(0)),skipped.exchange(0)?" (more skipped)":"");
+            framevr::logging::Write(text);
+        } else ++skipped;
+    }
+#endif
+    return adjusted;
+}
 void Velocity(uintptr_t path,int native,uintptr_t source,int line) {
     if(flightWatch.missile&&native>0) {   // the last positive value set during creation is its velocity
         uintptr_t unit=0,back=0;uint32_t type=~0u,missile=~0u;
         if(Read(path+0x40,unit)&&Read(unit,type)&&type==3&&Read(unit+4,missile)&&missile==flightWatch.missile&&Read(unit+0x38,back)&&back==path)
             {flightWatch.velocity=native;flightWatch.unit=unit;}
     }
-    int adjusted=native;
+    int adjusted=RunVelocity(path,native);
     // Native creation first clears velocity, then sets the final value. Only
     // the latter is scaled, once per path per creation; slow-missile and later
     // corrections outside creation retain their normal behavior.
@@ -282,6 +328,9 @@ uintptr_t CreateVisual(uintptr_t params){return originalClient?Client(params,0):
 void Configure(bool motionControls,float multiplier,bool directRelease) {
     enabled=motionControls;speed=std::isfinite(multiplier)?std::clamp(multiplier,1.f,3.f):1.f;direct=directRelease;
 }
+void ConfigureRunSpeed(int percent){runSpeed=framevr::runspeed::NormalizePercent(float(percent));}
+void StickFullRun(bool on){stickFullRun=on;}
+int ObservedGait(uint64_t& at,bool* tired){const uint64_t v=gaitSeen.load();at=v>>3;if(tired)*tired=(v&4)!=0;return int(v&3);}
 void Install() {
     if(!enabled.load())return;
     if(!velocityIn)velocityIn=d2rsig::Hook(VelocityRva,VelocitySig,sizeof VelocitySig,reinterpret_cast<void*>(&Velocity),reinterpret_cast<void**>(&originalVelocity));

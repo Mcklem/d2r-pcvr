@@ -95,14 +95,15 @@ int main(){
         external[ElementalHands]=1;Check(Conflict(external,request.base,request.changed),"its conflicts are detected");
     }
     {
-        Check(RowCount(Page::Performance)==7&&RowKey(Page::Performance,4)==Foveation&&RowKey(Page::Performance,5)==FoveationStrength&&
+        auto both=Defaults();both[StereoRendering]=0;   // frame generation's rows show with Both eyes only
+        Check(RowCount(Page::Performance,both)==7&&RowKey(Page::Performance,4)==Foveation&&RowKey(Page::Performance,5)==FoveationStrength&&
               RowKey(Page::Performance,1)==RenderResolution,"strength sits directly under foveated rendering");
         // Frame generation last; NVIDIA's quality and scale share the row under it, with NVIDIA only.
-        Check(RowKey(Page::Performance,6)==FrameGeneration&&Defaults()[FrameGeneration]==0,"frame generation is on the Perf page, off by default");
-        auto nvidia=Defaults();nvidia[FrameGeneration]=2;
+        Check(RowKey(Page::Performance,6,both)==FrameGeneration&&Defaults()[FrameGeneration]==0,"frame generation is on the Perf page, off by default");
+        auto nvidia=both;nvidia[FrameGeneration]=2;
         Check(RowCount(Page::Performance,nvidia)==8&&RowKey(Page::Performance,7,nvidia)==FrameGenPreset&&PairOf(FrameGenPreset)==FrameGenScale,
               "NVIDIA's quality and scale share a row");
-        auto fidelity=Defaults();fidelity[FrameGeneration]=1;
+        auto fidelity=both;fidelity[FrameGeneration]=1;
         Check(RowCount(Page::Performance,fidelity)==7,"FidelityFX has no NVIDIA row");
         Check(Defaults()[FrameGenPreset]==1&&Defaults()[FrameGenScale]==2,"NVIDIA Medium at 50% to start");
         Check(Normalize(FrameGeneration,3)==0&&Normalize(FrameGeneration,1.5f)==0&&Normalize(FrameGenScale,-1)==2&&Normalize(FrameGenPreset,2)==2,
@@ -157,15 +158,15 @@ int main(){
               Normalize(StereoRendering,0)==0,"malformed stereo rendering goes by turns");
         Check(Normalize(StereoRendering,2)==1,"a profile saved with Replay goes by turns");
     }
-    {   // Frame generation is turned on with Both eyes only; by turns, once on, it can still be changed or turned off.
+    {   // Frame generation runs with Both eyes only: by turns its rows and its status line are left out.
         Model turns;turns.Open(s);turns.Click({Kind::Tab,int(Page::Performance)});
-        Check(turns.Get()[StereoRendering]==1&&!RowEnabled(turns.Get(),FrameGeneration),"by turns, frame generation cannot be turned on");
-        turns.Click(At(turns,Page::Performance,Increase(6)));
-        Check(turns.Get()[FrameGeneration]==0&&!turns.Dirty(),"its arrows do nothing");
+        Check(turns.Get()[StereoRendering]==1&&turns.Rows().count==6,"by turns, no frame generation rows");
         auto on=Defaults();on[FrameGeneration]=2;
-        Check(RowEnabled(on,FrameGeneration),"once on, by turns it can still be changed or turned off");
-        on[StereoRendering]=0;on[FrameGeneration]=0;
-        Check(RowEnabled(on,FrameGeneration),"with Both eyes it can be turned on");
+        Check(RowCount(Page::Performance,on)==6&&HelpAt(Page::Performance,600.f/Width,(FrameGenBox.y+10.f)/Height,false,&on)!=HelpFrameGen,
+              "nor once it was on with Both eyes: no NVIDIA row, no status line");
+        on[StereoRendering]=0;
+        Check(RowCount(Page::Performance,on)==8&&RowEnabled(on,FrameGeneration)&&
+              HelpAt(Page::Performance,600.f/Width,(FrameGenBox.y+10.f)/Height,false,&on)==HelpFrameGen,"Both eyes brings them back");
     }
     {   // Frame generation steps Off, FidelityFX, NVIDIA and stops at the ends; NVIDIA brings its row.
         Model frames;frames.Open(s);frames.Click({Kind::Tab,int(Page::Performance)});
@@ -585,7 +586,8 @@ int main(){
         v[Seated]=1;Check(!RowShown(Waist,v,{}),"seated: no standing belt drop");
         v[Foveation]=0;Check(!RowShown(FoveationStrength,v,{}),"no foveation strength while it is Off");
         v[BloodVisor]=0;Check(!RowShown(BloodWipe,v,{}),"no face wipe without blood");
-        Check(RowCount(Page::VR,v)==8&&RowCount(Page::Performance,v)==6&&RowCount(Page::HUD,v)==9,"each page drops what cannot apply");
+        Check(!RowShown(FrameGeneration,v,{})&&!RowShown(FrameGenPreset,v,{}),"no frame generation by turns");
+        Check(RowCount(Page::VR,v)==9&&RowCount(Page::Performance,v)==5&&RowCount(Page::HUD,v)==9,"each page drops what cannot apply");
     }
     {   // Windows Mono audio: the title row warns on every page; pointing at it explains
         const float u=(MonoAudioBox.x+20.f)/Width,v=(MonoAudioBox.y+20.f)/Height;
@@ -885,6 +887,37 @@ int main(){
         Check(Normalize(LeftHandStrikes,2)==0&&Normalize(LeftHandStrikes,1)==1&&Normalize(LeftHandStrikes,-1)==0,"the retired Basic attack (2) reads Own trigger skill");
         for(int p=0;p<TabCount;++p)for(int row=0;row<RowCount(Page(p),s.values,{heroclass::Druid});++row)
             Check(RowKey(Page(p),row,s.values,{heroclass::Druid})!=LeftHandStrikes,"left-hand strikes on no settings page");
+    }
+    {   // Run speed: set from the skill wheel's slider, on no settings page
+        Check(Defaults()[RunSpeed]==100&&std::wstring(Definitions[RunSpeed].section)==L"gameplay"&&std::wstring(Definitions[RunSpeed].key)==L"run_speed_pct"&&
+              HelpText(RunSpeed)[0]!=0&&HelpChoices(RunSpeed)==0,"movement: FULL RUN by default, explained");
+        Check(Normalize(RunSpeed,37)==40&&Normalize(RunSpeed,-10)==-10&&Normalize(RunSpeed,-40)==-10&&Normalize(RunSpeed,2)==0&&Normalize(RunSpeed,140)==100&&
+              Normalize(RunSpeed,std::numeric_limits<float>::infinity())==100,"movement saves -10 (WALK) and 0..100 in 10% steps");
+        {   // VR tab, last row; Snap and TurnSpeed never show together, so the tab stays within MaxRows
+            int found=0;
+            for(int p=0;p<TabCount;++p)for(int row=0;row<RowCount(Page(p),s.values);++row)if(RowKey(Page(p),row,s.values)==RunSpeed)found+=p==int(Page::VR)?1:100;
+            Check(found==1&&RowKey(Page::VR,RowCount(Page::VR,s.values)-1,s.values)==RunSpeed,"Movement speed: the VR tab's last row, nowhere else");
+            Values smooth=s.values;smooth[SmoothTurn]=1;Values snap=s.values;snap[SmoothTurn]=0;snap[Snap]=30;
+            Values seated=s.values;seated[Seated]=1;
+            for(const auto& v:{smooth,snap,seated})Check(RowCount(Page::VR,v)<=MaxRows&&RowKey(Page::VR,RowCount(Page::VR,v)-1,v)==RunSpeed,"every VR-tab layout keeps Movement speed, within MaxRows");
+            Model m;m.Open(s);m.Click({Kind::Tab,int(Page::VR)});
+            const int row=RowCount(Page::VR,s.values)-1;
+            Check(Paired(RunSpeed)&&PairOf(RunSpeed)==RunWalkToggle&&std::strcmp(RowLabel(RunSpeed,{}),"Movement speed")==0,"Movement speed shares its row with the stick toggle");
+            m.Click(At(m,Page::VR,PairDecrease(row,0)));Check(m.Get()[RunSpeed]==90,"- steps 10%");
+            for(int i=0;i<20;++i)m.Click(At(m,Page::VR,PairDecrease(row,0)));Check(m.Get()[RunSpeed]==-10,"the bottom is Walk");
+            m.Click(At(m,Page::VR,PairIncrease(row,0)));Check(m.Get()[RunSpeed]==0,"+ from Walk is Base run");
+            Check(m.Get()[RunWalkToggle]==0,"the left stepper leaves the stick toggle alone");
+            Check(m.Click({Kind::Apply}).changed==(ChangeMask{1}<<RunSpeed),"Apply saves only Movement speed");
+            Model t;t.Open(s);t.Click({Kind::Tab,int(Page::VR)});
+            t.Click(At(t,Page::VR,PairValue(row,1)));Check(t.Get()[RunWalkToggle]==1&&t.Get()[RunSpeed]==100,"the right value box turns the stick toggle on");
+            t.Click(At(t,Page::VR,PairDecrease(row,1)));Check(t.Get()[RunWalkToggle]==0,"either stepper flips it");
+            t.Click(At(t,Page::VR,PairIncrease(row,1)));
+            Check(t.Click({Kind::Apply}).changed==(ChangeMask{1}<<RunWalkToggle),"Apply saves only the stick toggle");
+        }
+        Values a=Defaults(),b=a;b[RunSpeed]=70;
+        Check(Changed(a,b)==(ChangeMask{1}<<RunSpeed)&&RunSpeed<ChangeMask::Bits,"run speed has its own change bit");
+        Check(Defaults()[RunWalkToggle]==0&&std::wstring(Definitions[RunWalkToggle].section)==L"gameplay"&&std::wstring(Definitions[RunWalkToggle].key)==L"run_walk_toggle"&&
+              HelpText(RunWalkToggle)[0]!=0&&RunWalkToggle<ChangeMask::Bits,"the stick toggle: off by default, explained, its own change bit");
     }
     std::puts("VR settings draft, persistence requests, conflicts, hit regions and input-gating tests passed");
 }

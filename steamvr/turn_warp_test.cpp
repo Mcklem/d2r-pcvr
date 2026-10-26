@@ -173,10 +173,10 @@ static void Precompiled(Gpu& gpu) {
     framevr::TurnWarp first;
     const bool built=first.Initialize(gpu.device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,nullptr);
     worker.join();
-    Check(warmed&&built&&first.DepthReady()&&first.NearReady()&&first.EffectsReady()&&first.InterfaceReady(),"every pass is built beside a running compile");
+    Check(warmed&&built&&first.DepthReady()&&first.NearReady()&&first.EffectsReady()&&first.InterfaceReady()&&first.RimReady(),"every pass is built beside a running compile");
     framevr::TurnWarp next;
     Check(next.Initialize(gpu.device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,nullptr)&&next.DepthReady()&&next.NearReady()&&
-          next.EffectsReady()&&next.InterfaceReady(),"a later session builds every pass from the compiled code");
+          next.EffectsReady()&&next.InterfaceReady()&&next.RimReady(),"a later session builds every pass from the compiled code");
 }
 // The pass on the GPU: an 8x8 picture, the target typed or typeless as the runtime's may be.
 static void Turn(Gpu& gpu,bool typeless) {
@@ -493,6 +493,73 @@ static void KeepEffects(Gpu& gpu,bool typeless) {
     std::printf("Effects GPU pass passed (%s target): this eye's own kept where either eye's effects layer has something, the drawn eye's elsewhere\n",typeless?"typeless":"typed");
 }
 
+// Rims (TurnRimPixels): a 64-pixel picture, a post 2 units away in columns
+// 24-39 against the void (depth 0), the drawn eye half a unit to the left (the
+// post goes 8 px, the void none). The two columns either side of the post,
+// 22-23 and 40-41, are its rim in the picture but have the void's depth. They
+// go with the post; left with the void, the right one stood 8 px from it.
+static void Rims(Gpu& gpu,bool typeless) {
+    framevr::TurnWarp warp;
+    Check(warp.Initialize(gpu.device.Get(),DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,nullptr)&&warp.DepthReady()&&warp.RimReady(),"pipelines");
+    constexpr UINT side=64;constexpr float nearPlane=1;
+    const auto texel=[](UINT x,UINT y){return uint32_t(x*4)|uint32_t(y*4)<<8|0x80u<<16|0xffu<<24;};
+    const auto other=[](UINT x,UINT y){return uint32_t(x*4)|uint32_t(y*4)<<8|0x30u<<16|0xffu<<24;};
+    std::vector<uint32_t> own(side*side),pixels(side*side),d(side*side);
+    for(UINT y=0;y<side;++y)for(UINT x=0;x<side;++x) {
+        own[y*side+x]=texel(x,y);pixels[y*side+x]=other(x,y);
+        const float v=x>=24&&x<40?nearPlane/2:0.f;std::memcpy(&d[y*side+x],&v,4);
+    }
+    auto source=gpu.Texture(side,side,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto picture=gpu.Texture(side,side,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto target=gpu.Texture(side,side,typeless?DXGI_FORMAT_R8G8B8A8_TYPELESS:DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto depth=gpu.Texture(side,side,DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+    gpu.Upload(source.Get(),own,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gpu.Upload(picture.Get(),pixels,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gpu.Upload(depth.Get(),d,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    const float q=std::atan(1.f);const Fov square{-q,q,-q,q};
+    framevr::TurnDepth drawn;drawn.format=DXGI_FORMAT_R32_FLOAT;drawn.nearPlane=nearPlane;drawn.drawnFov=drawn.nowFov=square;
+    drawn.move=framevr::TurnMove({0,0,0},{0,0,0,1},{.5f,0,0},{0,0,0,1});drawn.depth=depth.Get();drawn.image=picture.Get();drawn.apart=.5f;
+    std::vector<uint32_t> out;
+    const auto from=[&](UINT a,UINT b,int shift,bool drawnEye,const char* what) {
+        bool same=true;
+        for(UINT y=0;y<side;++y)for(UINT x=a;x<b;++x) {
+            const uint32_t want=drawnEye?other(x+shift,y):texel(x,y);
+            if(!Same(out[y*side+x],want)){if(same)std::printf("%s: pixel %u,%u = %08x, expected %08x\n",what,x,y,out[y*side+x],want);same=false;}
+        }
+        Check(same,what);
+    };
+    out=gpu.Warp(warp,source.Get(),target.Get(),Identity,0,nullptr,&drawn);
+    from(2,13,0,true,"the void left of the post stays");
+    from(16,32,8,true,"the post moves 8 px");
+    from(14,16,8,true,"its left rim with it");
+    from(32,34,8,true,"its right rim with it, beside it still");
+    from(34,42,0,false,"what the post and its rim hid from the drawn eye: this eye's own");
+    from(42,60,0,true,"the void right of it stays");
+    {   // a beam 2 units away along the bottom (rows 40-63) under the void, the drawn eye
+        // also a hair lower: its rows go a thirtieth of a pixel up, the void's not at all.
+        // Sorted by the four texels round each point, the row above the beam's rim fell
+        // out of both layers - the eye's own older picture through a hole along the ridge.
+        std::vector<uint32_t> beam(side*side);
+        for(UINT y=0;y<side;++y)for(UINT x=0;x<side;++x){const float v=y>=40?nearPlane/2:0.f;std::memcpy(&beam[y*side+x],&v,4);}
+        auto beamDepth=gpu.Texture(side,side,DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE,D3D12_RESOURCE_STATE_COPY_DEST);
+        gpu.Upload(beamDepth.Get(),beam,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        framevr::TurnDepth low=drawn;low.depth=beamDepth.Get();low.move=framevr::TurnMove({0,0,0},{0,0,0,1},{.5f,.002f,0},{0,0,0,1});
+        out=gpu.Warp(warp,source.Get(),target.Get(),Identity,1,nullptr,&low);
+        bool covered=true;
+        for(UINT y=30;y<50;++y)for(UINT x=10;x<50;++x)if(Same(out[y*side+x],texel(x,y))) {
+            if(covered)std::printf("a hole along the beam: pixel %u,%u is this eye's own (%08x)\n",x,y,out[y*side+x]);covered=false;
+        }
+        Check(covered,"no hole along a level edge against the void a hair apart");
+    }
+    warp.Rims(false);   // as before: the rim with the void
+    out=gpu.Warp(warp,source.Get(),target.Get(),Identity,1,nullptr,&drawn);
+    from(16,32,8,true,"rims off: the post moves 8 px");
+    from(32,40,0,false,"rims off: this eye's own beside it");
+    from(40,42,0,true,"rims off: the right rim left 8 px from the post");
+    warp.Rims(true);
+    std::printf("Rims GPU pass passed (%s target): the rim round a post against the void goes with it, or with the void when off\n",typeless?"typeless":"typed");
+}
+
 // The sharper read (TurnWarp::Sharpen): a 64-pixel picture of vertical
 // stripes, 4 px a period, turned half a pixel. Bilinear averages each two
 // neighbours; Catmull-Rom keeps more of the stripes' contrast. A whole-pixel
@@ -585,5 +652,5 @@ static void Lay(Gpu& gpu,bool typeless) {
 
 int main(int argc,char** argv) {try {
     const bool typeless=argc>1&&!std::strcmp(argv[1],"--typeless");
-    Math();Gpu gpu;Precompiled(gpu);Turn(gpu,typeless);Move(gpu,typeless);KeepNear(gpu,typeless);KeepEffects(gpu,typeless);Sharpness(gpu,typeless);Lay(gpu,typeless);return 0;
+    Math();Gpu gpu;Precompiled(gpu);Turn(gpu,typeless);Move(gpu,typeless);KeepNear(gpu,typeless);KeepEffects(gpu,typeless);Rims(gpu,typeless);Sharpness(gpu,typeless);Lay(gpu,typeless);return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"%s\n",e.what());return 1;}}

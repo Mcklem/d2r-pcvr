@@ -60,7 +60,7 @@ Quest left X/Y correspond to Index left A/B; right A/B labels are the same.
 | Assign a button | Opposite hand's laser + trigger: select a wedge, then a skill |
 | Use an inventory item | Either wheel > **QUICK USE**: point with the opposite hand and briefly click its trigger; use happens on release |
 | Assign / change quick-use item | Hold the trigger over **QUICK USE** for 0.65 seconds, then select a carried scroll, tome or other usable item. An empty slot also opens the picker on a short click. **CLEAR SLOT** removes the assignment |
-| Toggle running / walking | Push the right stick up (once per push; outside wheels, and not while you look at the wrist map, which it zooms), or either wheel > **RUN / WALK**, using the opposite hand's laser + trigger |
+| Walk / run speed | VR Settings > **VR** > **Movement speed** (last row), then Apply: **Walk**; **Base run** (your class's run with no speed bonus); **Run 10%…90%** of the way up; **Full run** (the default, the full speed your gear and skills give). Saved to `[gameplay] run_speed_pct`; the game's own run / walk toggle is kept in line with it. Movement skills keep their own speed, and it never runs faster than the game. With **Stick toggle** beside it on (Off by default; `[gameplay] run_walk_toggle`), push the **right stick up** to switch between walking and that run (from Walk, the full run) |
 | Finish editing | Click the wheel hand's stick again, or select CLOSE in its center |
 | Inventory / character / skills / journal | Left Grip + left stick click; or either wheel > INVENTORY; native tabs retain their controls |
 | VR settings / body calibration | Either wheel → VR SETTINGS |

@@ -16,12 +16,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "afr_eye_shared.h"
 #include "d2r_vr_shared.h"
@@ -51,6 +53,7 @@
 #include "guard_strain_paint.h"
 #include "heartbeat.h"
 #include "wrist_compass.h"
+#include "panel_atlas.h"
 #include "map_zoom.h"
 #include "wrist_full_map.h"
 #include "interaction_paint.h"
@@ -77,6 +80,7 @@
 #include "menu_controls.h"
 #include "ui_blit.h"
 #include "turn_warp.h"
+#include "turn_capture.h"
 #include "dxgi_views.h"
 #include "scene_depth.h"
 #include "ui_world.h"
@@ -99,6 +103,7 @@ namespace gamecmd {void RequestPotion(int slot);void CancelPotion();}
 namespace gamestate {void MenuMap(bool wanted);uint32_t QuestNotices();bool NoticePanelOpen();bool NoticeText(int kind,char* out,uint32_t size);}
 namespace gamestate {bool LeftShield();bool RightThrowingPotion();uint32_t RightThrowingPotionCode();framevr::dualwield::Equipment MeleeEquipment();}
 namespace combat {float GameVolume();}
+namespace projectiles {int ObservedGait(uint64_t& at,bool* tired);void StickFullRun(bool on);}
 
 namespace framevr {
 using Microsoft::WRL::ComPtr;
@@ -173,6 +178,7 @@ std::atomic<float> turnsKeepGap{48},turnsKeepReach{96};   // ConfigureTurnsKeepN
 std::atomic<float> turnsEffectsLevel{.02f},turnsEffectsReach{32};   // ConfigureTurnsKeepEffects: the layer's level; a 4096-wide eye's pixels
 std::atomic<bool> turnsSharp{true};   // ConfigureTurnsSharp: the pictures read Catmull-Rom (TurnWarp::Sharpen)
 std::atomic<bool> turnsFill{true};    // ConfigureTurnsFill: no frame-old ghosts in the strips beside near things (TurnWarp::Fill)
+std::atomic<bool> turnsRims{true};    // ConfigureTurnsRims: the rims round things against the void go with them (TurnWarp::Rims)
 std::atomic<bool> eyeTracking{false};
 std::atomic<bool> motionControls{false};
 // Stamped each focused XR input while motion controls are on (menus included).
@@ -207,7 +213,6 @@ LatestWorker<BloodJob,BloodImage> bloodPainter([](const BloodJob& job) {
     }();
     return BloodImage{blood::Compose(patches,job.visible,job.age,job.opacity),job.visible};
 });
-XrSwapchain bloodChain=XR_NULL_HANDLE;
 uint64_t bloodPaintKey=~0ull,bloodRequestedKey=~0ull,bloodPaintRequest=0;
 uint32_t bloodShown=0; // splats in the uploaded image
 ULONGLONG bloodPaintAt=0;
@@ -219,7 +224,6 @@ struct NoticeJob {char text[256]{};};
 LatestWorker<NoticeJob,std::vector<uint8_t>> noticePainter([](const NoticeJob& job) {
     std::vector<uint8_t> pixels;notice::Paint(job.text,pixels);return pixels;
 });
-XrSwapchain noticeChain=XR_NULL_HANDLE;
 notice::Watch noticeWatch;
 notice::Cards noticeCards;
 notice::Card noticeCard;
@@ -228,6 +232,13 @@ uint64_t noticePaintRequest=0,noticeRequestedSequence=0,noticePaintedSequence=0;
 // The skill wheel's Left claw strikes box saves [gameplay] left_hand_strikes
 // itself; until the save lands (Poll, about 0.5 s) the box shows the choice made.
 uint64_t leftStrikesSequence=0,leftStrikesAt=0;float leftStrikesWanted=0;
+// VR Settings > VR > Movement speed ([gameplay] run_speed_pct): its WALK stop walks and every
+// other stop runs. The game's run / walk toggle is kept in line with it from the gait the
+// plugin sees and the stick (runspeed::GaitSync). With its Stick toggle on, right stick up
+// switches between walking and that run (runspeed::StickToggle).
+runspeed::GaitSync gaitSync;
+runspeed::StickToggle stickToggle;
+bool movementWalks=false;   // the hero should walk (this step): Movement speed's WALK, or the stick's switch
 bool noticeAtlasPending=false,noticeImageReady=false;
 // Guard strain light: soft white at the rim, directly beneath the blood. Fed by
 // the game thread's blocks and the guard tick; painted small in the background.
@@ -239,13 +250,11 @@ std::atomic<unsigned> guardBlockEvents{0},guardParryEvents{0},guardBlockWeight{0
 std::atomic<bool> guardBroken{false};   // the game thread's chip check
 std::atomic<ULONGLONG> guardStateAt{0};std::atomic<bool> guardEligible{false},guardRaised{false};
 strain::Painter strainPainter;
-XrSwapchain strainChain=XR_NULL_HANDLE;
 uint64_t strainPaintKey=~0ull,strainPaintSession=0;
 float strainShownReach[2]={1,1};   // the uploaded image's reach (guard_strain.h): its quad is the visor times this
 ULONGLONG strainPaintAt=0;
 bool strainAtlasPending=false,strainImageReady=false,strainSlotReported=false;
 // Bow path laser: its own small atlas, repainted only when its color changes.
-XrSwapchain bowLaserChain=XR_NULL_HANDLE;
 float bowLaserHue=-1;
 bool bowLaserAtlasPending=false,bowLaserImageReady=false;
 // Low-life heartbeat: its own waveOut stream, since PlaySound plays one sound
@@ -345,7 +354,16 @@ interaction::PaintContext companionPaintContext{};
 XrSwapchain compassChain=XR_NULL_HANDLE;
 compass::Heading wristHeading;
 bool compassFrame=false,compassAtlasReady=false;
-XrSwapchain settingsChain=XR_NULL_HANDLE;
+// VR Settings, the quest card, the blood visor, the strain light and the bow
+// laser share one swapchain (panelatlas): each its region of sharedMaster, a
+// plain texture their pictures are uploaded into; at the end of a frame in
+// which one of them changed the swapchain gets a copy of the whole of it.
+XrSwapchain sharedChain=XR_NULL_HANDLE;
+std::vector<XrSwapchainImageD3D12KHR> sharedImages;
+ComPtr<ID3D12Resource> sharedMaster;
+ComPtr<ID3D12CommandAllocator> sharedAllocator;
+ComPtr<ID3D12GraphicsCommandList> sharedCommands;
+uint64_t sharedFence=0;bool sharedDirty=false;
 settings::Model settingsModel;
 calibration::Flow bodyCalibration;
 calibration::ReleaseGate calibrationRelease;
@@ -551,7 +569,7 @@ XrPosef head{};
 math::Vec origin{};
 bool haveOrigin=false;
 GripStickButton leftMenuButton;
-stickgestures::Gestures rightStickGestures;   // right stick up: run / walk; down: loot labels
+stickgestures::Gestures rightStickGestures;   // right stick up: run / walk (Movement speed's Stick toggle); down: loot labels
 MenuTriggerGate menuTriggerGate;
 PressEdge inventoryButton,menuButton;
 float lastRecenter=0;
@@ -585,6 +603,19 @@ bool MapFullOn(){return settings::MapViewFull(vrsettings::Read().values[settings
 bool MapTurnOn(){return vrsettings::Read().values[settings::MapRotate]>.5f;}
 bool mapSupported=false;
 constexpr uint32_t mapSide=512;
+// The map's surface is made the first time a map shows. With OFXR Bridge
+// loaded that failed in every session it was tried (frame log, 2026-10-23 to
+// 25): one failure suspended the map for the session, the minimap gone from
+// the hand. A failure now says which step and why, and is tried again a few
+// seconds later; only the third in a session suspends the map.
+ULONGLONG mapRetryAt=0;int mapFailures=0;
+constexpr int MapAttempts=3;constexpr ULONGLONG MapRetryMs=5000;
+// SteamVR gives a session 16 swapchains. OFXR Bridge takes three more for each
+// eye's: the panels sharing them (panelatlas) leave room for all of them, but
+// should a swapchain still be refused (XR_ERROR_LIMIT_REACHED), the native
+// menus' panel and the shared panels take the map's surface, the map waits
+// while the native menus are open, and their surface goes back when they close.
+bool swapchainsShort=false,releaseUiChain=false;
 // Right-stick zoom of that map while it is looked at (map_zoom.h). wristMapShown:
 // the wrist / palm map quad went into the last frame's layers, centered at
 // wristMapCenter (interaction space, like interactionInput.head).
@@ -652,6 +683,19 @@ std::array<bool,2> layerKept{};
 ComPtr<ID3D12Resource> turnTarget;
 bool layersFailed=false;
 TurnCounts turnCounts;
+// By turns capture (turn_capture.h): armed by the stereo capture of a pair
+// while Stereo rendering is By turns, then each of the next frames by turns
+// read back after TurnEye (CaptureTurn) and written on a thread of its own.
+// TurnEye notes how it moved the eye not drawn, for the frame's sidecar.
+struct TurnCapture {
+    int left=0,frame=0;unsigned serial=0;uint64_t passes=0;
+    bool noted=false,fromDrawn=false,moved=false,reported=true;
+    TurnDepth other{},own{};std::array<float,9> turn{};
+    ComPtr<ID3D12CommandAllocator> allocator;ComPtr<ID3D12GraphicsCommandList> list;
+    ComPtr<ID3D12Resource> buffer;UINT64 size=0;
+    std::wstring folder;
+} turnCapture;
+std::atomic<int> turnCaptureWriting{0},turnCaptureWritten{0},turnCaptureFailed{0};
 std::atomic<bool> uiSupported{false};
 bool journalMode=false,spatialMode=false,workspacePlaced=false,opaqueMenuMode=false,upperBandMenuMode=false;
 bool npcChoicesMode=false;
@@ -739,6 +783,9 @@ WORD heldKeyScan=0;
 ULONGLONG keyReleaseAt=0;
 constexpr float panelWidth=2.0f,panelDistance=panels::MainDistance;
 XrSwapchain pointerChain=XR_NULL_HANDLE;
+// The pictures painted once share one static image (panelatlas): pointerChain,
+// compassChain and gameplayChain are it, or none where a picture failed.
+XrSwapchain staticChain=XR_NULL_HANDLE;
 XrPosef beamPose{},dotPose{};
 float beamLength=0;
 // 2026-10-19: one remembered push/pull for every game menu, kept as an
@@ -1233,12 +1280,32 @@ bool SetupActions() {
 }
 bool WaitGpu();
 bool WaitGpuValue(uint64_t value);
+// The hand map's surface given up for the native menus' panel or the shared
+// panels (swapchainsShort); false while this frame still holds one of its images.
+// It is made again once they close.
+bool YieldMapSurface(const char* forWhat) {
+    if(!mapEye.chain||mapEye.acquired||!WaitGpuValue(mapEye.copyFence))return false;
+    pDestroySwapchain(mapEye.chain);mapEye={};mapRetryAt=GetTickCount64()+MapRetryMs;
+    char line[160];std::snprintf(line,sizeof line,"Frame menu map: its surface given up for %s (no swapchain left); made again once there is room",forWhat);Say(line);
+    return true;
+}
+bool RecordUpload(ID3D12Resource* dest,int x,int y,int w,int h,const std::vector<uint8_t>& pixels,D3D12_RESOURCE_STATES state,AtlasStaging& staging,double& at);
+// A panel's region of its shared image, or a rect within the panel (panelatlas).
+XrRect2Di Rect(panelatlas::Region r){return {{r.x,r.y},{r.w,r.h}};}
+XrRect2Di At(panelatlas::Region r,XrRect2Di within){return {{r.x+within.offset.x,r.y+within.offset.y},within.extent};}
 bool UploadAtlas(XrSwapchain& chain,DXGI_FORMAT eyeFormat,int atlasWidth,int atlasHeight,const std::vector<uint8_t>& pixels,bool dynamic=false,bool* pending=nullptr) {
     // A tiny static atlas is independent of ReShade's effect compiler.
     XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};ci.createFlags=dynamic?0:XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT;
     ci.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     ci.format=eyeFormat;ci.width=atlasWidth;ci.height=atlasHeight;ci.sampleCount=ci.faceCount=ci.arraySize=ci.mipCount=1;
-    if(!chain&&!Check(pCreateSwapchain(session,&ci,&chain),"create atlas"))return false;
+    if(!chain) {
+        XrResult r=pCreateSwapchain(session,&ci,&chain);
+        if(r==XR_ERROR_LIMIT_REACHED) {
+            if(!swapchainsShort)Say("Frame OpenXR: no swapchain left for a panel (the runtime's limit; frame generation's bridge takes some)");
+            swapchainsShort=true;
+        }
+        if(!Check(r,"create atlas")){chain=XR_NULL_HANDLE;return false;}
+    }
     uint32_t count=0;
     if(!Check(EnumeratePanelImages(chain,0,&count,nullptr),"count static atlas images"))return false;
     std::vector<XrSwapchainImageD3D12KHR> images(count,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
@@ -1250,11 +1317,27 @@ bool UploadAtlas(XrSwapchain& chain,DXGI_FORMAT eyeFormat,int atlasWidth,int atl
     XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};wi.timeout=XR_INFINITE_DURATION;
     if(!Check(pWaitSwapchainImage(chain,&wi),"wait static atlas atlas"))return false;
     stage(atlasTiming.image);
-    auto* dest=images[index].texture;const auto desc=dest->GetDesc();
+    AtlasStaging staging;
+    if(!RecordUpload(images[index].texture,0,0,atlasWidth,atlasHeight,pixels,D3D12_RESOURCE_STATE_RENDER_TARGET,staging,at))return false;
+    if(dynamic) {
+        atlasUploads.push_back({std::move(staging),fenceValue});
+        if(pending)*pending=true;else interactionAtlasPending=true;
+        return true; // Released at EndPair, after the pair's existing GPU fence.
+    }
+    if(!WaitGpu())return false;
+    if(atlasStagingFree.size()<AtlasStagingKept)atlasStagingFree.push_back(std::move(staging));
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    return Check(pReleaseSwapchainImage(chain,&ri),"release static atlas atlas");
+}
+// `pixels` (RGBA, w x h) into dest at (x, y): a kept upload buffer (the
+// smallest that fits, else a new one, mapped for good), copied on the queue;
+// dest in `state` before and after. The staging is the caller's to keep until
+// the GPU is done with it.
+bool RecordUpload(ID3D12Resource* dest,int x,int y,int w,int h,const std::vector<uint8_t>& pixels,D3D12_RESOURCE_STATES state,AtlasStaging& staging,double& at) {
+    const auto stage=[&](double& into){const double t=Milliseconds();into+=t-at;at=t;};
+    auto desc=dest->GetDesc();desc.Width=UINT64(w);desc.Height=UINT(h);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
     device->GetCopyableFootprints(&desc,0,1,0,&footprint,nullptr,nullptr,&bytes);
-    // The smallest kept buffer that fits, else a new one, mapped for good.
-    AtlasStaging staging;
     {
         auto best=atlasStagingFree.end();
         for(auto it=atlasStagingFree.begin();it!=atlasStagingFree.end();++it)
@@ -1277,12 +1360,12 @@ bool UploadAtlas(XrSwapchain& chain,DXGI_FORMAT eyeFormat,int atlasWidth,int atl
     stage(atlasTiming.buffers);
     // Only the footprint's rows are copied, so the rest of the buffer need not be cleared.
     uint8_t* const data=staging.data;
-    const bool bgra=eyeFormat==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB||eyeFormat==DXGI_FORMAT_B8G8R8A8_UNORM;
-    for(int y=0;y<atlasHeight;++y) {
-      if(!bgra) {std::memcpy(data+footprint.Offset+y*footprint.Footprint.RowPitch,pixels.data()+y*atlasWidth*4,atlasWidth*4);continue;}
-      for(int x=0;x<atlasWidth;++x) {
-        auto* pixel=data+footprint.Offset+y*footprint.Footprint.RowPitch+x*4;
-        const auto* rgba=pixels.data()+(y*atlasWidth+x)*4;
+    const bool bgra=desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB||desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM||desc.Format==DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    for(int row=0;row<h;++row) {
+      if(!bgra) {std::memcpy(data+footprint.Offset+row*footprint.Footprint.RowPitch,pixels.data()+size_t(row)*w*4,size_t(w)*4);continue;}
+      for(int column=0;column<w;++column) {
+        auto* pixel=data+footprint.Offset+row*footprint.Footprint.RowPitch+column*4;
+        const auto* rgba=pixels.data()+(size_t(row)*w+column)*4;
         pixel[0]=rgba[bgra?2:0];pixel[1]=rgba[1];pixel[2]=rgba[bgra?0:2];pixel[3]=rgba[3];
       }
     }
@@ -1290,52 +1373,110 @@ bool UploadAtlas(XrSwapchain& chain,DXGI_FORMAT eyeFormat,int atlasWidth,int atl
     auto* list=staging.commands.Get();
     if(!Hr(staging.allocator->Reset(),"reset static atlas allocator")||!Hr(list->Reset(staging.allocator.Get(),nullptr),"reset static atlas list"))return false;
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition={dest,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_DEST};
-    list->ResourceBarrier(1,&barrier);
+    barrier.Transition={dest,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,state,D3D12_RESOURCE_STATE_COPY_DEST};
+    if(state!=D3D12_RESOURCE_STATE_COPY_DEST)list->ResourceBarrier(1,&barrier);
     D3D12_TEXTURE_COPY_LOCATION src{};src.pResource=staging.upload.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;src.PlacedFootprint=footprint;
     D3D12_TEXTURE_COPY_LOCATION dst{};dst.pResource=dest;dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    list->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
-    std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);list->ResourceBarrier(1,&barrier);
+    list->CopyTextureRegion(&dst,UINT(x),UINT(y),0,&src,nullptr);
+    std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);
+    if(state!=D3D12_RESOURCE_STATE_COPY_DEST)list->ResourceBarrier(1,&barrier);
     if(!Hr(list->Close(),"close static atlas list"))return false;
     stage(atlasTiming.record);
     ID3D12CommandList* lists[]={list};queue->ExecuteCommandLists(1,lists);
     if(!Hr(queue->Signal(fence.Get(),++fenceValue),"signal atlas fence"))return false;
     stage(atlasTiming.submit);
-    if(dynamic) {
-        atlasUploads.push_back({std::move(staging),fenceValue});
-        if(pending)*pending=true;else interactionAtlasPending=true;
-        return true; // Released at EndPair, after the pair's existing GPU fence.
-    }
-    if(!WaitGpu())return false;
-    if(atlasStagingFree.size()<AtlasStagingKept)atlasStagingFree.push_back(std::move(staging));
-    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    return Check(pReleaseSwapchainImage(chain,&ri),"release static atlas atlas");
+    return true;
 }
-bool SetupPointer(DXGI_FORMAT eyeFormat) {
+// The shared panels' swapchain and master (panelatlas), made once a session:
+// at the start, so VR Settings never waits for room.
+bool MakeShared() {
+    if(sharedChain)return true;
+    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    ci.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    ci.format=atlasFormat;ci.width=panelatlas::SharedWidth;ci.height=panelatlas::SharedHeight;ci.sampleCount=ci.faceCount=ci.arraySize=ci.mipCount=1;
+    XrResult r=pCreateSwapchain(session,&ci,&sharedChain);
+    if(r==XR_ERROR_LIMIT_REACHED) {
+        if(!swapchainsShort)Say("Frame OpenXR: no swapchain left for a panel (the runtime's limit; frame generation's bridge takes some)");
+        swapchainsShort=true;
+        if(YieldMapSurface("the shared panels"))r=pCreateSwapchain(session,&ci,&sharedChain);
+    }
+    if(!Check(r,"create shared panel atlas")){sharedChain=XR_NULL_HANDLE;return false;}
+    const auto fail=[&](const char* what){Say(what);pDestroySwapchain(sharedChain);sharedChain=XR_NULL_HANDLE;sharedImages.clear();sharedMaster.Reset();return false;};
+    uint32_t n=0;
+    if(XR_FAILED(EnumeratePanelImages(sharedChain,0,&n,nullptr))||!n)return fail("Frame panels: the shared atlas's images unavailable");
+    sharedImages.assign(n,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+    if(XR_FAILED(EnumeratePanelImages(sharedChain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(sharedImages.data()))))return fail("Frame panels: the shared atlas's images unavailable");
+    // The master as the images are (format, size): copied whole into one a frame.
+    auto desc=sharedImages[0].texture->GetDesc();desc.Flags=D3D12_RESOURCE_FLAG_NONE;
+    D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+    if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&sharedMaster)))||
+       FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&sharedAllocator)))||
+       FAILED(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,sharedAllocator.Get(),nullptr,IID_PPV_ARGS(&sharedCommands)))||
+       FAILED(sharedCommands->Close()))return fail("Frame panels: the shared atlas's master unavailable");
+    sharedFence=0;sharedDirty=false;
+    char line[200];std::snprintf(line,sizeof line,"Frame panels: one %dx%d image shared by VR Settings, the quest card, the blood visor, the strain light and the bow laser",
+        panelatlas::SharedWidth,panelatlas::SharedHeight);Say(line);
+    return true;
+}
+// A shared panel's picture into its region of the master; the swapchain gets
+// it at the frame's end (FlushShared), when `pending` is turned into ready.
+bool UploadShared(panelatlas::Region region,const std::vector<uint8_t>& pixels,bool* pending) {
+    if(pixels.size()!=size_t(region.w)*region.h*4||!MakeShared())return false;
+    double at=Milliseconds();
+    AtlasStaging staging;
+    if(!RecordUpload(sharedMaster.Get(),region.x,region.y,region.w,region.h,pixels,D3D12_RESOURCE_STATE_COPY_DEST,staging,at))return false;
+    atlasUploads.push_back({std::move(staging),fenceValue});
+    *pending=true;sharedDirty=true;
+    return true;
+}
+// This frame's new shared pictures to the swapchain: the whole master into an
+// image, released at once (after the copy, on the session's queue).
+bool FlushShared() {
+    if(!sharedDirty)return true;
+    if(!sharedChain)return false;
+    uint32_t index=0;XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    if(!Check(pAcquireSwapchainImage(sharedChain,&ai,&index),"acquire shared panel atlas"))return false;
+    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};wi.timeout=XR_INFINITE_DURATION;
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    if(!Check(pWaitSwapchainImage(sharedChain,&wi),"wait shared panel atlas")||!WaitGpuValue(sharedFence)||
+       FAILED(sharedAllocator->Reset())||FAILED(sharedCommands->Reset(sharedAllocator.Get(),nullptr))) {
+        pReleaseSwapchainImage(sharedChain,&ri);return false;
+    }
+    auto* image=sharedImages[index].texture;
+    D3D12_RESOURCE_BARRIER b[2]{};
+    for(auto& x:b){x.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;x.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;}
+    b[0].Transition.pResource=sharedMaster.Get();b[0].Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;b[0].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_SOURCE;
+    b[1].Transition.pResource=image;b[1].Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;b[1].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;
+    sharedCommands->ResourceBarrier(2,b);
+    sharedCommands->CopyResource(image,sharedMaster.Get());
+    for(auto& x:b)std::swap(x.Transition.StateBefore,x.Transition.StateAfter);
+    sharedCommands->ResourceBarrier(2,b);
+    bool ok=SUCCEEDED(sharedCommands->Close());
+    if(ok){ID3D12CommandList* lists[]={sharedCommands.Get()};queue->ExecuteCommandLists(1,lists);ok=SUCCEEDED(queue->Signal(fence.Get(),++fenceValue));}
+    if(ok)sharedFence=fenceValue;
+    ok=Check(pReleaseSwapchainImage(sharedChain,&ri),"release shared panel atlas")&&ok;
+    if(ok)sharedDirty=false;
+    return ok;
+}
+// The pointer: the beam (rows 0-31) and the dot (32-95), 64 wide.
+std::vector<uint8_t> PaintPointer() {
     std::vector<uint8_t> pixels(64*96*4);
     for(int y=0;y<96;++y)for(int x=0;x<64;++x) {
         auto* p=pixels.data()+(y*64+x)*4;p[0]=40;p[1]=210;p[2]=255;
         const float radius=std::hypot((x-31.5f)/30.f,(y-63.5f)/30.f);
         p[3]=y<32?200:uint8_t(std::clamp((1-radius)*10,0.f,1.f)*255);
     }
-    return UploadAtlas(pointerChain,eyeFormat,64,96,pixels);
+    return pixels;
 }
-// Static text atlas: allocated/uploaded once, never repainted in the frame loop.
-// Native skill icons, names and belt counts require a separate read-only UI adapter.
-bool SetupGameplay(DXGI_FORMAT eyeFormat) {
-    if(!interactionPainter.Start())Say("Frame UI: background painter unavailable; interaction artwork cannot refresh");
-    if(!bloodPainter.Start())Say("Frame blood visor: background painter unavailable; blood stays hidden");
-    if(!noticePainter.Start())Say("Frame notices: background painter unavailable; quest and level-up cards stay hidden");
-    if(!strainPainter.Start())Say("Frame guard strain: background painter unavailable; the light stays hidden");
-    if(!settingsPainter.Start())Say("Frame VR settings: background painter unavailable; VR Settings and calibration cannot be shown");
-    const auto compassPixels=compass::Paint();
-    compassAtlasReady=!compassPixels.empty()&&UploadAtlas(compassChain,eyeFormat,compass::Width,compass::Height,compassPixels);
-    if(!compassAtlasReady)Say("Frame wrist compass: static atlas unavailable");
+// Static text atlas: painted once, never repainted in the frame loop; empty if
+// GDI could not. Native skill icons, names and belt counts require a separate
+// read-only UI adapter.
+std::vector<uint8_t> PaintGameplay() {
     BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth=1024;info.bmiHeader.biHeight=-1024;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
     void* bits=nullptr;HDC dc=CreateCompatibleDC(nullptr);
     HBITMAP bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&bits,nullptr,0);
-    if(!dc||!bitmap||!bits) {if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return false;}
+    if(!dc||!bitmap||!bits) {if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return {};}
     auto old=SelectObject(dc,bitmap);std::memset(bits,0,1024*1024*4);
     auto fill=[&](RECT r,COLORREF color) {HBRUSH brush=CreateSolidBrush(color);FillRect(dc,&r,brush);DeleteObject(brush);};
     fill({0,0,1024,768},RGB(15,23,30));
@@ -1377,7 +1518,33 @@ bool SetupGameplay(DXGI_FORMAT eyeFormat) {
         rgba[4*i+3]=(b[4*i]||b[4*i+1]||b[4*i+2])?255:0;
     }
     SelectObject(dc,oldFont);DeleteObject(font);SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
-    return UploadAtlas(gameplayChain,eyeFormat,1024,1024,rgba);
+    return rgba;
+}
+// The painters' threads, and the pictures painted once into one static image
+// (panelatlas): false if it could not be made. The compass or the gameplay art
+// alone may be missing; their chains then stay none.
+bool SetupStatic(DXGI_FORMAT eyeFormat) {
+    if(!interactionPainter.Start())Say("Frame UI: background painter unavailable; interaction artwork cannot refresh");
+    if(!bloodPainter.Start())Say("Frame blood visor: background painter unavailable; blood stays hidden");
+    if(!noticePainter.Start())Say("Frame notices: background painter unavailable; quest and level-up cards stay hidden");
+    if(!strainPainter.Start())Say("Frame guard strain: background painter unavailable; the light stays hidden");
+    if(!settingsPainter.Start())Say("Frame VR settings: background painter unavailable; VR Settings and calibration cannot be shown");
+    using namespace panelatlas;
+    std::vector<uint8_t> pixels(size_t(StaticWidth)*StaticHeight*4);
+    const auto put=[&](const std::vector<uint8_t>& from,Region r) {
+        if(from.size()!=size_t(r.w)*r.h*4)return false;
+        for(int y=0;y<r.h;++y)std::memcpy(&pixels[(size_t(r.y+y)*StaticWidth+r.x)*4],&from[size_t(y)*r.w*4],size_t(r.w)*4);
+        return true;
+    };
+    put(PaintPointer(),Pointer);
+    const bool compassPainted=put(compass::Paint(),Compass),gameplayPainted=put(PaintGameplay(),Gameplay);
+    if(!UploadAtlas(staticChain,eyeFormat,StaticWidth,StaticHeight,pixels))return false;
+    pointerChain=staticChain;
+    compassAtlasReady=compassPainted;compassChain=compassPainted?staticChain:XR_NULL_HANDLE;
+    gameplayChain=gameplayPainted?staticChain:XR_NULL_HANDLE;
+    if(!compassPainted)Say("Frame wrist compass: static atlas unavailable");
+    if(!gameplayPainted)Say("Frame gameplay: palette atlas unavailable; motion controls remain disabled");
+    return true;
 }
 bool Initialize(reshade::api::command_queue* rq,reshade::api::swapchain* swap) {
     if(rq->get_device()->get_api()!=reshade::api::device_api::d3d12) { Say("Frame OpenXR requires D3D12");return false; }
@@ -1442,6 +1609,7 @@ bool Initialize(reshade::api::command_queue* rq,reshade::api::swapchain* swap) {
     {char message[128];std::snprintf(message,sizeof message,"Frame OpenXR: game format %d, eye format %d",int(format),int(eyeFormat));Say(message);}
     uiSupported=std::find(formats.begin(),formats.end(),int64_t(DXGI_FORMAT_R16G16B16A16_FLOAT))!=formats.end()&&uiBlit.Initialize(device.Get(),&Say);
     mapSupported=std::find(formats.begin(),formats.end(),int64_t(DXGI_FORMAT_R16G16B16A16_FLOAT))!=formats.end()&&mapBlit.Initialize(device.Get(),&Say);
+    mapRetryAt=0;mapFailures=0;swapchainsShort=releaseUiChain=false;
     mirrorSupported=true;
     for(auto& e:eyes) {
         XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};c.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
@@ -1464,9 +1632,9 @@ bool Initialize(reshade::api::command_queue* rq,reshade::api::swapchain* swap) {
     if(!Hr(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"create fence")) return false;
     fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     if(!fenceEvent) return false;
-    if(!SetupPointer(eyeFormat))return false;
+    if(!SetupStatic(eyeFormat))return false;
     atlasFormat=eyeFormat;
-    if(!SetupGameplay(eyeFormat))Say("Frame gameplay: palette atlas unavailable; motion controls remain disabled");
+    if(!MakeShared())Say("Frame panels: the shared atlas unavailable; VR Settings, the quest card, blood, the strain light and the bow laser stay hidden");
     potionModels.Initialize(device.Get(),queue.Get(),eyeFormat,width,height,&Say);
     turnFormat=eyeFormat;
     elementalRenderer.Initialize(device.Get(),queue.Get(),eyeFormat,width,height,&Say);
@@ -1799,7 +1967,7 @@ bool TakeSettingsPicture() {
     if(!settingsPaintRequest||settingsAtlasPending||atlasUploads.size()>=3||!settingsPainter.Take(settingsPaintRequest,painted))return false;
     settingsPaintRequest=0;
     const auto uploadStart=Milliseconds();
-    const bool uploaded=!painted.pixels.empty()&&UploadAtlas(settingsChain,atlasFormat,settings::AtlasWidth,settings::Height,painted.pixels,true,&settingsAtlasPending);
+    const bool uploaded=!painted.pixels.empty()&&UploadShared(panelatlas::Settings,painted.pixels,&settingsAtlasPending);
     static ULONGLONG reportAt=0;const auto now=GetTickCount64();
     if(uploaded&&now>=reportAt) {
         char message[160];std::snprintf(message,sizeof message,"Frame VR settings: page painted in %.2f ms on the background painter, uploaded in %.2f ms",
@@ -2237,7 +2405,8 @@ void Input() {
     handInput.occupied=interactionOutput.bottle>=0||interactionOutput.owner[0]==interaction::Owner::Holster||interactionOutput.owner[1]==interaction::Owner::Holster;
     const auto lootNow=GetTickCount64(),lootSession=gamestate::LocalPlayer();
     const bool lootWorld=motionHeadTracked&&!nativeUi&&!settingsOwned&&!settingsChord&&inWorld&&inWorld()&&lootSession;
-    // Right stick up toggles run / walk; down, held, shows the loot labels
+    // Right stick up switches run / walk with Movement speed's Stick toggle on (owned
+    // either way, so it never turns); down, held, shows the loot labels
     // (Show items, Alt). Not while a wheel is open, nor while the wrist map is
     // looked at: its zoom has the stick then (map_zoom.h). A vertical push turns nothing.
     const auto rightStick=rightStickGestures.Step(mapzoom::WorldGestures(lootWorld&&handControls.Wheel()<0,wristMapLooked),
@@ -2285,8 +2454,8 @@ void Input() {
     interactionInput.spell=motion.Selection()>=0;interactionInput.wheel=motionInput.palette;interactionInput.cancel=motionInput.cancel;
     interactionInput.quickCast=handOutput.slot>=0||handOutput.spells[0]>=0||handOutput.spells[1]>=0;
     interactionInput.wheelHand=handOutput.wheel;
-    interactionInput.runWalk=rightStick.toggleRun;
-    if(rightStick.toggleRun)Say("Frame right stick: up - run / walk toggle requested");
+    // Right stick up switches running / walking only with Movement speed's Stick toggle on
+    // (below, off by default). The push is owned either way, so it never snap-turns.
     interactionInput.reservedLeft=(controls.buttons&menus::LeftStick)!=0;interactionInput.trigger=handOutput.wheel==0?controls.lt/255.f:controls.rt/255.f;interactionInput.hover=motionInput.hover;
     const auto hudSettings=vrsettings::Read();
     interactionInput.navigationLocation=vitals::Location(int(hudSettings.values[settings::NavigationLocation]));
@@ -2297,6 +2466,19 @@ void Input() {
         leftStrikesSequence=0;   // saved, refused, or overtaken by another save: the profile's value again
     interactionInput.leftStrikes=hudSettings.ready&&bindingSnapshot.skillClass==settings::heroclass::Druid?
         int(leftStrikesSequence?leftStrikesWanted:hudSettings.values[settings::LeftHandStrikes]):-1;
+    {
+        uint64_t seenAt=0;bool tired=false;const int gait=projectiles::ObservedGait(seenAt,&tired);   // 1 walking, 2 running, 0 not seen
+        const float stick=std::min(1.f,std::hypot(float(controls.lx),float(controls.ly))/32767.f);
+        const int movement=runspeed::NormalizePercent(hudSettings.values[settings::RunSpeed]);
+        const bool stickToggles=hudSettings.ready&&hudSettings.values[settings::RunWalkToggle]>.5f;
+        movementWalks=hudSettings.ready&&stickToggle.Step(interactionInput.session,stickToggles,movement,rightStick.toggleRun);
+        projectiles::StickFullRun(stickToggle.FullRun());
+        if(stickToggles&&rightStick.toggleRun) {
+            Say(movementWalks?"Frame right stick: up - walk (Stick toggle)":"Frame right stick: up - run (Stick toggle)");
+            MotionPulse(0,haptics::Category::Interaction,.45f,45000000);
+        }
+        interactionInput.gaitToggle=gaitSync.Step(interactionInput.session,gait,seenAt,stick,movementWalks,hudSettings.ready,GetTickCount64(),tired);
+    }
     interactionInput.leftCasting=handOutput.spells[1]>=0||(handOutput.slot>=0&&handOutput.hand==1);
     interactionInput.leftTrigger=controls.lt/255.f;
     // A thrown bottle lands on the world floor in room space. Without a recent
@@ -2339,6 +2521,10 @@ void Input() {
             Say(leftStrikesWanted>.5f?"Frame wheel: left claw strikes = right trigger skill":"Frame wheel: left claw strikes = own trigger skill");
         } else interactionOutput.feedback=3;   // a save is still running: refuse, never queue a second flip
     }
+    if(interactionInput.gaitToggle&&interactionOutput.request.action==interaction::Action::RunWalk) {
+        gaitSync.Sent(movementWalks,GetTickCount64());
+        Say(movementWalks?"Frame movement: game toggle on run, walking wanted - run / walk toggled":"Frame movement: game toggle on walk, running wanted - run / walk toggled");
+    }
     StepDroppedBottles();
     // Quest / level-up notices: queue a card per message, paint the current one.
     {
@@ -2358,7 +2544,7 @@ void Input() {
         }
         std::vector<uint8_t> painted;
         if(noticePaintRequest&&!noticeAtlasPending&&atlasUploads.size()<3&&noticePainter.Take(noticePaintRequest,painted)) {
-            if(!painted.empty()&&UploadAtlas(noticeChain,atlasFormat,notice::Width,notice::Height,painted,true,&noticeAtlasPending))
+            if(!painted.empty()&&UploadShared(panelatlas::Notice,painted,&noticeAtlasPending))
                 noticePaintedSequence=noticeRequestedSequence;
             noticePaintRequest=0;
         }
@@ -2397,7 +2583,7 @@ void Input() {
         }
         BloodImage painted;
         if(bloodPaintRequest&&!bloodAtlasPending&&atlasUploads.size()<3&&bloodPainter.Take(bloodPaintRequest,painted)) {
-            if(!painted.pixels.empty()&&UploadAtlas(bloodChain,atlasFormat,blood::Size,blood::Size,painted.pixels,true,&bloodAtlasPending)) {
+            if(!painted.pixels.empty()&&UploadShared(panelatlas::Blood,painted.pixels,&bloodAtlasPending)) {
                 bloodPaintKey=bloodRequestedKey;bloodShown=painted.visible;
             }
             bloodPaintRequest=0;
@@ -2405,7 +2591,7 @@ void Input() {
     }
     // Bow path laser color (VR Settings > Combat > Bow path laser); Off keeps the last.
     if(const float hue=hudSettings.values[settings::BowLaser];hue>=0&&hue!=bowLaserHue&&!bowLaserAtlasPending&&atlasUploads.size()<3) {
-        if(UploadAtlas(bowLaserChain,atlasFormat,bowlaser::AtlasWidth,bowlaser::AtlasHeight,bowlaser::Paint(hue),true,&bowLaserAtlasPending))bowLaserHue=hue;
+        if(UploadShared(panelatlas::BowLaser,bowlaser::Paint(hue),&bowLaserAtlasPending))bowLaserHue=hue;
     }
     // Guard strain light (Unleashed shield): blocks strain the guard, light
     // creeps in from the rim; it drains with the shield lowered, or raised with
@@ -2441,7 +2627,7 @@ void Input() {
         if(strainOutput.visible) {
             strain::PaintImage painted;
             if(!strainAtlasPending&&atlasUploads.size()<3&&strainPainter.Take(painted)) {
-                if(!painted.pixels.empty()&&UploadAtlas(strainChain,atlasFormat,strain::Size,strain::Size,painted.pixels,true,&strainAtlasPending)) {
+                if(!painted.pixels.empty()&&UploadShared(panelatlas::Strain,painted.pixels,&strainAtlasPending)) {
                     strainPaintKey=painted.key;strainShownReach[0]=painted.reachX;strainShownReach[1]=painted.reachY;
                 }
             }
@@ -3221,6 +3407,7 @@ bool Begin() {
         workspacePlaced=false;uiMissingFrames=0;std::fill_n(uiCrop,4,0);
         if(book)journalPlacement.Open();
         Say(spatial?(book?"Frame panels: handheld quest log":"Frame panels: native menus in stereo world"):"Frame panels: native surface closed");
+        releaseUiChain=!spatial&&swapchainsShort;   // short of swapchains: its surface back for the map (at the frame's end)
     }
     // Rearm pointer input when story/choices change, keeping the same anchored
     // canvas. A trigger that dismisses speech must not also choose an option.
@@ -3492,8 +3679,9 @@ bool TurnEye(int i) {
     // blends it (UNORM), and then it goes to its swapchain image.
     ID3D12Resource* image=e.images[e.index].texture;
     const bool layered=layerKept[i]&&TurnTarget(image);
-    turnWarp.Sharpen(turnsSharp.load());turnWarp.Fill(turnsFill.load());
+    turnWarp.Sharpen(turnsSharp.load());turnWarp.Fill(turnsFill.load());turnWarp.Rims(turnsRims.load());
     const bool turned=turnWarp.Render(device.Get(),e.commands.Get(),turnImages[i].Get(),layered?turnTarget.Get():image,h,i,moving,fromDrawn);
+    if(turnCapture.left>0){auto& c=turnCapture;c.noted=true;c.fromDrawn=fromDrawn;c.moved=moving;c.other=other;c.own=depth;c.turn=h;}
     for(UINT k=0;k<kept;++k)std::swap(b[k].Transition.StateBefore,b[k].Transition.StateAfter);
     e.commands->ResourceBarrier(kept,b);
     if(turned&&layered) {
@@ -3538,6 +3726,165 @@ bool TurnEye(int i) {
     if(moving)++turnCounts.moved;else ++turnCounts.turned;
     if(fromDrawn)++turnCounts.drawn;
     return true;
+}
+// By turns capture: its files go next to the frame log, in
+// d2rloader\logs\turn-captures\<the time of this game's first capture> (this
+// plugin is in d2rloader\plugins): the serial starts again each game, and a
+// new game's first capture wrote over the last one's.
+std::wstring TurnCaptureFolder() {
+    HMODULE self=nullptr;wchar_t path[MAX_PATH]{};
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&TurnCaptureFolder),&self))return {};
+    const DWORD n=GetModuleFileNameW(self,path,MAX_PATH);
+    if(!n||n>=MAX_PATH)return {};
+    std::wstring folder(path,n);
+    for(int up=0;up<2;++up){const auto cut=folder.find_last_of(L"\\/");if(cut==std::wstring::npos)return {};folder.resize(cut);}
+    folder+=L"\\logs";CreateDirectoryW(folder.c_str(),nullptr);
+    folder+=L"\\turn-captures";CreateDirectoryW(folder.c_str(),nullptr);
+    static const std::wstring game=[]{SYSTEMTIME t{};GetLocalTime(&t);wchar_t b[32];
+        std::swprintf(b,32,L"\\%04u%02u%02u-%02u%02u%02u",t.wYear,t.wMonth,t.wDay,t.wHour,t.wMinute,t.wSecond);return std::wstring(b);}();
+    folder+=game;CreateDirectoryW(folder.c_str(),nullptr);
+    const DWORD a=GetFileAttributesW(folder.c_str());
+    return a!=INVALID_FILE_ATTRIBUTES&&(a&FILE_ATTRIBUTE_DIRECTORY)?folder+L"\\":std::wstring{};
+}
+std::string Utf8(const std::wstring& s) {
+    std::string out(size_t(std::max(0,WideCharToMultiByte(CP_UTF8,0,s.c_str(),int(s.size()),nullptr,0,nullptr,nullptr))),'\0');
+    if(!out.empty())WideCharToMultiByte(CP_UTF8,0,s.c_str(),int(s.size()),out.data(),int(out.size()),nullptr,nullptr);
+    return out;
+}
+void Append(std::string& s,const char* format,...) {
+    char line[512];va_list a;va_start(a,format);const int n=std::vsnprintf(line,sizeof line,format,a);va_end(a);
+    if(n>0)s.append(line,size_t(std::min(n,int(sizeof line)-1)));
+}
+// A frame's read-back texels, converted and written by WriteTurnCapture on a
+// thread of its own: the render thread only copies them out of the readback.
+struct TurnCaptureSource {std::wstring path;std::vector<uint8_t> texels;uint32_t pitch=0,width=0,height=0;DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;bool depth=false;};
+struct TurnCaptureJob {std::vector<TurnCaptureSource> sources;std::wstring textPath;std::string text;};
+bool SaveBytes(const std::wstring& path,const void* data,size_t bytes) {
+    FILE* f=_wfopen(path.c_str(),L"wb");
+    if(!f)return false;
+    const bool ok=std::fwrite(data,1,bytes,f)==bytes;
+    return std::fclose(f)==0&&ok;
+}
+void WriteTurnCapture(TurnCaptureJob job) {
+    int written=0,lost=0;
+    for(auto& s:job.sources) {
+        bool ok=false;
+        if(s.depth) {
+            const auto depth=turncapture::Depths(s.texels.data(),s.pitch,s.width,s.height,turncapture::DepthOf(s.format));
+            ok=SaveBytes(s.path,depth.data(),depth.size()*sizeof(float));
+        } else {
+            auto bgr=turncapture::Bgr(s.texels.data(),s.pitch,s.width,s.height,s.format);
+            ok=turncapture::SavePng(s.path.c_str(),bgr,s.width,s.height);
+        }
+        s.texels={};
+        ++(ok?written:lost);
+    }
+    ++(SaveBytes(job.textPath,job.text.data(),job.text.size())?written:lost);
+    turnCaptureWritten+=written;turnCaptureFailed+=lost;--turnCaptureWriting;
+}
+// By turns capture, after TurnEye turned `turned`: both eyes as they go to
+// the headset, the drawn eye's picture as the warp read it (kept by Copy) and
+// its depth. Read back now: the frame waits for the GPU, so exclude these
+// frames from performance comparison.
+void CaptureTurn(int turned) {
+    auto& c=turnCapture;
+    const int frame=c.frame++,drawn=turned^1;--c.left;
+    char line[1024];
+    const auto skip=[&](const char* why){std::snprintf(line,sizeof line,"Frame capture: by turns frame %d of %d not recorded - %s",frame,turncapture::Frames,why);Say(line);};
+    if(c.folder.empty())c.folder=TurnCaptureFolder();
+    if(c.folder.empty()){skip("no folder beside the frame log");return;}
+    if(!eyes[0].acquired||!eyes[1].acquired){skip("an eye was not in its swapchain image");return;}
+    constexpr auto readable=D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    struct Source {ID3D12Resource* resource;D3D12_RESOURCE_STATES state;std::string name;bool depth;};
+    std::vector<Source> sources;
+    for(int i=0;i<2;++i)sources.push_back({eyes[i].images[eyes[i].index].texture,D3D12_RESOURCE_STATE_RENDER_TARGET,turncapture::Name(c.serial,frame,i,i==drawn?"drawn":"turned","png"),false});
+    if(turnKept[drawn]&&turnImages[drawn])sources.push_back({turnImages[drawn].Get(),D3D12_RESOURCE_STATE_COMMON,turncapture::Name(c.serial,frame,drawn,"kept","png"),false});
+    if(turnDepths[drawn].ok&&turnDepths[drawn].texture)sources.push_back({turnDepths[drawn].texture.Get(),readable,turncapture::Name(c.serial,frame,drawn,"depth","bin"),true});
+    const size_t n=sources.size();
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> at(n);std::vector<D3D12_RESOURCE_DESC> descs(n);
+    UINT64 total=0;
+    for(size_t k=0;k<n;++k) {
+        descs[k]=sources[k].resource->GetDesc();
+        if(sources[k].depth?turncapture::DepthOf(descs[k].Format)==turncapture::Depth::None:!turncapture::Readable(descs[k].Format)) {
+            char why[96];std::snprintf(why,sizeof why,"format %d of %s is not read back",int(descs[k].Format),sources[k].name.c_str());skip(why);return;
+        }
+        UINT rows=0;UINT64 rowBytes=0,bytes=0;
+        device->GetCopyableFootprints(&descs[k],0,1,0,&at[k],&rows,&rowBytes,&bytes);
+        at[k].Offset=total;
+        total=(total+bytes+D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT-1)/D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT*D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
+    }
+    if(!c.buffer||c.size<total) {
+        c.buffer.Reset();c.size=0;
+        D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC r{};r.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;r.Width=total;r.Height=1;r.DepthOrArraySize=1;r.MipLevels=1;
+        r.SampleDesc.Count=1;r.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if(!Hr(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&r,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&c.buffer)),"create turn capture readback")){skip("no readback buffer");return;}
+        c.size=total;
+    }
+    if(!c.list&&(!Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&c.allocator)),"create turn capture allocator")||
+                 !Hr(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,c.allocator.Get(),nullptr,IID_PPV_ARGS(&c.list)),"create turn capture list")||
+                 !Hr(c.list->Close(),"close new turn capture list"))){c.list.Reset();skip("no command list");return;}
+    if(!Hr(c.allocator->Reset(),"reset turn capture allocator")||!Hr(c.list->Reset(c.allocator.Get(),nullptr),"reset turn capture list")){skip("no command list");return;}
+    std::vector<D3D12_RESOURCE_BARRIER> b(n);
+    for(size_t k=0;k<n;++k){b[k].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b[k].Transition={sources[k].resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,sources[k].state,D3D12_RESOURCE_STATE_COPY_SOURCE};}
+    c.list->ResourceBarrier(UINT(n),b.data());
+    for(size_t k=0;k<n;++k) {
+        D3D12_TEXTURE_COPY_LOCATION to{},from{};
+        to.pResource=c.buffer.Get();to.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;to.PlacedFootprint=at[k];
+        from.pResource=sources[k].resource;from.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;from.SubresourceIndex=0;   // a depth's plane 0
+        c.list->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+    }
+    for(auto& x:b)std::swap(x.Transition.StateBefore,x.Transition.StateAfter);
+    c.list->ResourceBarrier(UINT(n),b.data());
+    if(!Hr(c.list->Close(),"close turn capture list")){skip("no command list");return;}
+    const double start=Milliseconds();
+    ID3D12CommandList* lists[]={c.list.Get()};queue->ExecuteCommandLists(1,lists);
+    if(!Hr(queue->Signal(fence.Get(),++fenceValue),"signal turn capture")||!WaitGpu()){failed=true;skip("the GPU did not finish");return;}
+    const double waited=Milliseconds()-start;
+    void* mapped=nullptr;const D3D12_RANGE range{0,SIZE_T(total)};
+    if(!Hr(c.buffer->Map(0,&range,&mapped),"map turn capture readback")){skip("the readback did not map");return;}
+    TurnCaptureJob job;
+    for(size_t k=0;k<n;++k) {
+        const auto& f=at[k].Footprint;const auto* rows=static_cast<const uint8_t*>(mapped)+at[k].Offset;
+        TurnCaptureSource s{c.folder+std::wstring(sources[k].name.begin(),sources[k].name.end()),{},f.RowPitch,f.Width,f.Height,descs[k].Format,sources[k].depth};
+        s.texels.assign(rows,rows+size_t(f.RowPitch)*f.Height);
+        job.sources.push_back(std::move(s));
+    }
+    const D3D12_RANGE none{0,0};c.buffer->Unmap(0,&none);
+    if(c.left<=0){c.buffer.Reset();c.size=0;}
+    // The frame's warp, to replay it (turn_warp.h's TurnDepth): `drawn` moved
+    // the drawn eye's picture across, `own` this eye's older one.
+    auto& t=job.text;
+    const auto pose=[&](const char* what,const XrPosef& p,const XrFovf& v){
+        Append(t,"%s position %.6f %.6f %.6f orientation %.7f %.7f %.7f %.7f fov %.6f %.6f %.6f %.6f\n",what,
+            p.position.x,p.position.y,p.position.z,p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w,v.angleLeft,v.angleRight,v.angleDown,v.angleUp);};
+    const auto floats=[&](const char* what,const float* v,int count){Append(t,"%s",what);for(int k=0;k<count;++k)Append(t," %.7g",v[k]);t+='\n';};
+    const auto fov=[&](const char* what,const math::Fov& v){Append(t,"%s %.6f %.6f %.6f %.6f\n",what,v.left,v.right,v.down,v.up);};
+    Append(t,"serial %u frame %d pass %llu drawn %s turned %s\n",c.serial,frame,(unsigned long long)c.passes,drawn?"right":"left",drawn?"left":"right");
+    Append(t,"size %llu %u colour format %d depth format %d (read as %d) depth scale %.4f %.4f upm %.4f\n",(unsigned long long)descs[0].Width,descs[0].Height,int(descs[0].Format),
+        int(turnDepths[drawn].format),sources.back().depth?int(descs.back().Format):0,turnDepths[drawn].scale[0],turnDepths[drawn].scale[1],stageWorld.upm);
+    pose("view left",views[0].pose,views[0].fov);pose("view right",views[1].pose,views[1].fov);
+    pose("turned eye's own picture drawn at",lastEyes[turned].pose,lastEyes[turned].fov);
+    floats("turn homography",c.turn.data(),9);
+    Append(t,"noted %d from drawn %d moved %d\n",int(c.noted),int(c.fromDrawn),int(c.moved));
+    Append(t,"drawn near %.6g apart %.6g keep %.3g keepNear %.3g keepReach %.3g keepEffects %.3g scale %.4f %.4f\n",c.other.nearPlane,c.other.apart,c.other.keep,
+        c.other.keepNear,c.other.keepReach,c.other.keepEffects,c.other.scale[0],c.other.scale[1]);
+    floats("drawn move",c.other.move.data(),12);fov("drawn drawnFov",c.other.drawnFov);fov("drawn nowFov",c.other.nowFov);
+    Append(t,"own near %.6g reach %.6g %.6g\n",c.own.nearPlane,c.own.reach[0],c.own.reach[1]);
+    floats("own move",c.own.move.data(),12);floats("own carry",c.own.carry.data(),12);fov("own drawnFov",c.own.drawnFov);fov("own nowFov",c.own.nowFov);
+    Append(t,"settings keep_own %d sharp %d fill %d rims %d\n",turnsKeepOwn.load(),int(turnsSharp.load()),int(turnsFill.load()),int(turnsRims.load()));
+    Append(t,"files: PNGs 24-bit as shown (sRGB bytes); depth .bin float32 little-endian, width x height rows from the top, reverse-Z (distance = near / depth, world units), 0 sky\n");
+    job.textPath=c.folder+[&]{const auto s=turncapture::Sidecar(c.serial,frame);return std::wstring(s.begin(),s.end());}();
+    const auto& l=views[0];const auto& r=views[1];
+    std::snprintf(line,sizeof line,"Frame capture: by turns frame %d of %d (pass %llu) drew %s, turned %s (from the drawn eye %d, moved %d); left %.4f %.4f %.4f fov %.4f %.4f %.4f %.4f; right %.4f %.4f %.4f fov %.4f %.4f %.4f %.4f; "
+        "apart %.2f cm (upm %.2f); keep_own %d, sharp %d, fill %d, rims %d; waited %.1f ms for the GPU (diagnostic pause, exclude from performance comparison) -> %s",
+        frame,turncapture::Frames,(unsigned long long)c.passes,drawn?"right":"left",drawn?"left":"right",int(c.fromDrawn),int(c.moved),
+        l.pose.position.x,l.pose.position.y,l.pose.position.z,l.fov.angleLeft,l.fov.angleRight,l.fov.angleDown,l.fov.angleUp,
+        r.pose.position.x,r.pose.position.y,r.pose.position.z,r.fov.angleLeft,r.fov.angleRight,r.fov.angleDown,r.fov.angleUp,
+        stageWorld.upm>0?c.other.apart/stageWorld.upm*100:0.f,stageWorld.upm,turnsKeepOwn.load(),int(turnsSharp.load()),int(turnsFill.load()),int(turnsRims.load()),waited,Utf8(c.folder).c_str());
+    Say(line);
+    ++turnCaptureWriting;
+    try{std::thread(WriteTurnCapture,std::move(job)).detach();}catch(...){--turnCaptureWriting;skip("no thread to write it");}
 }
 bool Copy(ID3D12Resource* src,Eye& e,reshade::api::command_queue* rq) {
     // The runtime orders images on our bound D3D12 queue. Our allocator has a
@@ -3632,22 +3979,54 @@ bool Copy(ID3D12Resource* src,Eye& e,reshade::api::command_queue* rq) {
 }
 bool CopyMap(reshade::api::command_queue* rq) {
     if(!mapSupported||mapEye.copied||!interaction::MapWanted(interactionInput,interactionOutput,GetTickCount64()))return true;
+    if(swapchainsShort&&spatialMode)return true;   // the native menus' panel may need its surface: no map while they are open
     uint32_t w=0,h=0;
     bool fullMap=false;float drawnZoom=0;   // Map view = Full map: the share is the full map's box, drawn at that game zoom
     auto* src=reinterpret_cast<ID3D12Resource*>(hud::MapTexture(w,h,&fullMap,&drawnZoom));
     if(!src||!w||!h)return true; // No current map; never display the last area's texture.
     auto& e=mapEye;
     if(!e.chain) {
-        XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};c.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        if(GetTickCount64()<mapRetryAt)return true;   // after a failure: again a little later
+        // A step that failed: what and why, the half-made surface gone; true, as the eyes' copies go on.
+        const auto failed=[&](const char* step,long code) {
+            if(e.chain)pDestroySwapchain(e.chain);
+            e={};
+            char line[200];
+            std::snprintf(line,sizeof line,"Frame menu map: %s failed (%ld)%s",step,code,
+                          ++mapFailures<MapAttempts?"; trying again in 5 s":"; optional map suspended");
+            Say(line);
+            if(mapFailures>=MapAttempts)mapSupported=false;else mapRetryAt=GetTickCount64()+MapRetryMs;
+            return true;
+        };
+        // The UI panel's usage, which OFXR Bridge has always let through.
+        XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};c.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
         c.format=DXGI_FORMAT_R16G16B16A16_FLOAT;c.width=c.height=mapSide;c.sampleCount=c.faceCount=c.arraySize=c.mipCount=1;
-        if(XR_FAILED(pCreateSwapchain(session,&c,&e.chain)))return false;
-        uint32_t n=0;
-        if(XR_FAILED(EnumeratePanelImages(e.chain,0,&n,nullptr))||!n)return false;
+        if(const XrResult r=pCreateSwapchain(session,&c,&e.chain);XR_FAILED(r)) {
+            e.chain=XR_NULL_HANDLE;
+            if(r!=XR_ERROR_LIMIT_REACHED)return failed("creating its swapchain",long(r));
+            // No swapchain left (swapchainsShort): no fault of the map's; again later, however often.
+            if(!swapchainsShort)Say("Frame OpenXR: no swapchain left for a panel (the runtime's limit; frame generation's bridge takes some)");
+            swapchainsShort=true;mapRetryAt=GetTickCount64()+MapRetryMs;
+            static ULONGLONG toldAt=0;
+            if(GetTickCount64()>=toldAt){toldAt=GetTickCount64()+60000;Say("Frame menu map: no swapchain left for its surface; trying again every 5 s");}
+            return true;
+        }
+        // Its images below the bridge as the other panels' (EnumeratePanelImages); should that
+        // list refuse it, through the bridge as before the panels went below it.
+        auto list=EnumeratePanelImages;
+        uint32_t n=0;XrResult r=list(e.chain,0,&n,nullptr);
+        if((XR_FAILED(r)||!n)&&runtimeEnumerateImages) {
+            char line[160];std::snprintf(line,sizeof line,"Frame menu map: its images below OFXR Bridge refused (%ld); listed through it instead",long(r));Say(line);
+            list=pEnumerateSwapchainImages;n=0;r=list(e.chain,0,&n,nullptr);
+        }
+        if(XR_FAILED(r)||!n)return failed("counting its images",long(r));
         e.images.resize(n,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-        if(XR_FAILED(EnumeratePanelImages(e.chain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(e.images.data()))))return false;
-        if(FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&e.allocator)))||
-           FAILED(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,e.allocator.Get(),nullptr,IID_PPV_ARGS(&e.commands)))||FAILED(e.commands->Close()))return false;
-        Say("Frame menu map: 512x512 GPU surface ready; native explored map shared by both eyes");
+        if(const XrResult got=list(e.chain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(e.images.data()));XR_FAILED(got))return failed("listing its images",long(got));
+        if(const HRESULT hr=device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&e.allocator));FAILED(hr))return failed("its command allocator",long(hr));
+        if(const HRESULT hr=device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,e.allocator.Get(),nullptr,IID_PPV_ARGS(&e.commands));FAILED(hr))return failed("its command list",long(hr));
+        if(const HRESULT hr=e.commands->Close();FAILED(hr))return failed("closing its command list",long(hr));
+        Say(mapFailures?"Frame menu map: 512x512 GPU surface ready after a failed try; native explored map shared by both eyes":
+                        "Frame menu map: 512x512 GPU surface ready; native explored map shared by both eyes");
     }
     if(!Acquire(e)||!WaitGpuValue(e.copyFence))return false;
     rq->flush_immediate_command_list();
@@ -3707,7 +4086,14 @@ bool CopyUi(reshade::api::command_queue* rq) {
     if(!e.chain) {
         XrSwapchainCreateInfo c{XR_TYPE_SWAPCHAIN_CREATE_INFO};c.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
         c.format=DXGI_FORMAT_R16G16B16A16_FLOAT;c.width=w;c.height=h;c.sampleCount=c.faceCount=c.arraySize=c.mipCount=1;
-        if(XR_FAILED(pCreateSwapchain(session,&c,&e.chain))) {uiSupported=false;Say("Frame panels: UI format unavailable; native menu retained");return true;}
+        XrResult r=pCreateSwapchain(session,&c,&e.chain);
+        if(r==XR_ERROR_LIMIT_REACHED) {   // no swapchain left (swapchainsShort): the map's, else again next frame
+            if(!swapchainsShort)Say("Frame OpenXR: no swapchain left for a panel (the runtime's limit; frame generation's bridge takes some)");
+            swapchainsShort=true;
+            if(YieldMapSurface("the native menus"))r=pCreateSwapchain(session,&c,&e.chain);
+            if(r==XR_ERROR_LIMIT_REACHED){e.chain=XR_NULL_HANDLE;return true;}   // the flat menu this frame
+        }
+        if(XR_FAILED(r)){e.chain=XR_NULL_HANDLE;uiSupported=false;Say("Frame panels: UI format unavailable; native menu retained");return true;}
         uint32_t n=0;EnumeratePanelImages(e.chain,0,&n,nullptr);e.images.resize(n,{XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
         if(XR_FAILED(EnumeratePanelImages(e.chain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(e.images.data()))))return false;
         if(FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&e.allocator)))||
@@ -3876,6 +4262,14 @@ void ConfigureTurnsFill(bool on) {
     static std::atomic<int> read{-1};   // as ConfigureTurnsKeepOwn: only a change of the ini's own value overrides the DEV switch
     if(read.exchange(on?1:0)!=(on?1:0))SetTurnsFill(on);
 }
+void SetTurnsRims(bool on) {
+    if(turnsRims.exchange(on)!=on)Say(on?"Frame OpenXR: by turns - the rims round things against the sky go with them":"Frame OpenXR: by turns - the rims round things against the sky stay with the sky");
+}
+bool TurnsRims() {return turnsRims.load();}
+void ConfigureTurnsRims(bool on) {
+    static std::atomic<int> read{-1};   // as ConfigureTurnsKeepOwn: only a change of the ini's own value overrides the DEV switch
+    if(read.exchange(on?1:0)!=(on?1:0))SetTurnsRims(on);
+}
 void ConfigureTurnsSharp(bool on) {
     static std::atomic<int> read{-1};   // as ConfigureTurnsKeepOwn: only a change of the ini's own value overrides the DEV switch
     if(read.exchange(on?1:0)!=(on?1:0))SetTurnsSharp(on);
@@ -3967,6 +4361,14 @@ void BeginPair(bool byTurns,bool replay) {
         if(Active()&&!byTurns&&!replayPair&&(captureRequested.exchange(false)||d2rcam::TakeLabelCapture())) {
             capturePair=true;captureEyes=0;++captureSerial;
             Say("Frame capture: recording one stereo pair (readback pause is diagnostic, exclude from performance comparison)");
+            // By turns: the frames by turns after this pair as well (CaptureTurn)
+            if(mode==1&&turnCaptureWriting.load()>0)Say("Frame capture: by turns - the last capture is still being written; this one is the pair only");
+            else if(mode==1) {
+                auto& c=turnCapture;c.left=turncapture::Frames;c.frame=0;c.passes=0;c.serial=captureSerial;c.noted=false;c.reported=false;
+                turnCaptureWritten=0;turnCaptureFailed=0;
+                char line[200];std::snprintf(line,sizeof line,"Frame capture: by turns - then the next %d frames by turns, both eyes as they go to the headset (each waits for the GPU: exclude them from performance comparison)",turncapture::Frames);
+                Say(line);
+            }
         }
     } else profile::SkipPair();
 }
@@ -3983,6 +4385,19 @@ void EndPair() {
     int turned=-1;
     if(turn&&render&&valid&&!panelMode&&!failed)
         for(int i=0;i<2;++i)if(!eyes[i].copied&&eyes[i^1].copied&&TurnEye(i))turned=i;
+    // [debug] capture_pair by turns: the frames by turns after the pair; a
+    // pair drawn between (moving, a menu) only counts as a pass.
+    if(turnCapture.left>0) {
+        auto& c=turnCapture;++c.passes;
+        if(turn&&turned>=0&&!failed)CaptureTurn(turned);
+        c.noted=false;
+        if(c.left>0&&c.passes>900){c.left=0;c.buffer.Reset();c.size=0;Say("Frame capture: by turns - stopped, no more frames by turns came (a menu, or moving)");}
+    }
+    if(!turnCapture.reported&&turnCapture.left<=0&&turnCaptureWriting.load()==0) {
+        turnCapture.reported=true;
+        char line[640];std::snprintf(line,sizeof line,"Frame capture: by turns - %d files written, %d failed, in %s",turnCaptureWritten.load(),turnCaptureFailed.load(),Utf8(turnCapture.folder).c_str());
+        Say(line);
+    }
     // All image writes and state restoration have been submitted on the queue
     // bound to xrCreateSession. OpenXR orders its work after those commands;
     // it does not require a CPU completion wait before xrReleaseSwapchainImage.
@@ -4027,9 +4442,19 @@ void EndPair() {
     }
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};ei.displayTime=frameState.predictedDisplayTime;ei.environmentBlendMode=XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     std::array<const XrCompositionLayerBaseHeader*,32> layers{};uint32_t count=0;
-    if(settingsAtlasPending){
-        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        settingsImageReady=Check(pReleaseSwapchainImage(settingsChain,&release),"release settings atlas");settingsAtlasPending=false;
+    // The shared panels' pictures uploaded this frame, all in one copy (panelatlas).
+    if(sharedDirty) {
+        const bool flushed=FlushShared();
+        for(auto* p:{&settingsAtlasPending,&bloodAtlasPending,&strainAtlasPending,&bowLaserAtlasPending,&noticeAtlasPending})if(*p) {
+            *p=false;
+            if(p==&settingsAtlasPending)settingsImageReady=flushed;else if(p==&bloodAtlasPending)bloodImageReady=flushed;
+            else if(p==&strainAtlasPending)strainImageReady=flushed;else if(p==&bowLaserAtlasPending)bowLaserImageReady=flushed;else noticeImageReady=flushed;
+        }
+    }
+    // The native menus closed short of swapchains: their surface goes back for the map.
+    if(releaseUiChain&&!spatialMode&&uiEye.chain&&!uiEye.acquired&&WaitGpu()) {
+        pDestroySwapchain(uiEye.chain);uiEye={};releaseUiChain=false;
+        Say("Frame panels: the native menus' surface given back while closed (no swapchain to spare)");
     }
     if(interactionAtlasPending) {
         XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -4038,22 +4463,6 @@ void EndPair() {
     if(companionAtlasPending) {
         XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         companionPaintValid=Check(pReleaseSwapchainImage(companionChain,&release),"release companion atlas")&&companionPaintValid;companionAtlasPending=false;
-    }
-    if(bloodAtlasPending) {
-        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        bloodImageReady=Check(pReleaseSwapchainImage(bloodChain,&release),"release blood visor");bloodAtlasPending=false;
-    }
-    if(strainAtlasPending) {
-        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        strainImageReady=Check(pReleaseSwapchainImage(strainChain,&release),"release guard strain light");strainAtlasPending=false;
-    }
-    if(bowLaserAtlasPending) {
-        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        bowLaserImageReady=Check(pReleaseSwapchainImage(bowLaserChain,&release),"release bow laser");bowLaserAtlasPending=false;
-    }
-    if(noticeAtlasPending) {
-        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        noticeImageReady=Check(pReleaseSwapchainImage(noticeChain,&release),"release notice card");noticeAtlasPending=false;
     }
     // Tabbed, trade and waypoint menus use the same black background in both eyes.
     // Submit just their shared opaque quad: no different cached world per eye.
@@ -4144,12 +4553,12 @@ void EndPair() {
             }
             auto compassPose=interaction::NavigationCompassPanel(interactionInput.hand[1],interactionInput.head,palm,withVitals,footer);
             motionQuad(wristCompass,interactionPose(compassPose),interaction::WristCompassWidth,interaction::WristCompassHeight,
-                {{compass::Crop(wristHeading.bearing),0},{compass::Window,compass::StripHeight}},compassChain);
+                At(panelatlas::Compass,{{compass::Crop(wristHeading.bearing),0},{compass::Window,compass::StripHeight}}),compassChain);
             constexpr float markerWidth=interaction::WristCompassWidth*compass::MarkerWidth/compass::Window;
             constexpr float markerHeight=interaction::WristCompassHeight*compass::MarkerHeight/compass::StripHeight;
             compassPose.p=compassPose.p+math::Rotate(compassPose.q,{0,(interaction::WristCompassHeight-markerHeight)*.5f,.001f});
             motionQuad(compassMarker,interactionPose(compassPose),markerWidth,markerHeight,
-                {{0,compass::StripHeight},{compass::MarkerWidth,compass::MarkerHeight}},compassChain);
+                At(panelatlas::Compass,{{0,compass::StripHeight},{compass::MarkerWidth,compass::MarkerHeight}}),compassChain);
             if(locationReady)motionQuad(navigationInfo,interactionPose(interaction::NavigationInfoPanel(
                 interactionInput.hand[1],interactionInput.head,palm,withVitals,footer)),interaction::NavigationInfoWidth,interaction::NavigationInfoHeight,
                 {{navigation::AtlasX,navigation::AtlasY},{navigation::Width,navigation::Height}},interactionChain);
@@ -4198,12 +4607,12 @@ void EndPair() {
     // The quest / level-up card stays where it came up, like the native
     // dialogue surfaces; opaque menus and VR Settings hold it back.
     XrCompositionLayerQuad noticeQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    if(noticeImageReady&&noticeChain&&noticeCard.kind>=0&&noticePaintedSequence==noticeCard.sequence&&
+    if(noticeImageReady&&sharedChain&&noticeCard.kind>=0&&noticePaintedSequence==noticeCard.sequence&&
        layer&&!panelMode&&!blackMenu&&!settingsModel.open&&!bodyCalibration.Active()) {
         if(noticeCard.place)noticePlacement=notice::Place(V(head.position),Q(head.orientation));
         const auto before=count;
         motionQuad(noticeQuad,XrPose({noticePlacement.position,noticePlacement.orientation}),notice::PanelWidth,notice::PanelHeight,
-            {{0,0},{notice::Width,notice::Height}},noticeChain);
+            Rect(panelatlas::Notice),sharedChain);
         if(count>before){noticeCards.Shown(GetTickCount64());noticeCard.place=false;}
     }
     static bool sewerHintWasShown=false;
@@ -4224,7 +4633,7 @@ void EndPair() {
         // correlated with compositor pose errors; omit it on this path.
         if(!skel::MotionBowPosed()&&!motionOutput.bowDrawing) {
             const float size=motionOutput.bowInReach?.045f:.025f;
-            motionQuad(nock,XrPose({center,Q(head.orientation)}),size,size,{{0,32},{64,64}},pointerChain);
+            motionQuad(nock,XrPose({center,Q(head.orientation)}),size,size,At(panelatlas::Pointer,{{0,32},{64,64}}),pointerChain);
         }
         const int hint=motionOutput.bowDrawing?(motionOutput.bowCharged?2:1):0;
         motionQuad(bowHint,XrPose({bow.p+math::Vec{0,-.25f,0},Q(head.orientation)}),.24f,.045f,
@@ -4247,8 +4656,8 @@ void EndPair() {
             const auto before=count;
             using namespace bowlaser;
             motionQuad(bowLaser,XrPose({mid,orient}),.004f,path.length,
-                path.floor?XrRect2Di{{0,SteadyY},{AtlasWidth,SteadyHeight}}:XrRect2Di{{0,FadeY},{AtlasWidth,FadeHeight}},bowLaserChain);
-            if(path.floor)motionQuad(bowLaserEnd,XrPose({path.end,Q(head.orientation)}),.05f,.05f,{{0,DotY},{DotSize,DotSize}},bowLaserChain);
+                At(panelatlas::BowLaser,path.floor?XrRect2Di{{0,SteadyY},{AtlasWidth,SteadyHeight}}:XrRect2Di{{0,FadeY},{AtlasWidth,FadeHeight}}),sharedChain);
+            if(path.floor)motionQuad(bowLaserEnd,XrPose({path.end,Q(head.orientation)}),.05f,.05f,At(panelatlas::BowLaser,{{0,DotY},{DotSize,DotSize}}),sharedChain);
             bowLaserShown=count>before;bowLaserLength=path.length;bowLaserFloor=path.floor;
         }
     }
@@ -4277,14 +4686,14 @@ void EndPair() {
         auto pose=settingsPose;
         const auto shift=math::Rotate(Q(pose.orientation),{(fullWidth-settingsWidth)*.5f,0,0});
         pose.position.x+=shift.x;pose.position.y+=shift.y;pose.position.z+=shift.z;
-        motionQuad(settingsPanel,pose,fullWidth,settingsHeight,{{0,0},{pixels,settings::Height}},settingsChain);
+        motionQuad(settingsPanel,pose,fullWidth,settingsHeight,At(panelatlas::Settings,{{0,0},{pixels,settings::Height}}),sharedChain);
     }
     XrCompositionLayerQuad laser{XR_TYPE_COMPOSITION_LAYER_QUAD},dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     if(layer&&(settingsModel.open||panelMode||spatialMode||(interactionVisible&&interactionOutput.wheel))&&pointerChain&&pointerVisible) {
         // The pointer needs the same finite-pose checks and normalization as
         // every other optional layer: one bad laser must not hide the menu.
-        motionQuad(laser,beamPose,.003f,beamLength,{{0,0},{64,32}},pointerChain);
-        if(pointerHit)motionQuad(dot,dotPose,.018f,.018f,{{0,32},{64,64}},pointerChain);
+        motionQuad(laser,beamPose,.003f,beamLength,At(panelatlas::Pointer,{{0,0},{64,32}}),pointerChain);
+        if(pointerHit)motionQuad(dot,dotPose,.018f,.018f,At(panelatlas::Pointer,{{0,32},{64,64}}),pointerChain);
     }
     // Head-locked blood: VIEW space, with a bounded angular size so large render
     // frusta cannot push the rim out of sight. It goes directly above
@@ -4300,7 +4709,7 @@ void EndPair() {
             bloodQuad.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT|XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             bloodQuad.space=headSpace;bloodQuad.eyeVisibility=XR_EYE_VISIBILITY_BOTH;
             bloodQuad.pose.orientation.w=1;bloodQuad.pose.position.z=-blood::VisorDistance;bloodQuad.size={width,height};
-            bloodQuad.subImage.swapchain=bloodChain;bloodQuad.subImage.imageRect={{0,0},{blood::Size,blood::Size}};
+            bloodQuad.subImage.swapchain=sharedChain;bloodQuad.subImage.imageRect=Rect(panelatlas::Blood);
             const uint32_t below=count&&layers[0]==layer?1:0;
             for(uint32_t i=count;i>below;--i)layers[i]=layers[i-1];
             layers[below]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&bloodQuad);++count;
@@ -4323,14 +4732,14 @@ void EndPair() {
             strainQuad.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT|XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
             strainQuad.space=headSpace;strainQuad.eyeVisibility=XR_EYE_VISIBILITY_BOTH;
             strainQuad.pose.orientation.w=1;strainQuad.pose.position.z=-blood::VisorDistance;strainQuad.size={extent.width,extent.height};
-            strainQuad.subImage.swapchain=strainChain;strainQuad.subImage.imageRect={{0,0},{strain::Size,strain::Size}};
+            strainQuad.subImage.swapchain=sharedChain;strainQuad.subImage.imageRect=Rect(panelatlas::Strain);
             const uint32_t below=count&&layers[0]==layer?1:0;
             for(uint32_t i=count;i>below;--i)layers[i]=layers[i-1];
             layers[below]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&strainQuad);++count;
         }
     }
     XrCompositionLayerQuad winePadding{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    if(padQuads&&composition::PrependQuadPadding(layers.data(),count,capacity,winePadding,headSpace,pointerChain)) {
+    if(padQuads&&composition::PrependQuadPadding(layers.data(),count,capacity,winePadding,headSpace,pointerChain,{panelatlas::Pointer.x,panelatlas::Pointer.y+32})) {
         static bool reported=false;
         if(!reported){Say("Frame OpenXR: transparent quad prefix prevents Wine mixed-layer allocation overlap");reported=true;}
     }
@@ -4866,24 +5275,21 @@ void Shutdown(bool preserveResolution) {
     settingsModel.Close();settingsOpen=false;settingsInputGate.Suspend();settingsPainted={};settingsAtlasPending=settingsImageReady=false;
     settingsPaintRequest=0;settingsRequested={};
     bodyCalibration.Cancel();calibrationRelease={};calibrationPrompted=floorSpace=false;calibrationSession=0;calibrationPaintKey=calibrationRequestedKey=-1;
-    if(settingsChain&&pDestroySwapchain)pDestroySwapchain(settingsChain);settingsChain=XR_NULL_HANDLE;
+    if(sharedChain&&pDestroySwapchain)pDestroySwapchain(sharedChain);sharedChain=XR_NULL_HANDLE;
+    sharedImages.clear();sharedMaster.Reset();sharedCommands.Reset();sharedAllocator.Reset();sharedFence=0;sharedDirty=false;
     atlasUploads.clear();atlasStagingFree.clear();interactionPaintKey=~0ull;interactionPrefetchSession=0;interactionPrefetchRevision=~0u;interactions.Reset();interactionstate::Cancel();
     interactionPaintRequest=0;interactionRequestedKey=~0ull;interactionPaintValid=false;interactionPaintContext={};interactionRequestedContext={};interactionPaintAt=0;
     if(interactionChain&&pDestroySwapchain)pDestroySwapchain(interactionChain);interactionChain=XR_NULL_HANDLE;
     if(companionChain&&pDestroySwapchain)pDestroySwapchain(companionChain);companionChain=XR_NULL_HANDLE;
     companionAtlasPending=companionPaintValid=false;companionPaintContext={};
-    if(compassChain&&pDestroySwapchain)pDestroySwapchain(compassChain);compassChain=XR_NULL_HANDLE;wristHeading.Reset();compassFrame=compassAtlasReady=false;
-    if(gameplayChain&&pDestroySwapchain)pDestroySwapchain(gameplayChain);gameplayChain=XR_NULL_HANDLE;
-    if(bloodChain&&pDestroySwapchain)pDestroySwapchain(bloodChain);bloodChain=XR_NULL_HANDLE;
+    compassChain=XR_NULL_HANDLE;wristHeading.Reset();compassFrame=compassAtlasReady=false;   // staticChain, below
+    gameplayChain=XR_NULL_HANDLE;
     bloodScreen.Reset();bloodOutput={};bloodShown=0;bloodPaintKey=bloodRequestedKey=~0ull;bloodPaintRequest=0;bloodPaintAt=0;bloodAtlasPending=bloodImageReady=false;
-    if(strainChain&&pDestroySwapchain)pDestroySwapchain(strainChain);strainChain=XR_NULL_HANDLE;
-    if(bowLaserChain&&pDestroySwapchain)pDestroySwapchain(bowLaserChain);bowLaserChain=XR_NULL_HANDLE;
     bowLaserHue=-1;bowLaserAtlasPending=bowLaserImageReady=false;
-    if(noticeChain&&pDestroySwapchain)pDestroySwapchain(noticeChain);noticeChain=XR_NULL_HANDLE;
     noticeWatch={};noticeCards.Clear();noticeCard={};noticePaintRequest=noticeRequestedSequence=noticePaintedSequence=0;noticeAtlasPending=noticeImageReady=false;
     heartStream.Stop();heartPlaying=false;heartLevel.Reset();heartAt=0;heartHush.Reset();heartHealth=-1;
     guardStrain.Reset();strainOutput={};strainPaintKey=~0ull;strainPaintSession=0;strainPaintAt=0;strainAtlasPending=strainImageReady=strainSlotReported=false;
-    if(pointerChain&&pDestroySwapchain)pDestroySwapchain(pointerChain);pointerChain=XR_NULL_HANDLE;
+    if(staticChain&&pDestroySwapchain)pDestroySwapchain(staticChain);staticChain=pointerChain=XR_NULL_HANDLE;
     if(aimSpace&&pDestroySpace)pDestroySpace(aimSpace);aimSpace=XR_NULL_HANDLE;
     if(leftAimSpace&&pDestroySpace)pDestroySpace(leftAimSpace);leftAimSpace=XR_NULL_HANDLE;
     if(gazeSpace&&pDestroySpace)pDestroySpace(gazeSpace);gazeSpace=XR_NULL_HANDLE;
@@ -4893,6 +5299,7 @@ void Shutdown(bool preserveResolution) {
     mirrorSupported=mirrorMono=false;
     turnFrame=keepTurns=keepDepth=false;lastEyes={};viewBase={{{0,0,0,1},{0,0,0,1}}};viewWorld={};turnDepths={};turnCounts={};turnImages={};turnKept={};turnImagesFailed=turnWarpTried=false;turnWarp={};
     turnLayers={};layerKept={};turnTarget.Reset();layersFailed=false;
+    turnCapture.left=0;turnCapture.buffer.Reset();turnCapture.size=0;turnCapture.list.Reset();turnCapture.allocator.Reset();
     for(auto& s:handSpaces){if(s&&pDestroySpace)pDestroySpace(s);s=XR_NULL_HANDLE;}
     if(headSpace&&pDestroySpace)pDestroySpace(headSpace);if(space&&pDestroySpace)pDestroySpace(space);
     if(session&&pDestroySession)pDestroySession(session);if(actionSet&&pDestroyActionSet)pDestroyActionSet(actionSet);

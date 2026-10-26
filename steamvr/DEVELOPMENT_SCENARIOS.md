@@ -81,7 +81,8 @@ Open either hand's wheel and choose **DEV**. Its tabs are grouped by purpose:
 - **Character:** level 10, 30, 60 and 90 presets; heal life/mana; unlock quests and
   waypoints; a **Throwing potions** kit (one stack each of Rancid, Choking and
   Strangling Gas and Oil, Exploding and Fulminating Potion, to equip in the right
-  hand and throw; on this page as Equipment is full).
+  hand and throw), **By turns rims** and **Sky over rims** (all on this page
+  as Equipment is full).
 - **Equipment:** starter primary/alternate gear, class unique primary/alternate
   gear, crossbow + bolts, bow + arrows, a small shield, **Render debug draws**,
   **By turns own picture**, **By turns filter**, **By turns ghosts**, a **Throwing kit** and a **Potion kit** (four Super
@@ -211,6 +212,27 @@ in front of a wall a few metres away, and the edges of things while you
 strafe: with OLD a frame-old copy of the monster can trail beside it in one
 eye. The button shows the current state, and the frame log records each
 switch. It changes no saved setting.
+
+## By turns rims
+
+Select **DEV > Character > By turns rims** to switch, for the session, the
+dark rim the game draws round anything against the sky: **MOVED** with it
+(the default, `[stereo] turns_rims=1`) or **OLD** (0), left with the sky.
+In By turns, look at hut roofs, treetops and far buildings against the sky,
+for example in Kurast Docks: with OLD a dark, ragged outline stands a few
+pixels off each of them and flickers; with MOVED only the thin rim of Both
+eyes stays. The button shows the current state, and the frame log records
+each switch. It changes no saved setting.
+
+## Sky over rims
+
+Select **DEV > Character > Sky over rims** to switch, for the session,
+whether the sky is painted over that rim itself (`[sky] cover_rims`, **ON**
+by default) or the rim stays (**OFF**). It works in both stereo modes: with
+ON roofs, treetops and far buildings meet the sky without the thin dark
+outline (a pixel thinner), and By turns has no rim left to move. The button
+shows the current state, and the frame log records each switch. It changes
+no saved setting.
 
 ## Locations
 

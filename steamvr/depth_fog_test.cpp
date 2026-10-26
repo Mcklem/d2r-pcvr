@@ -46,6 +46,7 @@ static uint fixture;
 #define CeilOn (samples[fixture].flags.y != 0)
 #define FogOn (samples[fixture].flags.z != 0)
 #define UpsideDown (samples[fixture].flags.w != 0)
+#define SkyOverRims (samples[fixture].colour.w != 0)   // the colour's alpha is otherwise unused
 #define FogColor samples[fixture].fog.rgb
 #define FogStrength samples[fixture].fog.w
 #define BUFFER_RCP_WIDTH (1.0 / 1024.0)
@@ -151,6 +152,17 @@ int main(int argc,char** argv) {try {
         // At this ray angle the far surface is above the synthetic ceiling.
         // The existing ceiling-cut path preserves bright effects over its stone.
         else add("ceiling-cut bright effect preservation unchanged",s,{1.1f,1.1f,1.1f});
+    }
+    // The game's dark rim round a roof against the sky: no depth, one neighbour
+    // drawn. The sky goes over it (SkyOverRims); a light edge stays over the sky;
+    // off, the rim stays as it was; a hole in far ground (three drawn) stays fogged.
+    for(unsigned edge=0;edge<4;++edge) {
+        s={};s.flags[0]=1;s.colour={.08f,.08f,.08f,1};s.edges={0,0,0,0};s.edges[edge]=.01f;
+        add("dark rim beside a roof against the sky takes the sky",s,{.1f,.1f,.1f});
+        s.colour={.08f,.08f,.08f,0};add("sky over rims off: the rim stays",s,{.08f,.08f,.08f});
+        s.colour={.9f,.9f,.9f,1};add("a light edge beside geometry stays over the sky",s,{1,1,1});
+        s={};s.flags[0]=1;s.colour={.08f,.08f,.08f,1};s.edges={.0005f,.0005f,.0005f,.0005f};s.edges[edge]=0;
+        add("a hole in far ground with three drawn beside it stays fogged",s,{0,0,0});
     }
     // A continuous wing crosses columns with unrelated near/far/no ground below.
     // Its native colour must match the same effect over a nearby pillar, rather

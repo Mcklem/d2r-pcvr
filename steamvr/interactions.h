@@ -252,6 +252,8 @@ struct Snapshot {
     int devTurnsKeepOwn=0;   // [stereo] turns_keep_own as it stands (DEV switch): 0 off, 1 near things, 2 everywhere
     bool devTurnsSharp=false;   // [stereo] turns_sharp as it stands (DEV switch)
     bool devTurnsFill=false;    // and turns_fill
+    bool devTurnsRims=false;    // and turns_rims
+    bool devSkyRims=false;      // and [sky] cover_rims
     int devClass=-1,skillClass=-1;
     uint64_t session=0,at=0;
     uint32_t revision=0,activeSet=0;
@@ -302,7 +304,7 @@ inline bool Fresh(const Snapshot& s,uint64_t session,uint64_t now) {
     return session&&s.session==session&&now>=s.at&&now-s.at<=650;
 }
 enum class Action { None, Potion, Equip, Quest, Map, Character, Skills, BindSkill, Developer, FeedMerc, BindItem, UseItem, RunWalk };
-enum class Result { None, Pending, Applied, Refused, Cancelled, Dispatched, KitRefused, DebugUpdated, TurnsUpdated, SharpUpdated, FillUpdated };
+enum class Result { None, Pending, Applied, Refused, Cancelled, Dispatched, KitRefused, DebugUpdated, TurnsUpdated, SharpUpdated, FillUpdated, RimsUpdated, SkyRimsUpdated };
 struct Request {
     Action action=Action::None;
     uint64_t sequence=0,session=0,at=0;
@@ -345,9 +347,9 @@ struct MenuBounds {
     float left,top,right,bottom;
     bool Contains(float u,float v) const {return u>left&&u<right&&v>top&&v<bottom;}
 };
-constexpr int QuickUseCell=210,RunWalkCell=211,LeftStrikesCell=212;
+constexpr int QuickUseCell=210,LeftStrikesCell=212;   // 211 was RUN / WALK, 213 the movement slider (now VR Settings > VR > Movement speed)
 constexpr double QuickEditHold=.65;
-constexpr MenuBounds QuickUseBounds{.025f,.025f,.255f,.18f},RunWalkBounds{.76f,.025f,.975f,.13f};
+constexpr MenuBounds QuickUseBounds{.025f,.025f,.255f,.18f};
 // Druid: the left claw's strike skill, [gameplay] left_hand_strikes. Lower left,
 // above the ACTIVE line (y 637) and clear of the hand wheel's 216-degree label.
 constexpr MenuBounds LeftStrikesBounds{.025f,.72f,.235f,.82f};
@@ -397,7 +399,6 @@ inline int WheelCell(float u,float v,int previous=-1,MenuPage page=MenuPage::Spe
     for(int i=0;i<FooterCount(page,developer);++i)if(FooterBounds(i,page,developer).Contains(u,v))return FooterCell(i,page);
     if(QuickControls(page)) {
         if(QuickUseBounds.Contains(u,v))return QuickUseCell;
-        if(RunWalkBounds.Contains(u,v))return RunWalkCell;
         if(leftStrikes&&LeftStrikesBounds.Contains(u,v))return LeftStrikesCell;
     }
     if(page==MenuPage::Map)return -1; // no invisible spells behind the map
@@ -446,7 +447,7 @@ struct Input {
     double time=0;
     uint64_t session=0,epoch=0,at=0; // at shares the native snapshot's monotonic clock
     bool active=false,tracked[2]{},wheel=false,cancel=false,reservedLeft=false,spell=false,quickCast=false;
-    bool runWalk=false;   // right stick pushed up this step: toggle running / walking
+    bool gaitToggle=false;   // the game's run / walk toggle is the other way than the hero should go (Movement speed's WALK or a run stop, or the stick's switch): send it
     int leftStrikes=-1;   // Druid: [gameplay] left_hand_strikes for the wheel's box (0 own trigger, 1 same as right); -1 hides it
     vitals::Location navigationLocation=vitals::Location::Wrist;
     vitals::Location vitalsLocation=vitals::Location::Wrist;
@@ -669,7 +670,7 @@ public:
         if(in.cancel) {quickPressed=false;Drop();flight={};rearm=true;wheelLatch=true;pending={};out.cancelPending=true;editor=0;map=developer=false;editSlot=-1;}
         if(pending.action!=Action::None) {
             if(in.reply.sequence==pending.sequence&&in.reply.session==session&&in.reply.result!=Result::Pending) {
-                result=in.reply.result;resultAt=in.time;out.feedback=(result==Result::Applied||result==Result::Dispatched||result==Result::DebugUpdated||result==Result::TurnsUpdated||result==Result::SharpUpdated||result==Result::FillUpdated)?2:3;
+                result=in.reply.result;resultAt=in.time;out.feedback=(result==Result::Applied||result==Result::Dispatched||result==Result::DebugUpdated||result==Result::TurnsUpdated||result==Result::SharpUpdated||result==Result::FillUpdated||result==Result::RimsUpdated||result==Result::SkyRimsUpdated)?2:3;
                 out.feedbackHand=pendingHand;
                 if(result==Result::Applied&&pending.action==Action::Equip)stowed=false;
                 if(result==Result::Applied&&pending.action==Action::Potion&&pending.item==held.item)consumed=true;
@@ -711,11 +712,9 @@ public:
         if(shoulder.swap&&request(Action::Equip,3-int(in.snapshot.activeSet))){
             pendingHand=dominant;out.feedback=1;out.feedbackHand=dominant;
         }
-        // Right stick up: the wheel's RUN / WALK without opening it.
-        if(in.runWalk&&!wheel) {
-            if(fresh&&request(Action::RunWalk,0)){pendingHand=0;out.feedback=1;out.feedbackHand=0;}
-            else {out.feedback=3;out.feedbackHand=0;}
-        }
+        // VR Settings > Movement speed: WALK walks, every other stop runs. When the game's
+        // toggle is the other way, its own run / walk command (no tick).
+        if(in.gaitToggle&&fresh&&request(Action::RunWalk,0))pendingHand=0;
         if(wheel) {
             out.wheel=true;out.utility=utility;out.map=map;out.hover=in.hover;out.block=true;out.leftStrikes=in.leftStrikes;
             owner[0]=owner[1]=Owner::Wheel;
@@ -745,10 +744,6 @@ public:
                         const auto* assigned=in.snapshot.quick.Find(quickPressedCode);
                         quickPressedItem=assigned?assigned->item:Item{};
                     } else out.feedback=3;
-                } else if(QuickControls(Page())&&in.hover==RunWalkCell) {
-                    if(fresh)request(Action::RunWalk,0);else out.feedback=3;
-                    pendingHand=in.wheelHand>=0?1-in.wheelHand:0;
-                    wheelLatch=true;out.wheel=false;rearm=true;
                 } else if(QuickControls(Page())&&in.hover==LeftStrikesCell) {
                     // A local setting, not a game command: the wheel stays open to show it.
                     if(in.leftStrikes>=0){out.toggleLeftStrikes=true;out.feedback=1;}else out.feedback=3;
