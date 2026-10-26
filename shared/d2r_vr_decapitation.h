@@ -135,6 +135,45 @@ inline std::vector<uint8_t> BuildDescendantMask(int count, const std::vector<int
     return mask;
 }
 
+// 4x4 matrix helpers for exact rigid kinematics (Granny 3D row-vector convention: v' = v * M)
+struct Mat4 {
+    float m[16] = {};
+
+    static Mat4 Identity() {
+        Mat4 r{};
+        r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0f;
+        return r;
+    }
+};
+
+inline Mat4 Mul4(const Mat4& a, const Mat4& b) {
+    Mat4 r{};
+    for (int i = 0; i < 4; ++i) {
+        for (int k = 0; k < 4; ++k) {
+            for (int j = 0; j < 4; ++j) {
+                r.m[i * 4 + j] += a.m[i * 4 + k] * b.m[k * 4 + j];
+            }
+        }
+    }
+    return r;
+}
+
+// Rigid inverse of 4x4 affine row-vector matrix: M^-1 = [ R^T, 0 ; -T * R^T, 1 ]
+inline Mat4 RigidInverse(const Mat4& a) {
+    Mat4 inv{};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            inv.m[r * 4 + c] = a.m[c * 4 + r];
+        }
+    }
+    inv.m[15] = 1.0f;
+    const float tx = a.m[12], ty = a.m[13], tz = a.m[14];
+    inv.m[12] = -(tx * inv.m[0] + ty * inv.m[4] + tz * inv.m[8]);
+    inv.m[13] = -(tx * inv.m[1] + ty * inv.m[5] + tz * inv.m[9]);
+    inv.m[14] = -(tx * inv.m[2] + ty * inv.m[6] + tz * inv.m[10]);
+    return inv;
+}
+
 // Collapses head and descendant bones into the neck pivot point (clean stump cut).
 // Matrix16 requires float m[16] row-vector layout (standard Granny 3D world pose).
 template <typename Matrix16>
@@ -173,7 +212,7 @@ inline void CollapseHeadBones(Matrix16* worldPoses, int boneCount,
     }
 }
 
-// Simulates 3D ballistic trajectory, floor bounces, horizontal drag, and tumbling rotation.
+// Simulates 3D ballistic trajectory, multi-phase floor bounces, horizontal drag, surface roll, and tumbling rotation.
 inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
                                 float floorY, const float spinAxis[3], float spinSpeed,
                                 float outPos[3], float outRot[9]) {
@@ -186,18 +225,20 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
     const float disc1 = v0[1] * v0[1] + 2.0f * g * h0;
     const float t1 = (v0[1] + std::sqrt(std::max(0.0f, disc1))) / g;
 
-    // First bounce: restitution e = 0.35
-    constexpr float e = 0.35f;
-    const float v1 = -(v0[1] - g * t1);
-    const float vBounce1 = std::max(0.0f, v1 * e);
+    // First bounce: restitution e1 = 0.42
+    constexpr float e1 = 0.42f;
+    const float vImp1 = std::sqrt(std::max(0.0f, disc1)); // downward velocity at impact
+    const float vBounce1 = std::max(0.0f, vImp1 * e1);
     const float dtBounce1 = (2.0f * vBounce1) / g;
     const float t2 = t1 + dtBounce1;
 
-    // Second bounce
-    const float vBounce2 = vBounce1 * e;
+    // Second bounce: restitution e2 = 0.35
+    constexpr float e2 = 0.35f;
+    const float vBounce2 = vBounce1 * e2;
     const float dtBounce2 = (2.0f * vBounce2) / g;
     const float t3 = t2 + dtBounce2;
 
+    // Vertical position calculation
     float py = groundY;
     if (t < t1) {
         py = p0[1] + v0[1] * t - 0.5f * g * t * t;
@@ -212,21 +253,70 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
     }
     py = std::max(groundY, py);
 
-    // Horizontal travel with exponential damping / ground friction
-    constexpr float mu = 2.5f;
-    const float hFactor = (1.0f - std::exp(-mu * t)) / mu;
-    const float px = p0[0] + v0[0] * hFactor;
-    const float pz = p0[2] + v0[2] * hFactor;
+    // Multi-phase horizontal trajectory:
+    // Phase 1 (in air: t < t1): very low air drag (mu_air = 0.25)
+    constexpr float muAir = 0.25f;
+    const float dist1 = (std::fabs(muAir) > 1e-4f) ? (1.0f - std::exp(-muAir * t1)) / muAir : t1;
+    const float v1x = v0[0] * std::exp(-muAir * t1) * 0.72f; // ground friction at impact 1
+    const float v1z = v0[2] * std::exp(-muAir * t1) * 0.72f;
+
+    // Phase 2 (hop 1: t1 <= t < t2)
+    const float dt1 = t2 - t1;
+    const float dist2 = (std::fabs(muAir) > 1e-4f) ? (1.0f - std::exp(-muAir * dt1)) / muAir : dt1;
+    const float v2x = v1x * std::exp(-muAir * dt1) * 0.65f; // ground friction at impact 2
+    const float v2z = v1z * std::exp(-muAir * dt1) * 0.65f;
+
+    // Phase 3 (hop 2: t2 <= t < t3)
+    const float dt2 = t3 - t2;
+    const float dist3 = (std::fabs(muAir) > 1e-4f) ? (1.0f - std::exp(-muAir * dt2)) / muAir : dt2;
+    const float v3x = v2x * std::exp(-muAir * dt2) * 0.60f; // velocity entering ground roll
+    const float v3z = v2z * std::exp(-muAir * dt2) * 0.60f;
+
+    float px = p0[0];
+    float pz = p0[2];
+
+    if (t < t1) {
+        const float f = (1.0f - std::exp(-muAir * t)) / muAir;
+        px += v0[0] * f;
+        pz += v0[2] * f;
+    } else if (t < t2) {
+        const float tb = t - t1;
+        const float f = (1.0f - std::exp(-muAir * tb)) / muAir;
+        px += v0[0] * dist1 + v1x * f;
+        pz += v0[2] * dist1 + v1z * f;
+    } else if (t < t3) {
+        const float tb = t - t2;
+        const float f = (1.0f - std::exp(-muAir * tb)) / muAir;
+        px += v0[0] * dist1 + v1x * dist2 + v2x * f;
+        pz += v0[2] * dist1 + v1z * dist2 + v2z * f;
+    } else {
+        // Phase 4 (ground rolling until natural rest: mu_roll = 1.6)
+        constexpr float muRoll = 1.6f;
+        const float tb = t - t3;
+        const float f = (1.0f - std::exp(-muRoll * tb)) / muRoll;
+        px += v0[0] * dist1 + v1x * dist2 + v2x * dist3 + v3x * f;
+        pz += v0[2] * dist1 + v1z * dist2 + v2z * dist3 + v3z * f;
+    }
 
     outPos[0] = px;
     outPos[1] = py;
     outPos[2] = pz;
 
-    // Angular rotation around spinAxis: angle = spinSpeed * min(t, t3 + 0.5f)
-    const float rotTime = std::min(t, t3 + 0.5f);
-    const float angle = spinSpeed * rotTime;
-    const float c = std::cos(angle);
-    const float s = std::sin(angle);
+    // Dynamic angular rotation:
+    // In air: free tumble (spinSpeed * t)
+    // On ground: rolling smoothly matching floor travel
+    float totalAngle = 0.0f;
+    if (t < t3) {
+        totalAngle = spinSpeed * t;
+    } else {
+        const float rollTime = (1.0f - std::exp(-1.6f * (t - t3))) / 1.6f;
+        const float rollSpeed = std::hypot(v3x, v3z);
+        const float rollDist = rollSpeed * rollTime;
+        totalAngle = spinSpeed * t3 + (rollDist / r);
+    }
+
+    const float c = std::cos(totalAngle);
+    const float s = std::sin(totalAngle);
     const float k = 1.0f - c;
     const float x = spinAxis[0], y = spinAxis[1], z = spinAxis[2];
 
@@ -243,11 +333,6 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
     outRot[8] = c + z * z * k;
 }
 
-struct ChildBoneState {
-    float offset[3] = {};       // P_child,0 - P_head,0 in model space
-    float initialRot[9] = {};    // 3x3 orientation of child bone
-};
-
 // State of an active decapitated monster instance
 struct DecapInstance {
     uintptr_t skeletonInstance = 0;
@@ -259,8 +344,8 @@ struct DecapInstance {
     std::vector<uint8_t> inHead;
     float neckPivot[3] = {};
     float headInitialPos[3] = {};
-    float headInitialRot[9] = {};
-    std::vector<ChildBoneState> childBones;
+    Mat4 headInitialMat{};
+    std::vector<Mat4> childLocalTransforms;
     float velocity[3] = {};
     float spinAxis[3] = {0.0f, 1.0f, 0.0f};
     float spinSpeed = 0.0f;
@@ -301,23 +386,20 @@ public:
         inst.headPhysics = headPhysics;
 
         if (impulse && (std::fabs(impulse[0]) > 1e-4f || std::fabs(impulse[2]) > 1e-4f)) {
-            float hx = impulse[0], hz = impulse[2];
-            float hlen = std::hypot(hx, hz);
-            if (hlen > 1e-4f) { hx /= hlen; hz /= hlen; }
-            inst.velocity[0] = hx * 0.85f;
-            inst.velocity[1] = 1.20f; // realistic upward pop
-            inst.velocity[2] = hz * 0.85f;
+            inst.velocity[0] = impulse[0];
+            inst.velocity[1] = (impulse[1] > 0.5f) ? impulse[1] : 1.8f;
+            inst.velocity[2] = impulse[2];
         } else {
-            inst.velocity[0] = 0.6f;
-            inst.velocity[1] = 1.20f;
-            inst.velocity[2] = 0.6f;
+            inst.velocity[0] = 1.6f;
+            inst.velocity[1] = 1.8f;
+            inst.velocity[2] = 1.6f;
         }
 
         const float vLenSq = inst.velocity[0] * inst.velocity[0] + inst.velocity[2] * inst.velocity[2];
         if (vLenSq > 1e-4f) {
             const float vLen = std::sqrt(vLenSq);
             inst.spinAxis[0] = -inst.velocity[2] / vLen;
-            inst.spinAxis[1] = 0.35f;
+            inst.spinAxis[1] = 0.25f;
             inst.spinAxis[2] = inst.velocity[0] / vLen;
             const float sLen = std::hypot(inst.spinAxis[0], std::hypot(inst.spinAxis[1], inst.spinAxis[2]));
             if (sLen > 1e-4f) {
@@ -328,7 +410,7 @@ public:
         } else {
             inst.spinAxis[0] = 0.0f; inst.spinAxis[1] = 1.0f; inst.spinAxis[2] = 0.0f;
         }
-        inst.spinSpeed = 6.0f;
+        inst.spinSpeed = 8.5f;
 
         instances_[self] = std::move(inst);
         return true;
@@ -377,25 +459,19 @@ public:
                 inst.headInitialPos[1] = worldPoses[head].m[13];
                 inst.headInitialPos[2] = worldPoses[head].m[14];
 
-                for (int r = 0; r < 3; ++r) {
-                    for (int c = 0; c < 3; ++c) {
-                        inst.headInitialRot[r * 3 + c] = worldPoses[head].m[r * 4 + c];
-                    }
+                for (int k = 0; k < 16; ++k) {
+                    inst.headInitialMat.m[k] = worldPoses[head].m[k];
                 }
 
-                inst.childBones.resize(boneCount);
+                Mat4 invHead = RigidInverse(inst.headInitialMat);
+                inst.childLocalTransforms.resize(boneCount);
+
                 const size_t n = std::min<size_t>(static_cast<size_t>(boneCount), inst.inHead.size());
                 for (size_t i = 0; i < n; ++i) {
                     if (inst.inHead[i] && int(i) != head) {
-                        inst.childBones[i].offset[0] = worldPoses[i].m[12] - inst.headInitialPos[0];
-                        inst.childBones[i].offset[1] = worldPoses[i].m[13] - inst.headInitialPos[1];
-                        inst.childBones[i].offset[2] = worldPoses[i].m[14] - inst.headInitialPos[2];
-
-                        for (int r = 0; r < 3; ++r) {
-                            for (int c = 0; c < 3; ++c) {
-                                inst.childBones[i].initialRot[r * 3 + c] = worldPoses[i].m[r * 4 + c];
-                            }
-                        }
+                        Mat4 childMat;
+                        for (int k = 0; k < 16; ++k) childMat.m[k] = worldPoses[i].m[k];
+                        inst.childLocalTransforms[i] = Mul4(childMat, invHead);
                     }
                 }
             }
@@ -424,44 +500,33 @@ public:
                             inst.spinAxis, inst.spinSpeed, headPos, headRot);
 
         if (inst.headBone >= 0 && inst.headBone < boneCount) {
-            // Apply rigid tumble rotation to head bone: M_new = M_initial * R_tumble
-            auto& headMat = worldPoses[inst.headBone];
+            // Build 4x4 tumble rotation matrix
+            Mat4 rotMat = Mat4::Identity();
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 3; ++c) {
-                    headMat.m[r * 4 + c] = inst.headInitialRot[r * 3 + 0] * headRot[0 * 3 + c] +
-                                          inst.headInitialRot[r * 3 + 1] * headRot[1 * 3 + c] +
-                                          inst.headInitialRot[r * 3 + 2] * headRot[2 * 3 + c];
+                    rotMat.m[r * 4 + c] = headRot[r * 3 + c];
                 }
             }
-            headMat.m[12] = headPos[0];
-            headMat.m[13] = headPos[1];
-            headMat.m[14] = headPos[2];
-            headMat.m[15] = 1.0f;
 
-            // Child bones (jaw, horns, eyes, snout) follow head rigidly without any deformation
+            // Head world matrix: M_head(t) = M_initial * R_tumble + translation headPos
+            Mat4 newHeadMat = Mul4(inst.headInitialMat, rotMat);
+            newHeadMat.m[12] = headPos[0];
+            newHeadMat.m[13] = headPos[1];
+            newHeadMat.m[14] = headPos[2];
+            newHeadMat.m[15] = 1.0f;
+
+            for (int k = 0; k < 16; ++k) {
+                worldPoses[inst.headBone].m[k] = newHeadMat.m[k];
+            }
+
+            // Emparent all descendant bones (jaw, horns, eyes, snout) strictly to newHeadMat
+            // M_child(t) = M_child_local * M_head(t) -> guarantees zero mesh deformation
             const size_t n = std::min<size_t>(static_cast<size_t>(boneCount), inst.inHead.size());
             for (size_t i = 0; i < n; ++i) {
-                if (int(i) != inst.headBone && inst.inHead[i] && i < inst.childBones.size()) {
-                    auto& childMat = worldPoses[i];
-                    const auto& cb = inst.childBones[i];
-
-                    // Rotate child relative offset by headRot
-                    const float dRotX = cb.offset[0] * headRot[0] + cb.offset[1] * headRot[3] + cb.offset[2] * headRot[6];
-                    const float dRotY = cb.offset[0] * headRot[1] + cb.offset[1] * headRot[4] + cb.offset[2] * headRot[7];
-                    const float dRotZ = cb.offset[0] * headRot[2] + cb.offset[1] * headRot[5] + cb.offset[2] * headRot[8];
-
-                    childMat.m[12] = headPos[0] + dRotX;
-                    childMat.m[13] = headPos[1] + dRotY;
-                    childMat.m[14] = headPos[2] + dRotZ;
-                    childMat.m[15] = 1.0f;
-
-                    // Rotate child orientation: M_child_new = M_child_initial * R_tumble
-                    for (int r = 0; r < 3; ++r) {
-                        for (int c = 0; c < 3; ++c) {
-                            childMat.m[r * 4 + c] = cb.initialRot[r * 3 + 0] * headRot[0 * 3 + c] +
-                                                   cb.initialRot[r * 3 + 1] * headRot[1 * 3 + c] +
-                                                   cb.initialRot[r * 3 + 2] * headRot[2 * 3 + c];
-                        }
+                if (int(i) != inst.headBone && inst.inHead[i] && i < inst.childLocalTransforms.size()) {
+                    Mat4 childWorld = Mul4(inst.childLocalTransforms[i], newHeadMat);
+                    for (int k = 0; k < 16; ++k) {
+                        worldPoses[i].m[k] = childWorld.m[k];
                     }
                 }
             }

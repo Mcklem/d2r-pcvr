@@ -108,26 +108,26 @@ struct D2RVR_GoreQueue {
 
 ## 4. Detalles de Implementación de los Subsistemas
 
-### 4.1. Decapitación Esquelética en Granny 3D, Físicas 3D Rígidas y Muñón Limpio (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
+### 4.1. Decapitación Esquelética en Granny 3D, Físicas 3D Rígidas y Cinemática sin Deformación (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
 - **Hook en tiempo real:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
 - **Cinemática Rígida de la Cabeza Cercenada (Cero Deformación):**
-  - Anteriormente, multiplicar la rotación de volteo a la izquierda ($R \cdot M_{\text{initial}}$) aplicaba la rotación en el espacio local del hueso, distorsionando el cráneo al no coincidir los ejes, y la ausencia de seguimiento de huesos hijos (mandíbula, cuernos, ojos) desarticulaba la cara.
-  - **Corrección matemática en convención de vectores fila de Granny / DirectX ($v' = v \cdot M$):**
-    $$M_{\text{head, rot}} = M_{\text{initial, rot}} \cdot R_{\text{tumble}}$$
-    Multiplicar a la derecha aplica la rotación en el espacio de modelo/mundo del monstruo de forma matemáticamente exacta y ortonormal.
-  - **Emparentamiento rígido de huesos descendientes (mandíbula, cuernos, ojos, morro):**
-    $$\mathbf{P}'_{\text{child}} = \mathbf{P}'_{\text{head}} + \Delta \mathbf{P}_0 \cdot R_{\text{tumble}}$$
-    $$M'_{\text{child, rot}} = M_{\text{child, 0, rot}} \cdot R_{\text{tumble}}$$
-    donde $\Delta \mathbf{P}_0 = \mathbf{P}_{\text{child}, 0} - \mathbf{P}_{\text{head}, 0}$. Esto asegura invariancia métrica absoluta ($|\mathbf{P}'_{\text{child}} - \mathbf{P}'_{\text{head}}| = \text{constante}$ con error $<10^{-6}$), preservando la morfología exacta de la cabeza durante todo el vuelo balístico, rebotes y reposo en el suelo.
+  - Anteriormente, multiplicar la rotación de volteo con la transpuesta ($R^T$) en las posiciones relativas mientras las orientaciones se multiplicaban por $R$ provocaba que los huesos hijos (mandíbula, dientes, cuernos, ojos) se invirtiesen hacia atrás, desgarrando la cabeza hacia el cuerpo.
+  - **Emparentamiento rígido exacto con inversión matricial 4x4 ortonormal ($M_{\text{child}}(t) = M_{\text{child\_local}} \cdot M_{\text{head}}(t)$):**
+    En el primer fotograma tras el corte letal, se captura la matriz inversa del hueso de la cabeza ($M_{\text{head, 0}}^{-1}$) y se calculan las transformaciones locales relativas invariantes de cada hueso hijo:
+    $$M_{\text{child\_local}} = M_{\text{child, 0}} \cdot M_{\text{head, 0}}^{-1}$$
+    En cada fotograma $t$ de la simulación balística:
+    $$M_{\text{head}}(t) = (M_{\text{head, 0}} \cdot R_{\text{tumble}}(t)) \quad \text{con traslación } \mathbf{P}_{\text{head}}(t)$$
+    $$M_{\text{child}}(t) = M_{\text{child\_local}} \cdot M_{\text{head}}(t)$$
+    Esto asegura rigidez métrica absoluta en convención de vectores fila de Granny/DirectX: las distancias y orientaciones entre mandíbula, cuernos, ojos y cráneo son **100% constantes e invariantes**. Ni la cara, ni la barbilla ni el cráneo sufren deformación, compresión ni estiramiento alguno.
 - **Consumo Atómico de Eventos (`ConsumeRecentDecapitation`):**
-  - Cada evento de decapitación se consume inmediatamente en cuanto es reclamado por un esqueleto dentro de una ventana temporal estricta (500 ms) y de proximidad (1.5 m). Esto evita de raíz que monstruos vivos adyacentes pierdan la cabeza antes de morir al compartir el mismo golpe mortal.
-- **Corte Limpio en el Muñón del Cuerpo (`head_physics=0` por defecto):**
-  - Al ser los modelos de D2R mallas 3D continuas con *smooth skinning* compartido entre cuello y cabeza, separar físicamente el hueso de la cabeza estira los triángulos del cuello creando una membrana deformada que une la cabeza con el cuerpo.
-  - La solución óptima y recomendada es el corte limpio en el muñón (`CollapseHeadBones`): colapsa la cabeza y sus huesos hijos a escala $0.0001f$ en el pivote anatómico del cuello (`neck_M_JNT`). Esto elimina al 100% cualquier estiramiento de malla o conexión anómala, dejando un cadáver decapitado limpio, estéticamente perfecto y auténtico.
-- **Simulador Balístico 3D de Cabeza (`SimulateHeadPhysics`):**
-  - Parábola gravitatoria con impulso direccional de corte ($v_{0, y} = 1.20\text{ m/s}$ pop vertical, $v_{0, xz} = 0.85 \cdot \text{normal de impacto}$).
-  - Rebotes inelásticos contra el plano de suelo ($Y = 0.0\text{ m}$ en espacio de modelo, restitución $e = 0.35$).
-  - Fricción y frenado horizontal ($\mu = 2.5$) y amortiguación angular hasta reposo estable.
+  - Cada evento de decapitación se consume atómicamente en cuanto es reclamado por un esqueleto dentro de una ventana temporal estricta (500 ms) y de proximidad (1.5 m). Esto evita de raíz que monstruos vivos adyacentes pierdan la cabeza antes de morir al compartir el mismo golpe mortal.
+- **Físicas Balísticas 3D Multietapa de Cabeza (`SimulateHeadPhysics`):**
+  - Activadas por defecto (`head_physics=true` tanto en `combat.cpp` como en `d2r_pcvr.ini` / `vrcam.cpp`).
+  - **Impulso inicial:** Adopta fielmente el vector cinético del espadazo del jugador (`impactNormal`), proyectando la cabeza con velocidad horizontal real ($1.8\text{ a }2.4\text{ m/s}$) y un pop vertical visceral ($1.6\text{ a }2.0\text{ m/s}$).
+  - **Etapa 1 (Vuelo Parabólico):** Arco balístico natural bajo gravedad $g = 9.81\text{ m/s}^2$ con mínima resistencia aerodinámica ($\mu_{\text{air}} = 0.25$), volteo tridimensional según el torque del corte.
+  - **Etapa 2 (Rebotes Inelásticos):** Impacto contra el suelo del monstruo ($Y = \text{groundY} = \text{floorY} + r_{\text{head}}$). Primer rebote inelástico con restitución $e_1 = 0.42$ y pérdida de velocidad tangencial por rozamiento ($30\%$), seguido de un segundo bote más corto ($e_2 = 0.35$).
+  - **Etapa 3 (Rodadura y Reposo Natural):** Transición a rodadura sobre el suelo con fricción exponencial ($\mu_{\text{roll}} = 1.6\text{ s}^{-1}$). La rotación angular se sincroniza con la distancia rodada ($\Delta \theta = \Delta d / r_{\text{head}}$), deteniéndose de manera suave y orgánica en una posición y ángulo de reposo únicos que persisten durante el TTL del cadáver (60 s).
+- **Opción Clean Stump:** Si el usuario desactiva las físicas de cabeza (`head_physics=0`), se ejecuta `CollapseHeadBones`, colapsando cabeza y descendientes a escala $0.0001f$ en el muñón del cuello. Con `head_physics=1` (por defecto), la cabeza vuela y rueda libremente con físicas completas.
 - **Lógica de Decapitación Circunstancial (No 100% Ubicua):**
   - Se evita que todo enemigo resulte decapitado siempre de forma monótona o irreal.
   - La probabilidad y condición de corte se calcula en `vr/combat.cpp` en función del daño infligido y la configuración del usuario:

@@ -1340,7 +1340,7 @@ OnHitScope GateOnHit(OnHitScope scope) {
 int LastSwingWouldHit() {return lastSwingVerdict;}
 void ConfigureShotRules(bool unleashed) {shotRules=unleashed;}
 void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
-std::atomic<bool> g_headPhysics{false};
+std::atomic<bool> g_headPhysics{true};
 
 void ConfigureGore(int decapitationRate, bool headPhysics) {
     g_decapitationRate.store(std::clamp(decapitationRate, 0, 4));
