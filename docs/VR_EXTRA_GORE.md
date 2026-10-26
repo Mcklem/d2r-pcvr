@@ -118,3 +118,4 @@ decapitation=2
 - `steamvr/granny_decapitation_test.cpp`: 10 suites covering bone masking, humanoid filtering, boss/non-humanoid exclusions, and taxonomy accuracy.
 - **CTest Suite:** 144 / 144 native tests passing.
 - **Python Verification:** 17 / 17 tests passing in `steamvr/mod_identity_test.py`.
+
