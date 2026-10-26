@@ -14,17 +14,17 @@
 La implementación de un sistema de **Extra Gore para Realidad Virtual** en Diablo II: Resurrected es completamente viable sin modificar archivos de guardado (`.d2s`), sin alterar las tablas maestras de datos ni violar la compatibilidad con el juego en monitor de escritorio.
 
 El sistema se apoya en 4 pilares de ingeniería inversa ya operativos en `d2r-pcvr`:
-1. **Intercepción de combate y ciclo de daño:** Hooks en `ApplyDamage` (RVA `0x44CE80`) y `SetStat` (RVA `0x44D08F`, stat 6 HP) en [`vr/combat.cpp`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/vr/combat.cpp).
-2. **Manipulación esquelética en tiempo real (Granny 3D):** Hook en `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`) en [`vr/skeletons.cpp`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/vr/skeletons.cpp).
-3. **Pipeline de partículas 3D en Direct3D 12:** Arquitectura de renderizado de quads con shaders GPU probada en [`steamvr/elemental_hands_renderer.cpp`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/elemental_hands_renderer.cpp).
-4. **Motor háptico multicanal y audio espacial FMOD:** [`steamvr/haptic_pulse.h`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/haptic_pulse.h) y [`vr/spatial_audio.cpp`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/vr/spatial_audio.cpp).
+1. **Intercepción de combate y ciclo de daño:** Hooks en `ApplyDamage` (RVA `0x44CE80`) y `SetStat` (RVA `0x44D08F`, stat 6 HP) en [`vr/combat.cpp`](../vr/combat.cpp).
+2. **Manipulación esquelética en tiempo real (Granny 3D):** Hook en `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`) en [`vr/skeletons.cpp`](../vr/skeletons.cpp).
+3. **Pipeline de partículas 3D en Direct3D 12:** Arquitectura de renderizado de quads con shaders GPU probada en [`steamvr/elemental_hands_renderer.cpp`](../steamvr/elemental_hands_renderer.cpp).
+4. **Motor háptico multicanal y audio espacial FMOD:** [`steamvr/haptic_pulse.h`](../steamvr/haptic_pulse.h) y [`vr/spatial_audio.cpp`](../vr/spatial_audio.cpp).
 
 ---
 
 ## 2. Resolución del Conflicto UX: Sangre en Visor vs Indicador de Vida Baja
 
 ### El Problema de Diseño
-En `d2r-pcvr`, [`steamvr/blood_screen.h`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/blood_screen.h) utiliza salpicaduras periféricas en el visor como indicador de salud crítica (<60%, <40%, <20% HP). Si la sangre de los monstruos se estampa en el visor con la misma apariencia, el jugador experimentará **falsos positivos de daño**, provocando confusión táctica y pánico injustificado.
+En `d2r-pcvr`, [`steamvr/blood_screen.h`](../steamvr/blood_screen.h) utiliza salpicaduras periféricas en el visor como indicador de salud crítica (<60%, <40%, <20% HP). Si la sangre de los monstruos se estampa en el visor con la misma apariencia, el jugador experimentará **falsos positivos de daño**, provocando confusión táctica y pánico injustificado.
 
 ### La Solución Arquitectónica Cuádruple
 
@@ -55,14 +55,14 @@ flowchart TD
 3. **Comportamiento Efímero vs Permanente:**
    - Si el usuario activa salpicaduras hostiles en el visor, estas son gotas perdigonadas dispersas tipo parabrisas que **se desvanecen automáticamente en 2.5 segundos** (frente a la viñeta permanente de vida baja).
 4. **Desacoplamiento Auditivo y Háptico:**
-   - La sangre de vida baja siempre va acompañada del bucle de latido cardíaco ([`heartHush`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/transport.cpp#L2486)).
+   - La sangre de vida baja siempre va acompañada del bucle de latido cardíaco ([`heartHush`](../steamvr/transport.cpp#L2486)).
    - El gore enemigo solo reproduce el impacto húmedo (*squelch*) en la coordenada espacial del golpe, sin latido ni jadeos.
 
 ---
 
 ## 3. Arquitectura de Datos y Memoria Compartida (IPC)
 
-Para transferir los eventos de gore desde el proceso del juego (`vr/` / `d2rl-pcvr.dll`) hacia el runtime OpenXR (`steamvr/`) sin bloquear el hilo principal a 25 Hz de D2R ni el hilo de renderizado a 90/120 Hz de OpenXR, se define un búfer circular en [`shared/d2r_vr_shared.h`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/shared/d2r_vr_shared.h):
+Para transferir los eventos de gore desde el proceso del juego (`vr/` / `d2rl-pcvr.dll`) hacia el runtime OpenXR (`steamvr/`) sin bloquear el hilo principal a 25 Hz de D2R ni el hilo de renderizado a 90/120 Hz de OpenXR, se define un búfer circular en [`shared/d2r_vr_shared.h`](../shared/d2r_vr_shared.h):
 
 ```cpp
 #define D2RVR_GORE_MAGIC 0x474F5245u // "GORE"
@@ -143,7 +143,7 @@ struct D2RVR_GoreQueue {
   - Pícaras corruptas (`CorruptRogue`).
 
 ### 4.2. Sangre y Goteo en Armas (`steamvr/torch_light.h` / `weapon_blood.h`)
-- Basado en el modelo matemático de la punta de la antorcha (`ComputeTorchTip` en [`steamvr/torch_light.h`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/torch_light.h)):
+- Basado en el modelo matemático de la punta de la antorcha (`ComputeTorchTip` en [`steamvr/torch_light.h`](../steamvr/torch_light.h)):
   $$\mathbf{P}_{\text{filo}} = \mathbf{P}_{\text{mando}} + \mathbf{R}_{\text{mando}} \cdot \mathbf{Offset}_{\text{arma}}$$
 - Se introduce un acumulador `bloodBuildup` ($[0.0, 1.0]$) por cada mano:
   - Cada impacto cuerpo a cuerpo letal añade $+0.35$ de sangre.
@@ -151,14 +151,14 @@ struct D2RVR_GoreQueue {
   - Si `bloodBuildup > 0.2`, la punta del arma genera gotas de sangre 3D que caen verticalmente por gravedad hacia el suelo.
 
 ### 4.3. Surtidores Arteriales 3D en Direct3D 12 (`steamvr/gore_renderer.cpp`)
-- Reutiliza la infraestructura de creación de Command Lists y Root Signatures de [`steamvr/elemental_hands_renderer.cpp`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/elemental_hands_renderer.cpp).
+- Reutiliza la infraestructura de creación de Command Lists y Root Signatures de [`steamvr/elemental_hands_renderer.cpp`](../steamvr/elemental_hands_renderer.cpp).
 - Un emisor de partículas genera un abanico cónico de quads orientados a cámara desde el cuello decapitado:
   $$\mathbf{P}(t) = \mathbf{P}_0 + \mathbf{v}_0 t + \frac{1}{2} \mathbf{g} t^2$$
   donde $\mathbf{v}_0$ es un vector ascendente aleatorio dentro de un cono de $35^\circ$ con velocidad inicial de $1.2\text{ a }2.5\text{ m/s}$, y $\mathbf{g} = (0, -9.8, 0)\text{ m/s}^2$.
 - Decaimiento de opacidad alfa y contracción de tamaño a lo largo de $1.5\text{ s}$.
 
 ### 4.4. Hápticos Viscerales Diferenciados (`steamvr/haptic_pulse.h`)
-- En [`steamvr/haptic_pulse.h`](file:///c:/Users/Player%201/Desktop/d2r-pcvr/steamvr/haptic_pulse.h), se implementan patrones según la anatomía destruida:
+- En [`steamvr/haptic_pulse.h`](../steamvr/haptic_pulse.h), se implementan patrones según la anatomía destruida:
   - **Corte de Carne / Decapitación:** Pulso seco a $160\text{ Hz}$ de $25\text{ ms}$, seguido de una meseta de fricción de $35\text{ ms}$ al $40\%$ de amplitud.
   - **Aplastamiento Óseo (Mazas/Martillos):** Pulso de onda cuadrada a $50\text{ Hz}$ de $85\text{ ms}$ con amplitud máxima ($1.0$), produciendo una sacudida densa en la mano.
   - **Onda Expansiva de Corpse Explosion:** Ráfaga estéreo sincronizada en ambas manos con envolvente exponencial decreciente de $180\text{ ms}$.
