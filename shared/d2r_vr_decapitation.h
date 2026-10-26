@@ -64,6 +64,33 @@ inline bool IsNeckBoneName(std::string_view name) {
     return false;
 }
 
+// Checks if a bone name represents a head or facial joint (jaw, chin, teeth, horns, eyes, snout)
+inline bool IsHeadOrFacialBoneName(std::string_view name) {
+    if (name.empty()) return false;
+    std::string lo;
+    lo.reserve(name.size());
+    for (char c : name) lo.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
+
+    if (lo.find("necklace") != std::string::npos) return false;
+
+    if (lo.find("jaw") != std::string::npos || lo.find("chin") != std::string::npos ||
+        lo.find("teeth") != std::string::npos || lo.find("tooth") != std::string::npos ||
+        lo.find("mouth") != std::string::npos || lo.find("tongue") != std::string::npos) {
+        return true;
+    }
+
+    if (lo.find("horn") != std::string::npos || lo.find("ear") != std::string::npos ||
+        lo.find("eye") != std::string::npos || lo.find("snout") != std::string::npos ||
+        lo.find("face") != std::string::npos || lo.find("beard") != std::string::npos ||
+        lo.find("hair") != std::string::npos || lo.find("helmet") != std::string::npos) {
+        return true;
+    }
+
+    if (IsHeadBoneName(name)) return true;
+
+    return false;
+}
+
 // Finds the primary head bone index in a bone hierarchy
 inline int FindHeadBone(const std::vector<std::string>& names, const std::vector<int32_t>& parents) {
     (void)parents;
@@ -129,6 +156,37 @@ inline std::vector<uint8_t> BuildDescendantMask(int count, const std::vector<int
             const int p = parents[i];
             if (p >= 0 && p < count && mask[p]) {
                 mask[i] = 1;
+            }
+        }
+    }
+    return mask;
+}
+
+// Generates a boolean mask marking headBone, all its descendants, and facial features under neckBone.
+// This prevents facial features (jaw, horns, chin, eyes) from remaining tethered to the neck stump.
+inline std::vector<uint8_t> BuildHeadMask(int count, const std::vector<std::string>& names,
+                                          const std::vector<int32_t>& parents, int headBone, int neckBone) {
+    std::vector<uint8_t> mask(count, 0);
+    if (headBone >= 0 && headBone < count) {
+        mask[headBone] = 1;
+        for (int i = 0; i < count; ++i) {
+            for (int p = parents[i]; p >= 0 && p < count; p = parents[p]) {
+                if (p == headBone) {
+                    mask[i] = 1;
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < count; ++i) {
+            if (i == neckBone) continue;
+            if (!mask[i] && i < static_cast<int>(names.size()) && IsHeadOrFacialBoneName(names[i])) {
+                for (int p = parents[i]; p >= 0 && p < count; p = parents[p]) {
+                    if (p == neckBone || p == headBone) {
+                        mask[i] = 1;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -419,7 +477,7 @@ public:
     bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
                               const std::vector<uint8_t>& inHead, uint64_t now,
                               uint64_t ttlMs = kDefaultTtlMs) {
-        return RegisterDecapitation(self, monsterId, headBone, neckBone, inHead, now, 0.0f, nullptr, false, ttlMs);
+        return RegisterDecapitation(self, monsterId, headBone, neckBone, inHead, now, 0.0f, nullptr, true, ttlMs);
     }
 
     bool IsDecapitated(uintptr_t self, uint64_t now) const {

@@ -1343,13 +1343,15 @@ void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
 std::atomic<bool> g_headPhysics{true};
 
 void ConfigureGore(int decapitationRate, bool headPhysics) {
+    (void)headPhysics;
     g_decapitationRate.store(std::clamp(decapitationRate, 0, 4));
-    g_headPhysics.store(headPhysics);
+    g_headPhysics.store(true);
 }
 
 void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
+    (void)headPhysics;
     g_decapitationRate.store(enabled ? std::clamp(decapitationRate, 0, 4) : 0);
-    g_headPhysics.store(headPhysics);
+    g_headPhysics.store(true);
 }
 
 int GoreDecapitationRate() {
@@ -1357,7 +1359,7 @@ int GoreDecapitationRate() {
 }
 
 bool GoreHeadPhysics() {
-    return g_headPhysics.load();
+    return true; // Severed head 3D physics is always active during decapitation
 }
 
 void ConfigureRiposte(float bonus,uint32_t windowMs,float volume,const wchar_t* soundFile) {

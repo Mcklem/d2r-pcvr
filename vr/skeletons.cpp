@@ -3482,7 +3482,7 @@ void DecapitateMonster(uintptr_t self) {
     // Check if a recent decapitation strike occurred within reach and consume it
     // Consuming ensures only ONE skeleton is decapitated per lethal strike, preventing living monsters from losing heads.
     framevr::gore::GoreEvent ev{};
-    if (framevr::gore::Queue().ConsumeRecentDecapitation(now, 500, pos[0], pos[2], 1.5f, ev)) {
+    if (framevr::gore::Queue().ConsumeRecentDecapitation(now, 500, pos[0], pos[2], 0.8f, ev)) {
         int32_t count = 0;
         uintptr_t bones = 0;
         if (!Get(skel + 8, &count) || !Get(skel + 0xC, &bones) || count <= 0 || count > 1024) return;
@@ -3500,11 +3500,11 @@ void DecapitateMonster(uintptr_t self) {
         const int headBone = framevr::decap::FindHeadBone(names, parents);
         if (headBone >= 0) {
             const int neckBone = framevr::decap::FindNeckBone(names, parents, headBone);
-            const auto inHead = framevr::decap::BuildDescendantMask(count, parents, headBone);
+            const auto inHead = framevr::decap::BuildHeadMask(count, names, parents, headBone, neckBone);
 
             const float* impulse = ev.impactNormal;
             const float floorY = 0.0f;
-            const bool headPhysics = combat::GoreHeadPhysics();
+            const bool headPhysics = true;
 
             framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics);
 

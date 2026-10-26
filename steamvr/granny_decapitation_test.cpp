@@ -171,6 +171,25 @@ void TestDescendantHierarchyMask() {
     assert(mask[15] == 0); // pelvis
     assert(mask[16] == 0); // leg_L
     assert(mask[17] == 0); // leg_R
+
+    // Test BuildHeadMask where jaw / horns are direct children of neck (bone 3)
+    {
+        std::vector<std::string> rigNames = {
+            "root", "spine", "chest", "neck_M_JNT", "head_M_JNT", "jaw", "horn_L", "horn_R", "shoulder_L"
+        };
+        // Note: jaw (5) and horn_L (6) have parent neck (3), while horn_R (7) has parent head (4)
+        std::vector<int32_t> rigParents = {
+            -1, 0, 1, 2, 3, 3, 3, 4, 2
+        };
+        auto headMask = framevr::decap::BuildHeadMask(9, rigNames, rigParents, 4, 3);
+        assert(headMask[4] == 1); // head
+        assert(headMask[5] == 1); // jaw (under neck, must be included in severed head)
+        assert(headMask[6] == 1); // horn_L (under neck, must be included in severed head)
+        assert(headMask[7] == 1); // horn_R (under head, included)
+        assert(headMask[3] == 0); // neck stays on torso
+        assert(headMask[2] == 0); // chest stays on torso
+        assert(headMask[8] == 0); // shoulder stays on torso
+    }
 }
 
 void TestMatrixCollapseMath() {
@@ -267,8 +286,10 @@ void TestDecapitationManagerLifecycle() {
     bool applied = mgr.ApplyCollapse(skelA, poses.data(), 5, t0 + 5000, pivot);
     assert(applied);
     assert(std::fabs(pivot[1] - 1.5f) < 1e-4f);
-    assert(std::fabs(poses[3].m[13] - 1.5f) < 1e-4f);
-    assert(std::fabs(poses[3].m[0] - 0.0001f) < 1e-6f);
+    // At t0 + 5000ms: Severed head has completed ballistic flight and rests at ground level (floorY + r = 0.16f)
+    assert(poses[3].m[13] < 0.25f);
+    // Head retains full 3D geometry (orthonormal matrix, not collapsed to 0.0001f)
+    assert(poses[3].m[0] > 0.01f || poses[3].m[0] < -0.01f);
 
     // At t0 + 30000ms: still active
     assert(mgr.IsDecapitated(skelA, t0 + 30000));
@@ -447,7 +468,7 @@ void TestCleanStumpBoneCollapsing() {
     // 5 bones: 0=root, 1=spine, 2=neck, 3=head, 4=jaw/horn (child of head)
     const std::vector<uint8_t> inHead = {0, 0, 0, 1, 1};
 
-    mgr.RegisterDecapitation(skel, 501, 3, 2, inHead, t0);
+    mgr.RegisterDecapitation(skel, 501, 3, 2, inHead, t0, 0.0f, nullptr, false);
 
     std::vector<MockMatrix> poses = {
         MockMatrix::Translation(0, 0, 0),       // Root
