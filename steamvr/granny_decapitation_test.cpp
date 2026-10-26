@@ -286,10 +286,16 @@ void TestDecapitationManagerLifecycle() {
     bool applied = mgr.ApplyCollapse(skelA, poses.data(), 5, t0 + 5000, pivot);
     assert(applied);
     assert(std::fabs(pivot[1] - 1.5f) < 1e-4f);
-    // At t0 + 5000ms: Severed head has completed ballistic flight and rests at ground level (floorY + r = 0.16f)
-    assert(poses[3].m[13] < 0.25f);
-    // Head retains full 3D geometry (orthonormal matrix, not collapsed to 0.0001f)
-    assert(poses[3].m[0] > 0.01f || poses[3].m[0] < -0.01f);
+    // Option C: Monster corpse has its head bone cleanly collapsed to 0.0001f scale at neck pivot (1.5f)
+    assert(std::fabs(poses[3].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(poses[3].m[13] - 1.5f) < 1e-4f);
+
+    // And the decoupled severed head prop has completed ballistic flight and rests at ground level
+    std::vector<framevr::decap::SeveredHeadProp> activeHeads;
+    mgr.GetActiveSeveredHeads(activeHeads, t0 + 5000);
+    assert(activeHeads.size() == 1);
+    assert(activeHeads[0].worldPos[1] < 0.25f);
+    assert(activeHeads[0].isResting);
 
     // At t0 + 30000ms: still active
     assert(mgr.IsDecapitated(skelA, t0 + 30000));
@@ -420,10 +426,6 @@ void TestRigidHeadAndChildBonePreservation() {
     };
     std::vector<MockMatrix> posesB = posesA;
 
-    const float dx0 = posesA[4].m[12] - posesA[3].m[12];
-    const float dy0 = posesA[4].m[13] - posesA[3].m[13];
-    const float dz0 = posesA[4].m[14] - posesA[3].m[14];
-    const float initialDist = std::sqrt(dx0*dx0 + dy0*dy0 + dz0*dz0);
 
     // First frame initialization at t0
     float pA[3] = {}, pB[3] = {};
@@ -434,25 +436,32 @@ void TestRigidHeadAndChildBonePreservation() {
     mgr.ApplyCollapse(skelPhys, posesA.data(), 5, t0 + 500, pA);
     mgr.ApplyCollapse(skelStump, posesB.data(), 5, t0 + 500, pB);
 
-    // Instance A (physics):
-    // 1. Head has moved from initial (0, 1.8, 0)
-    assert(posesA[3].m[12] > 0.05f); // horizontal movement
-    // 2. Relative distance between jaw and head is EXACTLY preserved (ZERO mesh deformation)
-    const float dx1 = posesA[4].m[12] - posesA[3].m[12];
-    const float dy1 = posesA[4].m[13] - posesA[3].m[13];
-    const float dz1 = posesA[4].m[14] - posesA[3].m[14];
-    const float flyingDist = std::sqrt(dx1*dx1 + dy1*dy1 + dz1*dz1);
-    assert(std::fabs(flyingDist - initialDist) < 1e-4f);
+    // Option C Verification:
+    // 1. On the monster corpse skeleton: BOTH instances have head/jaw collapsed cleanly to 0.0001f scale
+    // at the neck pivot (1.5m). Zero bones moving away = ZERO mesh stretching, ZERO rubber webbing!
+    assert(std::fabs(posesA[3].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(posesA[3].m[13] - 1.5f) < 1e-4f);
+    assert(std::fabs(posesA[4].m[0] - 0.0001f) < 1e-6f);
+    assert(std::fabs(posesA[4].m[13] - 1.5f) < 1e-4f);
 
-    // 3. Rotation matrices are orthonormal (length 1.0)
-    const float headRow0Len = posesA[3].m[0]*posesA[3].m[0] + posesA[3].m[1]*posesA[3].m[1] + posesA[3].m[2]*posesA[3].m[2];
-    assert(std::fabs(headRow0Len - 1.0f) < 1e-4f);
-
-    // Instance B (stump): head and jaw collapsed to 0.0001f at neck pivot
     assert(std::fabs(posesB[3].m[0] - 0.0001f) < 1e-6f);
     assert(std::fabs(posesB[3].m[13] - 1.5f) < 1e-4f);
     assert(std::fabs(posesB[4].m[0] - 0.0001f) < 1e-6f);
     assert(std::fabs(posesB[4].m[13] - 1.5f) < 1e-4f);
+
+    // 2. On the decoupled severed head 3D prop:
+    // Published independently with realistic 3D ballistic trajectory and tumbling rotation
+    std::vector<framevr::decap::SeveredHeadProp> activeHeads;
+    mgr.GetActiveSeveredHeads(activeHeads, t0 + 500);
+    assert(activeHeads.size() == 1);
+    assert(activeHeads[0].monsterId == 501);
+    assert(activeHeads[0].worldPos[0] > 0.05f); // horizontal ballistic movement
+    assert(activeHeads[0].worldPos[1] > 0.0f);  // in air above floor
+    const float rotRow0Len = activeHeads[0].worldRot[0]*activeHeads[0].worldRot[0] +
+                             activeHeads[0].worldRot[1]*activeHeads[0].worldRot[1] +
+                             activeHeads[0].worldRot[2]*activeHeads[0].worldRot[2];
+    assert(std::fabs(rotRow0Len - 1.0f) < 1e-4f); // orthonormal 3D tumbling rotation
+    assert(activeHeads[0].scale == 1.0f);
 
     mgr.Clear();
 }
@@ -515,7 +524,7 @@ void TestCleanStumpBoneCollapsing() {
 }
 
 void TestMultipleConcurrentDecapitations() {
-    printf("[granny-decapitation-test] Suite 7: Multiple Concurrent Decapitations & Capacity\n");
+    printf("[granny-decapitation-test] Suite 9: Multiple Concurrent Decapitations & Capacity\n");
 
     auto& mgr = framevr::decap::Manager();
     mgr.Clear();
@@ -545,6 +554,51 @@ void TestMultipleConcurrentDecapitations() {
     mgr.Clear();
 }
 
+void TestHumanoidDecapitationFilteringAndTaxonomy() {
+    printf("[granny-decapitation-test] Suite 10: Humanoid Decapitation Filtering & Taxonomy Verification\n");
+
+    // 1. Humanoids that MUST decapitate:
+    // Fallen Shamans (58..62, 645..647)
+    for (uint32_t id : {58u, 59u, 60u, 61u, 62u, 645u, 646u, 647u}) {
+        assert(framevr::gore::IsDecapitableClass(id));
+        assert(framevr::gore::TaxonomyForMonster(id) == framevr::gore::BloodTaxonomy::DemonIchor);
+    }
+    // Corrupt Rogues / Archers / Lancers (43..47, 160..169, 613..617, 721..723)
+    for (uint32_t id : {43u, 44u, 45u, 46u, 47u, 160u, 161u, 162u, 163u, 164u, 165u, 166u, 167u, 168u, 169u, 613u, 615u, 721u, 722u, 723u}) {
+        assert(framevr::gore::IsDecapitableClass(id));
+        assert(framevr::gore::TaxonomyForMonster(id) == framevr::gore::BloodTaxonomy::DemonIchor);
+    }
+    // Skeletons and Zombies
+    for (uint32_t id : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 170u, 648u}) {
+        assert(framevr::gore::IsDecapitableClass(id));
+        assert(framevr::gore::TaxonomyForMonster(id) == framevr::gore::BloodTaxonomy::UndeadRot);
+    }
+
+    // 2. Bosses that must NEVER decapitate:
+    for (uint32_t id : {156u, 707u, 211u, 708u, 242u, 704u, 243u, 705u, 543u, 544u, 545u, 570u, 709u, 229u, 250u, 256u, 409u, 514u, 526u, 537u, 540u, 562u}) {
+        assert(!framevr::gore::IsDecapitableClass(id));
+        assert(framevr::gore::IsBossClass(id));
+    }
+
+    // 3. Non-humanoids that must NEVER decapitate:
+    for (uint32_t id : {68u, 70u, 180u, 190u, 283u, 122u, 685u, 91u, 73u, 87u, 114u, 15u, 110u, 136u, 38u, 118u, 258u}) {
+        assert(!framevr::gore::IsDecapitableClass(id));
+        assert(framevr::gore::IsNonHumanoidClass(id));
+    }
+
+    // 4. Model filtering
+    assert(framevr::decap::IsDecapitableModel("data/hd/character/enemy/corruptrogue1/torso_med_lod0.model"));
+    assert(framevr::decap::IsDecapitableModel("data/hd/character/enemy/cr_archer1/torso_med_lod0.model"));
+    assert(framevr::decap::IsDecapitableModel("data/hd/character/enemy/fallenshaman1/torso_lod0.model"));
+    assert(framevr::decap::IsDecapitableModel("data/hd/character/enemy/skeleton1/torso_lod0.model"));
+    assert(framevr::decap::IsDecapitableModel("data/hd/character/enemy/zombie1/torso_lit_lod0.model"));
+    assert(!framevr::decap::IsDecapitableModel("data/hd/character/enemy/andariel/torso_lod0.model"));
+    assert(!framevr::decap::IsDecapitableModel("data/hd/character/enemy/duriel/torso_lod0.model"));
+    assert(!framevr::decap::IsDecapitableModel("data/hd/character/player/barbarian/torso_lod0.model"));
+    assert(!framevr::decap::IsDecapitableModel("data/hd/character/enemy/sandmaggot1/torso_lod0.model"));
+    assert(!framevr::decap::IsDecapitableModel("data/hd/character/enemy/arach1/torso_lod0.model"));
+}
+
 } // namespace
 
 int main() {
@@ -558,7 +612,8 @@ int main() {
     TestRigidHeadAndChildBonePreservation();
     TestCleanStumpBoneCollapsing();
     TestMultipleConcurrentDecapitations();
-    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (9/9 SUITES) ===\n");
+    TestHumanoidDecapitationFilteringAndTaxonomy();
+    printf("=== ALL GRANNY DECAPITATION TESTS PASSED (10/10 SUITES) ===\n");
     return 0;
 }
 

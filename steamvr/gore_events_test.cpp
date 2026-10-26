@@ -35,24 +35,28 @@ void TestWeaponClassification() {
 void TestMonsterTaxonomy() {
     using namespace framevr::gore;
 
-    // Undead
-    assert(TaxonomyForMonster(0) == BloodTaxonomy::UndeadRot);  // Skeleton
-    assert(TaxonomyForMonster(1) == BloodTaxonomy::UndeadRot);
-    assert(TaxonomyForMonster(18) == BloodTaxonomy::UndeadRot); // Zombie
-    assert(TaxonomyForMonster(70) == BloodTaxonomy::UndeadRot);
+    // Undead (Skeletons 0..4, Zombies 5..9, Mummies 96..100)
+    assert(TaxonomyForMonster(0) == BloodTaxonomy::UndeadRot);  // skeleton1
+    assert(TaxonomyForMonster(4) == BloodTaxonomy::UndeadRot);  // skeleton5
+    assert(TaxonomyForMonster(5) == BloodTaxonomy::UndeadRot);  // zombie1
+    assert(TaxonomyForMonster(9) == BloodTaxonomy::UndeadRot);  // zombie5
+    assert(TaxonomyForMonster(96) == BloodTaxonomy::UndeadRot); // mummy1
 
-    // Insects / Vermin
-    assert(TaxonomyForMonster(58) == BloodTaxonomy::InsectBile); // Sand Maggot
-    assert(TaxonomyForMonster(62) == BloodTaxonomy::InsectBile); // Spider
-    assert(TaxonomyForMonster(155) == BloodTaxonomy::InsectBile);
+    // Insects / Vermin (Sand Maggots 68..72, Scarabs 91..95, Spiders 122..126)
+    assert(TaxonomyForMonster(68) == BloodTaxonomy::InsectBile);  // sandmaggot1
+    assert(TaxonomyForMonster(91) == BloodTaxonomy::InsectBile);  // scarab1
+    assert(TaxonomyForMonster(122) == BloodTaxonomy::InsectBile); // arach1
 
-    // Animals / Beasts
-    assert(TaxonomyForMonster(25) == BloodTaxonomy::BeastCrimson); // Quill Rat / Brute
-    assert(TaxonomyForMonster(41) == BloodTaxonomy::BeastCrimson); // Blood Hawk
+    // Animals / Beasts (Brutes 24..28, Goatmen 53..57, Quill Rats 63..67)
+    assert(TaxonomyForMonster(25) == BloodTaxonomy::BeastCrimson); // brute2
+    assert(TaxonomyForMonster(53) == BloodTaxonomy::BeastCrimson); // goatman1
+    assert(TaxonomyForMonster(63) == BloodTaxonomy::BeastCrimson); // quillrat1
 
-    // Demons
-    assert(TaxonomyForMonster(4) == BloodTaxonomy::DemonIchor);   // Fallen
-    assert(TaxonomyForMonster(13) == BloodTaxonomy::DemonIchor);  // Fallen Shaman
+    // Demons (Fallens 19..23, Shamans 58..62, Corrupt Rogues 43..47, 160..169)
+    assert(TaxonomyForMonster(19) == BloodTaxonomy::DemonIchor);  // fallen1
+    assert(TaxonomyForMonster(58) == BloodTaxonomy::DemonIchor);  // fallenshaman1
+    assert(TaxonomyForMonster(43) == BloodTaxonomy::DemonIchor);  // corruptrogue1
+    assert(TaxonomyForMonster(160) == BloodTaxonomy::DemonIchor); // cr_archer1
     assert(TaxonomyForMonster(999) == BloodTaxonomy::DemonIchor); // Default
 
     std::puts("TestMonsterTaxonomy: PASS");

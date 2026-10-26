@@ -183,15 +183,22 @@ flowchart LR
 4. **Audio 3D:** Conectar FMOD en `vr/spatial_audio.cpp` para reproducir sonidos de rotura y desgarro situados en la posición tridimensional del monstruo.
 5. **Verificación automatizada:** Crear el test nativo `gore-events-test` en `steamvr/CMakeLists.txt` (Superado 100%).
 
-### Fase 2: Decapitación Esquelética Granny 3D y Prop Físico de Cabeza [COMPLETADA]
-*Objetivo: Ver cabezas rodar o desaparecer físicamente de los monstruos en combate cuerpo a cuerpo.*
-1. **Detección de rigs y jerarquías:** Implementado en `shared/d2r_vr_decapitation.h` con resolución prioritaria de huesos de cabeza (`head_M_JNT`, `head_bind_jnt`, `Bip01 Head`, `head`) y cuello (`neck_M_JNT`, `neck_bind_jnt`, `Bip01 Neck`, `neck`) para Caídos, Zombis, Esqueletos, Pícaras y Bestias.
-2. **Propagación y colapso óseo:** Construcción de máscara de descendientes $O(N)$ y colapso en escala $0.0001f$ anclando la posición tridimensional exactamente al pivote del cuello (`CollapseHeadBones`).
-3. **Simulador balístico 3D de cabeza cercenada:** `SimulateHeadPhysics` con parábola gravitatoria, rebotes inelásticos contra el plano de suelo del monstruo ($e=0.35$), fricción horizontal ($\mu=2.5$) y rotación de volteo (*tumble*) en tiempo real.
-4. **Decapitación circunstancial:** Integrada en `vr/combat.cpp` basada en tipo de daño (armas cortantes), daño excesivo (*overkill* $>150\%$), golpes críticos o riposte mortal, y probabilidad graduable.
-5. **Hook de transformación en runtime:** Integrado en `vr/skeletons.cpp` dentro de `Hook` (`ComputeSelfWorldPose`) vinculando eventos `SlashDecapitation` de la cola IPC con instancias de esqueletos en espacio de juego vía ECS (`CandidatePosition`), alimentando las físicas con el nivel de suelo y la normal de impacto.
-6. **Ciclo de vida y TTL:** Gestión thread-safe con `DecapitationManager` (TTL de 60 s para respetar animación de muerte y persistencia de cadáver).
-7. **Verificación automatizada:** Test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 7 suites completas pasando (144/144 tests globales pasando).
+### Fase 2: Decapitación Esquelética Granny 3D y Prop Físico de Cabeza 3D (Opción C) [COMPLETADA]
+*Objetivo: Lograr una decapitación visceral sin deformación de malla en el cuerpo y con cabeza/cráneo 3D independiente rodando con físicas reales.*
+1. **Arquitectura desacoplada (Opción C):**
+   - **Muñón del cuerpo impecable:** En el esqueleto del monstruo en Granny 3D se ejecuta siempre `CollapseHeadBones`, colapsando a escala 0.0001f todos los huesos de cabeza y rasgos faciales (mandíbula, cuernos, ojos, hocico) en el pivote del cuello. Esto sella el corte anatómicamente y elimina al 100% el estiramiento de malla o membranas elásticas (0% deformación).
+   - **Cabeza física 3D desacoplada:** Se genera una entidad 3D independiente (`SeveredHeadProp`) en el pivote del cuello con el impulso del golpe de espada/hacha. No comparte ningún vértice con el cuerpo, impidiendo cualquier unión o estiramiento.
+2. **Simulador balístico y rodamiento 3D:**
+   - Trayectoria parabólica por gravedad (-9.81 m/s²).
+   - Rebotes inelásticos en el suelo con coeficientes de restitución e₁ = 0.42 y e₂ = 0.35.
+   - Fricción aérea (μ_air = 0.25), amortiguación en impacto y rodamiento por fricción (μ_roll = 1.6) hasta quedar en reposo natural en las losas de piedra.
+   - Rotación angular dual: volteo libre en el aire (*tumble* a 8.5 rad/s) y rodadura cinemática en suelo proporcional al desplazamiento lineal.
+3. **Renderizado D3D12 en Visor VR (`SeveredHeadRenderer`):**
+   - Implementado en `steamvr/severed_head_renderer.h` y `steamvr/severed_head_renderer.cpp`, integrado en el pase de renderizado estéreo de `steamvr/transport.cpp` con depth testing inverso (*Reverse-Z* `GREATER_EQUAL`).
+   - **Selección taxonómica según enemigo:**
+     - *No-muertos, esqueletos, zombis y pícaras* (`Taxonomy::UndeadRot`): Cráneo humanoide de hueso marfil con cuencas oculares, cavidad nasal, maxilar y base del muñón ensangrentada.
+     - *Demonios (Caídos, Chamanes) y bestias* (`Taxonomy::DemonIchor` / `Beast`): Cráneo demoniaco con grandes cuernos curvados hacia atrás en obsidiana y base manchada con ichor oscuro.
+4. **Verificación automatizada:** Test nativo `granny-decapitation-test` en `steamvr/CMakeLists.txt` con 9 suites completas pasando (144/144 tests globales pasando, 100% de éxito).
 
 ### Fase 3: Integración en Menú de Ajustes VR (`VR Settings > Combat`) [COMPLETADA]
 *Objetivo: Permitir al usuario calibrar la frecuencia de decapitación directamente desde el visor en tiempo de ejecución de forma clara e intuitiva.*
@@ -242,3 +249,39 @@ decapitation=2
 ; 0 = Head collapses into neck stump (clean cut body only, no severed head physics)
 head_physics=0
 ```
+
+---
+
+## 7. Refinamiento Integral de Decapitación y Shading de Sangre Oscura (Octubre 2026)
+
+### 1. Corrección del Filtro de Decapitación en Chamanes y Mujeres Demonio (Acto 1)
+- **Causa Raíz:** En `shared/d2r_vr_gore.h`, rangos de prueba especulativos en `IsNonHumanoidClass` (`58..63` y `156..170`) estaban clasificando erróneamente a los **Chamanes Caídos** (`fallenshaman1..5`, IDs `58..62`) y a las **Pícaras Corruptas / Arqueras / Lanceras** (`cr_archer1..5` y `cr_lancer1..5`, IDs `160..169`) como monstruos "no humanoides", bloqueando su decapitación en `vr/combat.cpp`.
+- **Solución Implementada:**
+  - Alineación exacta con `monstats.txt` oficial extraído de CASC.
+  - Se restringió `IsBossClass` exclusivamente a los Jefes de Acto y de Misión (`156, 707` Andariel; `211, 708` Duriel; `242, 333, 401, 704` Mephisto; `243, 705` Diablo; `543..545, 557, 559, 570, 709` Baal; `229` Radament; `250` Invocador; `256, 406, 706` Izual; `409` Hephasto; `514, 526` Nihlathak; `537..542` Antiguos).
+  - Se corrigió `IsNonHumanoidClass` para incluir únicamente gusanos reales (`68..72, 180..184`), arañas (`122..126`), escarabajos (`91..95`), víboras (`73..77`), enjambres (`87..90`), cuervos/buitres (`15..18, 110..113`), murciélagos (`136..140`), fantasmas incorpóreos (`38..42, 118..121`) y trampas mecánicas.
+  - Chamanes Caídos, Pícaras Corruptas, Caídos, Esqueletos y Zombis se decapitan de forma 100% limpia.
+
+### 2. Modelos Oficiales Blizzard y Asignación Taxonómica
+- **Modelos Oficiales Extraídos de CASC:**
+  - `sk_skull.pvr`: Cráneo de esqueleto oficial (`skeleton1/head_lit_lod0.model` con `head_normalShape` y `skeleton_head_des_alb.texture`).
+  - `zb_head.pvr`: Cabeza cercenada de zombi (`zombie1/head_lit_lod0.model` filtrada exclusivamente a la submalla `death_head_litShape`, eliminando duplicidad geométrica y z-fighting).
+  - `dm_head.pvr`: Cabeza de demonio cornudo oficial (`voodoo_head/demon_head/demon_head_lod0.model` con `armor_head_demon_alb.texture`).
+  - `gg_head.pvr`: Cabeza de gárgola / bestia oficial (`voodoo_head/gargoyle_head/gargoyle_head_lod0.model` con `weapon_gargoyle_head_alb.texture`).
+- **Mapeo en `vr/skeletons.cpp`:**
+  - Esqueletos (`skeleton`, `sk_`, `skmage`): `0` (`sk_skull`).
+  - Zombis y cadáveres (`zombie`, `corpse`, `reanimated`, `mummy`): `1` (`zb_head`).
+  - Demonios humanoides (Caídos, Chamanes, Pícaras Corruptas, Épicas, Súcubos, Caballeros del Destino): `2` (`dm_head`).
+  - Bestias corpulentas (Brutos, Hombres Cabra, Yetis, Cabezas Grandes): `3` (`gg_head`).
+
+### 3. Shading de Sangre Oscura y Realismo Visceral
+- **Eliminación del Especular Blanco:** El brillo plástico blanco `spec * float3(0.95, 0.85, 0.85)` fue reemplazado por un destello húmedo teñido en carmesí profundo `spec * float3(0.38, 0.05, 0.05)` con exponente concentrado (40.0), eliminando cualquier sobreexposición o apariencia de plástico blanco lechoso.
+- **Sangre Coagulada Oscura (Hemoglobina Realista):** La base de las gotas de sangre pasó de rojo claro/fosforito `(0.75, 0.03, 0.03)` a rojo granate/burdeos coagulado `(0.18, 0.009, 0.007)`, luciendo densa, oscura y visceral tanto en espacios sombríos como bajo antorchas.
+- **Geiser Arterial y Goteo Físico Multi-Trayectoria:**
+  - 24 gotas arteriales proyectadas a alta presión con oscilaciones cardíacas y arcos balísticos.
+  - 16 gotas de goteo pesado cayendo verticalmente desde el muñón hacia el suelo.
+  - 12 gotas en estela espiral detrás de la cabeza en rotación durante su vuelo.
+- **Verificación Completa:**
+  - 144 / 144 CTests nativos superados (`steamvr/build_windows.ps1 -Test`).
+  - 17 / 17 tests de identidad de mod en Python superados (`steamvr/mod_identity_test.py`).
+  - DLL instalada y verificada en `mods/D2R-PCVR` y `mods/pcvr-dev`.

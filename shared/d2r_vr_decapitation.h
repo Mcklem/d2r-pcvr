@@ -12,6 +12,90 @@
 
 namespace framevr::decap {
 
+// Returns true if a model archive path represents a decapitable humanoid enemy
+// Filters out player models, items, summons, act bosses, quest bosses, and non-humanoids
+inline bool IsDecapitableModel(std::string_view model) {
+    if (model.empty()) return false;
+    std::string lo;
+    lo.reserve(model.size());
+    for (char c : model) lo.push_back(static_cast<char>(tolower(static_cast<unsigned char>(c))));
+
+    // 1. Never decapitate player characters, hirelings, summons, or items
+    if (lo.find("/character/player/") != std::string::npos ||
+        lo.find("/items/") != std::string::npos ||
+        lo.find("hire") != std::string::npos ||
+        lo.find("pet") != std::string::npos ||
+        lo.find("valkyrie") != std::string::npos ||
+        lo.find("golem") != std::string::npos ||
+        lo.find("shadowmaster") != std::string::npos ||
+        lo.find("shadowwarrior") != std::string::npos) {
+        return false;
+    }
+
+    // 2. Never decapitate Act Bosses & major Quest Bosses (Andariel, Duriel, Mephisto, Diablo, Baal, etc.)
+    if (lo.find("andariel") != std::string::npos ||
+        lo.find("duriel") != std::string::npos ||
+        lo.find("mephisto") != std::string::npos ||
+        lo.find("diablo") != std::string::npos ||
+        lo.find("baal") != std::string::npos ||
+        lo.find("izual") != std::string::npos ||
+        lo.find("radament") != std::string::npos ||
+        lo.find("summoner") != std::string::npos ||
+        lo.find("nihlathak") != std::string::npos ||
+        lo.find("hephasto") != std::string::npos ||
+        lo.find("ancientbarb") != std::string::npos ||
+        lo.find("uberancient") != std::string::npos) {
+        return false;
+    }
+
+    // 3. Never decapitate non-humanoids (worms, spiders, insects, beasts, snakes, ghosts, traps)
+    if (lo.find("maggot") != std::string::npos ||
+        lo.find("worm") != std::string::npos ||
+        lo.find("larva") != std::string::npos ||
+        lo.find("spider") != std::string::npos ||
+        lo.find("arach") != std::string::npos ||
+        lo.find("scarab") != std::string::npos ||
+        lo.find("bug") != std::string::npos ||
+        lo.find("beetle") != std::string::npos ||
+        lo.find("scorpion") != std::string::npos ||
+        lo.find("swarm") != std::string::npos ||
+        lo.find("mosquito") != std::string::npos ||
+        lo.find("clawviper") != std::string::npos ||
+        lo.find("snake") != std::string::npos ||
+        lo.find("vulture") != std::string::npos ||
+        lo.find("bat") != std::string::npos ||
+        lo.find("crow") != std::string::npos ||
+        lo.find("bird") != std::string::npos ||
+        lo.find("tentacle") != std::string::npos ||
+        lo.find("defiler") != std::string::npos ||
+        lo.find("vine") != std::string::npos ||
+        lo.find("creeper") != std::string::npos ||
+        lo.find("willowisp") != std::string::npos ||
+        lo.find("wraith") != std::string::npos ||
+        lo.find("fingermage") != std::string::npos ||
+        lo.find("scimitar") != std::string::npos ||
+        lo.find("door") != std::string::npos ||
+        lo.find("wall") != std::string::npos ||
+        lo.find("tower") != std::string::npos ||
+        lo.find("catapult") != std::string::npos ||
+        lo.find("trap") != std::string::npos ||
+        lo.find("turret") != std::string::npos ||
+        lo.find("spire") != std::string::npos ||
+        lo.find("sentry") != std::string::npos ||
+        lo.find("frog") != std::string::npos ||
+        lo.find("chicken") != std::string::npos ||
+        lo.find("bunny") != std::string::npos ||
+        lo.find("pig") != std::string::npos ||
+        lo.find("rat") != std::string::npos ||
+        lo.find("horse") != std::string::npos ||
+        lo.find("camel") != std::string::npos ||
+        lo.find("cow") != std::string::npos) {
+        return false;
+    }
+
+    return true;
+}
+
 // Checks if a bone name represents a head joint across common D2R and Biped rigs
 inline bool IsHeadBoneName(std::string_view name) {
     if (name.empty()) return false;
@@ -395,6 +479,7 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
 struct DecapInstance {
     uintptr_t skeletonInstance = 0;
     uint32_t monsterId = 0;
+    uint8_t taxonomy = 0; // 0 = Undead, 1 = Demon, 2 = Beast
     uint64_t decapitatedAt = 0;
     uint64_t expiresAt = 0;
     int headBone = -1;
@@ -410,6 +495,23 @@ struct DecapInstance {
     float floorY = 0.0f;
     bool headPhysics = true;
     bool initialized = false;
+    float monsterWorldPos[3] = {};
+    float currentHeadWorldPos[3] = {};
+    float currentHeadRot[9] = {};
+    bool isResting = false;
+};
+
+// Decoupled 3D physical severed head / skull prop published for independent rendering
+struct SeveredHeadProp {
+    uint32_t monsterId = 0;
+    uint8_t taxonomy = 0; // 0 = Undead, 1 = Demon, 2 = Beast
+    float worldPos[3] = {};
+    float worldRot[9] = {};
+    float neckStumpPos[3] = {};
+    float velocity[3] = {};
+    float elapsedSeconds = 0.0f;
+    bool isResting = false;
+    float scale = 1.0f;
 };
 
 // Thread-safe manager for tracked decapitations in Granny 3D
@@ -421,7 +523,9 @@ public:
     bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
                               const std::vector<uint8_t>& inHead, uint64_t now,
                               float floorY, const float* impulse,
-                              bool headPhysics, uint64_t ttlMs = kDefaultTtlMs) {
+                              bool headPhysics, uint8_t taxonomy = 0,
+                              const float* monsterWorldPos = nullptr,
+                              uint64_t ttlMs = kDefaultTtlMs) {
         if (!self || headBone < 0) return false;
         std::unique_lock lock(mutex_);
 
@@ -435,6 +539,7 @@ public:
         DecapInstance inst{};
         inst.skeletonInstance = self;
         inst.monsterId = monsterId;
+        inst.taxonomy = taxonomy;
         inst.decapitatedAt = now;
         inst.expiresAt = now + ttlMs;
         inst.headBone = headBone;
@@ -442,6 +547,12 @@ public:
         inst.inHead = inHead;
         inst.floorY = floorY;
         inst.headPhysics = headPhysics;
+
+        if (monsterWorldPos) {
+            inst.monsterWorldPos[0] = monsterWorldPos[0];
+            inst.monsterWorldPos[1] = monsterWorldPos[1];
+            inst.monsterWorldPos[2] = monsterWorldPos[2];
+        }
 
         if (impulse && (std::fabs(impulse[0]) > 1e-4f || std::fabs(impulse[2]) > 1e-4f)) {
             inst.velocity[0] = impulse[0];
@@ -472,6 +583,16 @@ public:
 
         instances_[self] = std::move(inst);
         return true;
+    }
+
+    template <typename TaxType>
+    bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
+                              const std::vector<uint8_t>& inHead, uint64_t now,
+                              float floorY, const float* impulse,
+                              bool headPhysics, TaxType taxonomy,
+                              const float* monsterWorldPos = nullptr,
+                              uint64_t ttlMs = kDefaultTtlMs) {
+        return RegisterDecapitation(self, monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics, static_cast<uint8_t>(taxonomy), monsterWorldPos, ttlMs);
     }
 
     bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
@@ -545,52 +666,56 @@ public:
             outPivot[2] = inst.neckPivot[2];
         }
 
+        // Option C: ALWAYS execute Clean Stump on the monster's skeleton!
+        // All head and facial bones are collapsed to the neck pivot with 0.0001f scale.
+        // This guarantees ZERO mesh stretching, ZERO rubber webbing, and ZERO deformation on the corpse.
+        CollapseHeadBones(worldPoses, boneCount, inst.inHead, inst.headBone, inst.neckBone, nullptr);
+
         if (!inst.headPhysics) {
-            CollapseHeadBones(worldPoses, boneCount, inst.inHead, inst.headBone, inst.neckBone, nullptr);
             return true;
         }
 
-        // Severed head physics simulation in model space
+        // Simulate independent decoupled 3D severed head prop physics
         const float t = (now > inst.decapitatedAt) ? float(now - inst.decapitatedAt) / 1000.0f : 0.0f;
         float headPos[3] = {};
         float headRot[9] = {};
         SimulateHeadPhysics(t, inst.headInitialPos, inst.velocity, inst.floorY,
                             inst.spinAxis, inst.spinSpeed, headPos, headRot);
 
-        if (inst.headBone >= 0 && inst.headBone < boneCount) {
-            // Build 4x4 tumble rotation matrix
-            Mat4 rotMat = Mat4::Identity();
-            for (int r = 0; r < 3; ++r) {
-                for (int c = 0; c < 3; ++c) {
-                    rotMat.m[r * 4 + c] = headRot[r * 3 + c];
-                }
-            }
-
-            // Head world matrix: M_head(t) = M_initial * R_tumble + translation headPos
-            Mat4 newHeadMat = Mul4(inst.headInitialMat, rotMat);
-            newHeadMat.m[12] = headPos[0];
-            newHeadMat.m[13] = headPos[1];
-            newHeadMat.m[14] = headPos[2];
-            newHeadMat.m[15] = 1.0f;
-
-            for (int k = 0; k < 16; ++k) {
-                worldPoses[inst.headBone].m[k] = newHeadMat.m[k];
-            }
-
-            // Emparent all descendant bones (jaw, horns, eyes, snout) strictly to newHeadMat
-            // M_child(t) = M_child_local * M_head(t) -> guarantees zero mesh deformation
-            const size_t n = std::min<size_t>(static_cast<size_t>(boneCount), inst.inHead.size());
-            for (size_t i = 0; i < n; ++i) {
-                if (int(i) != inst.headBone && inst.inHead[i] && i < inst.childLocalTransforms.size()) {
-                    Mat4 childWorld = Mul4(inst.childLocalTransforms[i], newHeadMat);
-                    for (int k = 0; k < 16; ++k) {
-                        worldPoses[i].m[k] = childWorld.m[k];
-                    }
-                }
-            }
-        }
+        inst.currentHeadWorldPos[0] = inst.monsterWorldPos[0] + headPos[0];
+        inst.currentHeadWorldPos[1] = inst.monsterWorldPos[1] + headPos[1];
+        inst.currentHeadWorldPos[2] = inst.monsterWorldPos[2] + headPos[2];
+        std::memcpy(inst.currentHeadRot, headRot, sizeof(headRot));
+        inst.isResting = (t > 2.5f);
 
         return true;
+    }
+
+    void GetActiveSeveredHeads(std::vector<SeveredHeadProp>& out, uint64_t now) const {
+        std::shared_lock lock(mutex_);
+        out.clear();
+        for (const auto& pair : instances_) {
+            const auto& inst = pair.second;
+            if (now < inst.expiresAt && inst.initialized && inst.headPhysics) {
+                SeveredHeadProp prop{};
+                prop.monsterId = inst.monsterId;
+                prop.taxonomy = inst.taxonomy;
+                prop.worldPos[0] = inst.currentHeadWorldPos[0];
+                prop.worldPos[1] = inst.currentHeadWorldPos[1];
+                prop.worldPos[2] = inst.currentHeadWorldPos[2];
+                std::memcpy(prop.worldRot, inst.currentHeadRot, sizeof(prop.worldRot));
+                prop.neckStumpPos[0] = inst.monsterWorldPos[0] + inst.neckPivot[0];
+                prop.neckStumpPos[1] = inst.monsterWorldPos[1] + inst.neckPivot[1];
+                prop.neckStumpPos[2] = inst.monsterWorldPos[2] + inst.neckPivot[2];
+                prop.velocity[0] = inst.velocity[0];
+                prop.velocity[1] = inst.velocity[1];
+                prop.velocity[2] = inst.velocity[2];
+                prop.elapsedSeconds = (now > inst.decapitatedAt) ? float(now - inst.decapitatedAt) / 1000.0f : 0.0f;
+                prop.isResting = inst.isResting;
+                prop.scale = 1.0f;
+                out.push_back(prop);
+            }
+        }
     }
 
     void PruneExpired(uint64_t now) {

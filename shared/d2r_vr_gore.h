@@ -68,20 +68,100 @@ inline bool IsBluntWeapon(uint32_t weaponType) {
 }
 
 inline BloodTaxonomy TaxonomyForMonster(uint32_t classId) {
-    // Skeletons, Zombies, Wraiths, Mummies, Vampires, Knights
-    if ((classId <= 3) || (classId >= 16 && classId <= 20) || (classId >= 64 && classId <= 74)) {
+    // Skeletons, Zombies, Mummies, Vampires, Reanimated
+    if ((classId <= 9) || (classId >= 96 && classId <= 105) || (classId >= 131 && classId <= 135) ||
+        (classId >= 170 && classId <= 174) || (classId >= 274 && classId <= 277) ||
+        (classId >= 575 && classId <= 579) || (classId >= 620 && classId <= 626) ||
+        (classId >= 648 && classId <= 649) || (classId >= 667 && classId <= 670) ||
+        (classId >= 695 && classId <= 703) || (classId >= 725 && classId <= 731)) {
         return BloodTaxonomy::UndeadRot;
     }
-    // Sand Maggots, Giant Spiders, Mosquitoes, Swarms
-    if ((classId >= 58 && classId <= 63) || (classId >= 150 && classId <= 165)) {
+    // Sand Maggots, Giant Spiders, Mosquitoes, Swarms, Scarabs
+    if ((classId >= 68 && classId <= 72) || (classId >= 87 && classId <= 95) ||
+        (classId >= 114 && classId <= 117) || (classId >= 122 && classId <= 126) ||
+        (classId >= 180 && classId <= 184) || (classId >= 190 && classId <= 194) ||
+        classId == 227 || classId == 283 || (classId >= 284 && classId <= 288) ||
+        (classId >= 551 && classId <= 555) || (classId >= 654 && classId <= 655) ||
+        (classId >= 679 && classId <= 681) || classId == 685 || classId == 715 ||
+        classId == 716 || classId == 717 || classId == 718) {
         return BloodTaxonomy::InsectBile;
     }
-    // Beasts, Animals (Quill Rats, Yetis, Brutes, Blood Hawks)
-    if ((classId >= 21 && classId <= 35) || (classId >= 40 && classId <= 45)) {
+    // Beasts, Animals, Goatmen, Brutes, Yetis, Baboons
+    if ((classId >= 10 && classId <= 14) || (classId >= 24 && classId <= 28) ||
+        (classId >= 48 && classId <= 57) || (classId >= 63 && classId <= 67) ||
+        (classId >= 78 && classId <= 86) || (classId >= 127 && classId <= 130) ||
+        (classId >= 186 && classId <= 189) || (classId >= 501 && classId <= 505) ||
+        (classId >= 580 && classId <= 589) || (classId >= 604 && classId <= 607) ||
+        (classId >= 609 && classId <= 612) || (classId >= 618 && classId <= 619) ||
+        (classId >= 627 && classId <= 630) || (classId >= 665 && classId <= 666)) {
         return BloodTaxonomy::BeastCrimson;
     }
-    // Default to Demonic Ichor for Fallens, Megademons, Overlords, Bosses
+    // Default to Demonic Ichor for Fallens, Shamans, Corrupt Rogues, Succubus, Doom Knights, Megademons, Overlords, Bosses
     return BloodTaxonomy::DemonIchor;
+}
+
+// Returns true if the class ID represents an Act Boss or major Quest Boss (never decapitable)
+inline bool IsBossClass(uint32_t classId) {
+    if (classId == 156 || classId == 707 ||                  // Andariel / Uber Andariel
+        classId == 211 || classId == 708 ||                  // Duriel / Uber Duriel
+        classId == 242 || classId == 333 || classId == 401 || classId == 704 || // Mephisto / Clone / Uber
+        classId == 243 || classId == 705 ||                  // Diablo / Uber Diablo
+        classId == 543 || classId == 544 || classId == 545 || classId == 557 || classId == 559 || classId == 570 || classId == 709 || // Baal forms
+        (classId >= 562 && classId <= 566) ||                // Baal tentacles
+        classId == 229 ||                                    // Radament
+        classId == 250 ||                                    // The Summoner
+        classId == 256 || classId == 406 || classId == 706 || // Izual / Ghost / Uber
+        classId == 409 ||                                    // Hephasto the Armorer
+        classId == 514 || classId == 526 ||                  // Nihlathak
+        (classId >= 537 && classId <= 542)) {                // Ancients (statues + barbs)
+        return true;
+    }
+    return false;
+}
+
+// Returns true if the class ID represents a non-humanoid creature (worms, spiders, beetles, snakes, swarms, bats, ghosts, traps)
+inline bool IsNonHumanoidClass(uint32_t classId) {
+    // Worms, maggots, larvae
+    if ((classId >= 68 && classId <= 72) || (classId >= 180 && classId <= 184) ||
+        (classId >= 190 && classId <= 194) || classId == 227 || classId == 283 ||
+        (classId >= 284 && classId <= 288) || (classId >= 551 && classId <= 555) ||
+        (classId >= 679 && classId <= 681) || classId == 716) return true;
+    // Spiders, arachnids
+    if ((classId >= 122 && classId <= 126) || classId == 685 || classId == 717) return true;
+    // Scarabs, beetles, bugs
+    if ((classId >= 91 && classId <= 95) || (classId >= 654 && classId <= 655) || classId == 718) return true;
+    // Claw vipers, snakes
+    if ((classId >= 73 && classId <= 77) || (classId >= 594 && classId <= 598)) return true;
+    // Swarms, mosquitoes
+    if ((classId >= 87 && classId <= 90) || (classId >= 114 && classId <= 117) || classId == 715) return true;
+    // Birds, vultures, foul crows
+    if ((classId >= 15 && classId <= 18) || (classId >= 110 && classId <= 113) ||
+        classId == 157 || classId == 158 || (classId >= 206 && classId <= 209) ||
+        (classId >= 590 && classId <= 593) || classId == 608 || classId == 738) return true;
+    // Bats
+    if ((classId >= 136 && classId <= 140) || classId == 159 || (classId >= 650 && classId <= 651)) return true;
+    // Incorporeal ghosts, wraiths, will-o-wisps
+    if ((classId >= 38 && classId <= 42) || (classId >= 118 && classId <= 121) ||
+        (classId >= 631 && classId <= 633) || (classId >= 639 && classId <= 641) ||
+        classId == 732 || classId == 733) return true;
+    // Finger mages (spirits)
+    if (classId >= 692 && classId <= 693) return true;
+    // Tentacles, water watchers
+    if (classId >= 258 && classId <= 263) return true;
+    // Traps, siege engines, barrels, doors
+    if ((classId >= 230 && classId <= 234) || classId == 273 || (classId >= 484 && classId <= 491) ||
+        (classId >= 497 && classId <= 500) || (classId >= 516 && classId <= 519) ||
+        (classId >= 524 && classId <= 525) || classId == 528 || classId == 574 ||
+        classId == 710 || classId == 711) return true;
+    // Passive town critters, animals
+    if ((classId >= 149 && classId <= 151) || classId == 179 || classId == 185 ||
+        classId == 556 || (classId >= 734 && classId <= 737)) return true;
+    return false;
+}
+
+// Decapitation is strictly allowed only for standard humanoid / biped enemies
+inline bool IsDecapitableClass(uint32_t classId) {
+    return !IsBossClass(classId) && !IsNonHumanoidClass(classId);
 }
 
 inline GoreType ClassifyMeleeGore(uint32_t weaponType, bool lethal, bool critical) {

@@ -3461,13 +3461,12 @@ void DecapitateMonster(uintptr_t self) {
     // Fast path: if no gore events in queue, skip matching
     if (framevr::gore::Queue().Count() == 0) return;
 
-    // Filter out player models and items
+    // Filter out player models, items, bosses, and non-humanoids
     uintptr_t modelInst = 0, skel = 0, nameObj = 0, nameP = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
     Get(self, &nameObj); Get(nameObj + 8, &nameP);
     const std::string model = Str(nameP);
-    if (model.empty() || model.find("/character/player/") != std::string::npos ||
-        model.find("/items/") != std::string::npos) {
+    if (!framevr::decap::IsDecapitableModel(model)) {
         return;
     }
 
@@ -3506,7 +3505,17 @@ void DecapitateMonster(uintptr_t self) {
             const float floorY = 0.0f;
             const bool headPhysics = true;
 
-            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics);
+            uint8_t propTaxonomy = 2; // default dm_head (official Blizzard horned demon head for Fallen, Shamans, Rogues, etc.)
+            if (model.find("skeleton") != std::string::npos || model.find("sk_") != std::string::npos || model.find("skmage") != std::string::npos) {
+                propTaxonomy = 0; // sk_skull (official Blizzard skeleton skull)
+            } else if (model.find("zombie") != std::string::npos || model.find("corpse") != std::string::npos || model.find("reanimated") != std::string::npos || model.find("mummy") != std::string::npos) {
+                propTaxonomy = 1; // zb_head (official Blizzard bloody severed zombie head)
+            } else if (model.find("brute") != std::string::npos || model.find("goat") != std::string::npos || model.find("yeti") != std::string::npos || model.find("bighead") != std::string::npos || model.find("blunderbore") != std::string::npos || model.find("gargoyle") != std::string::npos) {
+                propTaxonomy = 3; // gg_head (official Blizzard gargoyle / horned beast head)
+            } else {
+                propTaxonomy = 2; // dm_head (official Blizzard horned demon head: Fallen, Shamans, Corrupt Rogues, Succubus, Doom Knights, Fetishes)
+            }
+            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics, propTaxonomy, pos);
 
             uintptr_t world = 0;
             int32_t wpCount = 0;

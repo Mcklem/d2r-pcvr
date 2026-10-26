@@ -715,7 +715,7 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
 
                 // Circumstantial decapitation check
                 bool shouldDecapitate=false;
-                if(isGoreActive && framevr::gore::IsCuttingWeapon(weaponType) && lethal) {
+                if(isGoreActive && lethal) {
                     const auto now = GetTickCount64();
                     const bool isRiposte = (riposteMonster.load() == header[2] && now < riposteUntil.load());
                     const int damageDealt = before - value;
@@ -743,9 +743,19 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
                     }
                 }
 
+                // Never decapitate Act Bosses (Andariel, Duriel, Mephisto, Diablo, Baal) or non-humanoids
+                if (shouldDecapitate && !framevr::gore::IsDecapitableClass(header[1])) {
+                    shouldDecapitate = false;
+                }
+
+                // Every weapon (blades, blunt, polearms, spears, bows, claws, unarmed)
+                // can trigger the decapitation burst; the weapon only changes the
+                // fallback gore type when no decapitation is rolled.
                 auto goreType = framevr::gore::ClassifyMeleeGore(weaponType, lethal, false);
-                if (framevr::gore::IsCuttingWeapon(weaponType)) {
-                    goreType = shouldDecapitate ? framevr::gore::GoreType::SlashDecapitation : framevr::gore::GoreType::GenericLethal;
+                if (shouldDecapitate) {
+                    goreType = framevr::gore::GoreType::SlashDecapitation;
+                } else if (goreType == framevr::gore::GoreType::SlashDecapitation) {
+                    goreType = framevr::gore::GoreType::GenericLethal;
                 }
                 if (!isGoreActive) {
                     goreType = framevr::gore::GoreType::None;
