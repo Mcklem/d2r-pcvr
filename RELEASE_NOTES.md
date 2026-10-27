@@ -1,57 +1,61 @@
-# D2R VR Unleashed v0.3.27 - Windows preview
+# D2R VR Unleashed v0.3.28 - Windows preview
 
-This update makes the full map on your wrist fast, brings frame generation back
-after By turns under Virtual Desktop and starts it without a game restart, and
-treats trigger melee like a swing in Unleashed.
+This update removes the flickering outline round roofs and trees in By turns,
+keeps the minimap, VR Settings and NPC dialogue working with frame generation on,
+and lets you choose how fast you run.
 
 ## Gameplay and combat
 
-- **Trigger melee follows the Unleashed rules - contributed by ChuckRibbits:**
-  A basic attack or melee skill on the trigger, and Smite, now counts as a stroke
-  like a swing. Your attack rating scales its damage, and its other effects
-  (procs, leech, critical strikes) happen only when the game's own hit roll would
-  have landed. It shares your swings' recovery, so mixing trigger attacks with
-  swings is never faster than swinging. Trigger attacks in a row are still paced
-  only by their animation, and multi-hit skills such as Zeal keep every hit. Smite
-  still always hits and is not scaled by attack rating. With a low attack rating,
-  trigger attacks now deal less damage, on average what the game would deal with
-  its misses.
-- **Swing speed follows skill speed and slows - contributed by ChuckRibbits:** In
-  human form, Fanaticism, Frenzy and Burst of Speed now shorten your swings'
-  recovery, and chill and Decrepify lengthen it, as they already did in Werewolf
-  and Werebear form.
+- **Movement speed - contributed by ChuckRibbits:** **VR Settings > VR >
+  Movement speed** sets how fast you run: **Walk**, **Base run** (your class's run
+  with no speed bonus), then 10% steps up to **Full run** (the default, the full
+  speed your gear and skills give). It never runs faster than the game, and
+  movement skills keep their own speed. It replaces the skill wheel's RUN / WALK
+  box.
+- **Switch walk and run with the stick:** Turn on **Stick toggle**, beside
+  Movement speed, to switch between walking and that run by pushing the right
+  stick up. It is off by default. From Walk, a push runs at full speed.
+- **Werewolf and Werebear claws reach further - contributed by ChuckRibbits:**
+  The claws' strike area is longer and thicker, so big, long-armed monsters such
+  as Yetis and Brutes are easier to hit.
 
 ## Controls and interface
 
-- **The full map on your wrist keeps the frame rate:** With **Map view** set to
-  Full map or Full top-down, looking at the wrist map no longer drops the frame
-  rate. The search for your hero on the map ran on a single GPU thread and took
-  over 20 ms of GPU time a frame; it now takes about 0.1 ms. The arrow keeps a steady size
-  while you move.
-- **The full map's arrow matches your hero - contributed by beadlebytes:** The
-  heading arrow is sized from your hero's X at every game zoom. It no longer grows
-  to several times its size next to water, as in the Rogue Encampment, or pulls
-  the map off the hero.
+- **The Paladin aura icon leaves your view - contributed by beadlebytes:** The
+  game's flat aura icon no longer hangs in front of each eye. Active auras still
+  show on your wrist while **VR Settings > HUD > Companions & effects** is on;
+  turn that row off to bring the icon back.
+- **VR Settings with frame generation:**
+  - The Perf page no longer shows frame-rate numbers while frame generation is
+    active. A menu slows the game down, so the numbers were too low. To check the
+    frame rate while playing, use fpsVR or SteamVR's performance graph.
+  - With **Stereo rendering** on By turns, frame generation's rows and status line
+    are hidden, since it runs with Both eyes only.
+- **Map zoom finds its game code by pattern - contributed by beadlebytes:** The
+  full map's zoom no longer depends on fixed game addresses, so it is more likely
+  to keep working after a game update. It works on the current Steam build,
+  3.3.94995.
 
 ## Visuals and stability
 
-- **Frame generation starts when you turn it on:** Turning it on in **VR Settings
-  > Perf** now restarts the VR session, a moment of black, and OFXR Bridge runs
-  without restarting the game.
-- **Frame generation with Virtual Desktop:**
-  - Switching to By turns and back to Both eyes no longer leaves frame generation
-    failed. If OFXR Bridge fails to resume, the VR session restarts once and it
-    runs again.
-  - The mod's menus and panels now bypass OFXR Bridge under Virtual Desktop, as
-    they already did under SteamVR.
-  - With Virtual Desktop's Synchronous Spacewarp (SSW) on as well, the game could
-    draw only a quarter of the headset's frames. The Perf page now warns in amber
-    when that happens. Set SSW to **Disabled** in Virtual Desktop when you use
-    frame generation.
+- **By turns: no more flickering outline round roofs and trees:** In By turns, a
+  dark, pixelated band flickered round hut roofs, treetops and far buildings
+  against the sky. The game draws those edges without depth, so they moved with
+  the sky instead of with the object. They now move with their objects, and the
+  sky covers the dark rim that remained.
+- **The minimap, VR Settings and NPC dialogue with frame generation:** SteamVR
+  gives a game a limited number of panels, and frame generation takes several of
+  them. The wrist minimap, VR Settings and the game's own menus were refused in
+  turn: one of them stayed hidden, or NPC dialogue fell back to a flat panel. The
+  mod's panels now share images, leaving room for all of them.
+- **Bone Armor circles at your feet - contributed by ChuckRibbits:** The
+  Necromancer's Bone Armor now orbits just above the floor instead of at waist
+  height, where it crowded the view. `[render] bone_armor_height` in
+  `d2r_pcvr.ini` sets its height: 0 is the floor and 3 the original height.
 
 ## Updating
 
-Download **D2R-PCVR-Setup-0.3.27.exe** for graphical installation, or
+Download **D2R-PCVR-Setup-0.3.28.exe** for graphical installation, or
 **d2r-pcvr-windows.zip** for portable setup. Existing users should choose
 **Update / repair and keep calibration and video settings**.
 
@@ -73,7 +77,7 @@ portable setup remain available; Authentic is a separate optional mod.
 1. Install and start the original Diablo II: Resurrected through Steam or
    Battle.net once. Complete its account prompts, create or select an offline
    character, then fully exit the game.
-2. Download **D2R-PCVR-Setup-0.3.27.exe** from the assets below. Fully exit
+2. Download **D2R-PCVR-Setup-0.3.28.exe** from the assets below. Fully exit
    Steam using **Steam > Exit**, then run Setup and choose **Full install with
    recommended settings**. Follow the wizard to select your game copy, headset
    and connection; the shared launcher is included.
@@ -108,31 +112,35 @@ Installer failures are recorded separately in
 
 ## Verification and known issues
 
-The release build passed **142 native checks**. **250 of 255 Python checks**
+The release build passed **146 native checks**. **249 of 254 Python checks**
 passed on Windows: the 4 session checks need Linux's `/proc`, and 1 symbolic-link
 check was skipped because this Windows session cannot create symbolic links. The
 in-headset Notes pages were rendered and inspected for fit and content.
 
 Tested in a headset with offline characters on Steam D2R 3.3.94995:
-- **The full map's frame rate:** tested on a Steam Frame through SteamVR at
-  3072x3072, with Full top-down and rotation on. With the map up, Both eyes went
-  from 25 to 45 frame pairs a second, and By turns from 39 to 69-74 frames a
-  second (88-89 with the map down). The arrow kept a steady size while moving.
-- **Turning frame generation on while playing:** tested through SteamVR. It ran
-  about 5 seconds after Apply.
-- **Virtual Desktop:** the problems above were reproduced with Virtual Desktop on
-  v0.3.26, and found in a tester's logs with an RTX 4090. With SSW Disabled, frame
-  generation held 44-45 real frames a second for the whole run. The fixes
-  themselves have not been retested in a headset yet.
+- **By turns' outline:** tested on a Steam Frame through SteamVR in Kurast Docks.
+  The outline round roofs and trees against the sky was gone with the new
+  defaults.
+- **Panels with frame generation:** tested on a Steam Frame through SteamVR, with
+  Both eyes and NVIDIA frame generation. The wrist minimap, VR Settings and NPC
+  dialogue all showed in the same session, and SteamVR refused no panel.
+- **Map zoom and the aura icon on 3.3.94995:** the logs of those sessions show the
+  map zoom found by its patterns and zooming, and the Paladin aura icon hidden.
 
 Contributed features were tested by their authors before review:
-- the arrow size, by beadlebytes, on a Quest 3 through SteamVR (Battle.net
-  edition) at every game zoom, but at only one map size;
-- trigger melee and swing speed, by ChuckRibbits, with a Paladin on v0.3.25. Not
-  yet covered: dual wield, Druid forms on the trigger, Bash, Frenzy, Burst of
-  Speed, Decrepify and a low attack rating.
+- Movement speed, by ChuckRibbits, through SteamVR: Walk and Full run from VR
+  Settings, and the speed of every stop with and without speed bonuses;
+- Bone Armor's height, by ChuckRibbits, on a Quest 3;
+- the aura icon, by beadlebytes, through SteamVR on D2R 3.3.93847;
+- map zoom by pattern, by beadlebytes, on a Quest 3 through SteamVR.
+
+Not yet tested in a headset: the Stick toggle, the Perf page's note, hiding frame
+generation's rows by turns, and the longer Werewolf and Werebear claws.
 
 Known issues:
+- **Typing into menus:** while the laser points at a menu, the keyboard does not
+  type into text boxes, such as the game name of a TCP/IP game. A fix is being
+  tested.
 - **Virtual Desktop freezes:** the game freezes for about a tenth of a second
   every so often under Virtual Desktop, with or without frame generation. This is
   being investigated.
@@ -141,13 +149,14 @@ Known issues:
 - **Stuns in Unleashed:** a stun now only knocks you back. You can move again as
   soon as the knockback ends, even while the stun is still shown.
 - **Frame generation is experimental.** It uses a pre-release bridge. Expect
-  artifacts around moving monsters and during fast head turns. Frame counters,
-  including the Perf page's, count only the frames the game draws. Once, with it
-  on, the Escape menu fell back to the flat panel.
+  artifacts around moving monsters and during fast head turns. Frame counters
+  count only the frames the game draws, and a menu stops the generated frames
+  while it is open.
 - **Throwing potions:** the burst follows the game's short throw animation, and
   only right-hand potions are thrown by hand for now.
-- **By turns:** it still renders each eye on alternate frames. Transparent
-  effects and wispy hair without useful depth may keep artifacts.
+- **By turns:** it still renders each eye on alternate frames. Small bits of
+  texture can still flicker along some edges, and transparent effects and wispy
+  hair without useful depth may keep artifacts.
 - **Sorceress elemental hands:** they are drawn over the picture, so they can show
   through your weapon or a wall.
 - **Not retested:** the latest rendering changes have not been retested on other
@@ -156,9 +165,10 @@ Known issues:
 ## Special thanks
 
 Thanks to **beadlebytes** for smarter aiming, ground skills, the bow path laser,
-the forearm and shield, wrist map zoom, centered auras and the full map's arrow.
-Thanks to **ChuckRibbits** for Druid shapeshifting, the strike framework,
-Unleashed combat, the knockback fix and trigger melee. Thanks to **Mcklem** for the
+the forearm and shield, wrist map zoom, centered auras, the full map's arrow and
+the aura icon. Thanks to **ChuckRibbits** for Druid shapeshifting, the strike
+framework, Unleashed combat, the knockback fix, trigger melee, movement speed,
+the wereform claws and Bone Armor's height. Thanks to **Mcklem** for the
 mercenary, enemy sight, torches and the Kurast Docks fix. Thanks to
 **tig3rmast3r** for OFXR Bridge, and to everyone testing, reporting bugs and
 helping improve the mod!
@@ -167,22 +177,25 @@ D2R VR Unleashed is a mod by **monkeylashes**, with contributions from the commu
 
 ## Downloads and links
 
-- [Windows installer, portable ZIP and checksums](https://github.com/bearstonem/d2r-pcvr/releases/tag/v0.3.27-windows-preview)
-- [Installation instructions](https://github.com/bearstonem/d2r-pcvr/blob/v0.3.27-windows-preview/INSTALL-WINDOWS.md)
-- [Controls](https://github.com/bearstonem/d2r-pcvr/blob/v0.3.27-windows-preview/CONTROLS.md)
-- [Full source comparison](https://github.com/bearstonem/d2r-pcvr/compare/v0.3.26-windows-preview...v0.3.27-windows-preview)
+- [Windows installer, portable ZIP and checksums](https://github.com/bearstonem/d2r-pcvr/releases/tag/v0.3.28-windows-preview)
+- [Installation instructions](https://github.com/bearstonem/d2r-pcvr/blob/v0.3.28-windows-preview/INSTALL-WINDOWS.md)
+- [Controls](https://github.com/bearstonem/d2r-pcvr/blob/v0.3.28-windows-preview/CONTROLS.md)
+- [Full source comparison](https://github.com/bearstonem/d2r-pcvr/compare/v0.3.27-windows-preview...v0.3.28-windows-preview)
 - [Project on GitHub](https://github.com/bearstonem/d2r-pcvr)
 - [Discord](https://discord.gg/DmbFfJAnnm)
 - [Support](https://ko-fi.com/bearstonem)
 
 <!-- PCVR_IN_HEADSET_NOTES
-release: v0.3.27-windows-preview
+release: v0.3.28-windows-preview
 credits: ChuckRibbits; beadlebytes; Mcklem; tig3rmast3r (OFXR Bridge); Sergious.
-- Wrist full map: looking at it no longer drops the frame rate (Full map, Full top-down).
-- The full map's arrow matches your hero's X at every zoom, even next to water.
-- Trigger melee and Smite count as strokes: attack rating, hit-roll effects, shared recovery.
-- Swing speed follows Fanaticism, Frenzy, Burst of Speed and slows such as chill.
-- Frame generation starts when you turn it on: the VR session restarts, no game restart.
-- Virtual Desktop: frame generation comes back after By turns; panels bypass OFXR Bridge.
-- Perf warns when Virtual Desktop's SSW halves frame generation again: set SSW to Disabled.
+- By turns: no more flickering outline round roofs, trees and buildings against the sky.
+- Minimap, VR Settings and NPC dialogue all show with frame generation on.
+- Movement speed (VR tab, last row): Walk, Base run, Run 10-90% or Full run.
+- Stick toggle beside it: right stick up switches walk and run again (off by default).
+- Werewolf and Werebear claws reach further, so big monsters are easier to hit.
+- Bone Armor circles at your feet instead of your waist.
+- The Paladin aura icon no longer hangs in your view; auras still show on the wrist.
+- Perf hides its frame-rate numbers while frame generation runs: use fpsVR in play.
+- By turns hides frame generation's settings: it runs with Both eyes only.
+- Map zoom finds its game code by pattern, so it is likelier to survive game updates.
 PCVR_IN_HEADSET_NOTES -->

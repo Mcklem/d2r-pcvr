@@ -75,6 +75,8 @@ target_sources(d2rl-pcvr PRIVATE ${ROOT}/vr/settings_menu.cpp ${CMAKE_CURRENT_SO
 target_sources(d2rl-pcvr PRIVATE ${ROOT}/vr/native_belt.cpp ${ROOT}/vr/quick_items.cpp ${ROOT}/vr/melee_weapon.cpp)
 target_sources(d2rl-pcvr PRIVATE ${ROOT}/vr/breakables.cpp ${ROOT}/vr/offline_difficulty.cpp ${ROOT}/vr/enemy_sight.cpp)
 target_sources(d2rl-pcvr PRIVATE ${ROOT}/vr/target_lock.cpp)
+add_executable(map-sigs-test map_sigs_test.cpp)   # Map view = Full map: the patterns at their sites
+target_include_directories(map-sigs-test PRIVATE ${ROOT}/cleanroom/sigscan)
 add_executable(offline-difficulty-test offline_difficulty_test.cpp)
 target_include_directories(offline-difficulty-test PRIVATE ${ROOT}/cleanroom/sigscan ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(offline-difficulty-test PRIVATE framevr-runtime)
@@ -158,6 +160,7 @@ target_link_libraries(portal-billboard-test PRIVATE framevr-runtime)
 add_executable(shrine-trace-test shrine_trace_test.cpp)
 add_executable(shrine-placement-test shrine_placement_test.cpp)
 add_executable(overlay-view-test overlay_view_test.cpp)
+add_executable(bone-armor-height-test bone_armor_height_test.cpp)
 add_executable(composition-layers-test composition_layers_test.cpp)
 target_include_directories(composition-layers-test PRIVATE ${OPENXR_SDK}/include)
 target_link_libraries(composition-layers-test PRIVATE framevr-runtime)
@@ -169,6 +172,7 @@ add_executable(shield-guard-test shield_guard_test.cpp)
 add_executable(shapeshift-gesture-test shapeshift_gesture_test.cpp)
 add_executable(guard-strain-test guard_strain_test.cpp)
 add_executable(heartbeat-test heartbeat_test.cpp)
+add_executable(run-speed-test run_speed_test.cpp)
 add_executable(logging-test logging_test.cpp logging.cpp)
 set_target_properties(logging-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/logging-fixture/plugins")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/logging-fixture/logs")
@@ -252,6 +256,10 @@ target_link_libraries(ui-blit-marker-test PRIVATE d3d12 dxgi framevr-runtime)
 add_executable(turn-warp-test turn_warp_test.cpp turn_warp.cpp)
 add_executable(replay-test replay_test.cpp)
 target_link_libraries(turn-warp-test PRIVATE d3d12 dxgi framevr-runtime)
+add_executable(turn-replay turn_replay.cpp turn_warp.cpp)   # development: a By turns capture's frame through the warp again
+target_link_libraries(turn-replay PRIVATE d3d12 dxgi framevr-runtime)
+add_executable(turn-capture-test turn_capture_test.cpp)
+add_executable(panel-atlas-test panel_atlas_test.cpp)
 add_executable(swapchain-color-test swapchain_color_test.cpp)
 target_link_libraries(swapchain-color-test PRIVATE d3d12 dxgi d3dcompiler framevr-runtime)
 add_executable(interaction-preview interaction_preview.cpp interaction_ui.cpp companion_ui.cpp interaction_icons.cpp interaction_assets.rc)
@@ -323,10 +331,10 @@ add_test(NAME light-bounds-test COMMAND light-bounds-test)
 set_tests_properties(light-bounds-test PROPERTIES TIMEOUT 30)
 foreach(test_target IN ITEMS memory-test hook-metrics-test active-keys-test resource-descriptions-test latest-worker-test haptic-pulse-test thread-stats-test
     gameplay-test weapon-skills-test quick-cast-test hand-controls-test elemental-hands-test skill-pad-test interact-press-test sewer-interaction-test notice-card-test mod-layout-test spell-aim-test bow-pose-test crossbow-pose-test body-tracking-test shapeshift-form-test shield-steady-test body-calibration-test shoulder-swap-test blood-screen-test
-    portal-billboard-test shrine-trace-test shrine-placement-test overlay-view-test composition-layers-test projectile-rules-test environment-cutaway-test roof-materials-test stereo-prop-physics-test dropped-bottles-test props-test
-    combat-rules-test strike-skills-test skill-usage-test shield-guard-test shapeshift-gesture-test guard-strain-test heartbeat-test logging-test melee-contact-test melee-weapon-test breakables-test offline-difficulty-test enemy-sight-test attack-speed-test world-coordinates-test bow-flight-test bow-laser-test spell-cast-test spell-aim-assist-test
+    portal-billboard-test shrine-trace-test shrine-placement-test overlay-view-test bone-armor-height-test composition-layers-test projectile-rules-test environment-cutaway-test roof-materials-test stereo-prop-physics-test dropped-bottles-test props-test
+    combat-rules-test strike-skills-test skill-usage-test shield-guard-test shapeshift-gesture-test guard-strain-test heartbeat-test run-speed-test logging-test melee-contact-test melee-weapon-test breakables-test offline-difficulty-test enemy-sight-test attack-speed-test world-coordinates-test bow-flight-test bow-laser-test spell-cast-test spell-aim-assist-test
     interaction-test dev-scenarios-test native-belt-test wrist-hud-test map-zoom-test navigation-info-test companions-test active-effects-test dropped-item-labels-test stick-gestures-test show-items-command-test native-hud-test render-resolution-test render-pointer-test scene-depth-test game-device-only-test controller-bindings-test journal-test native-panels-test
-    vr-settings-test vr-settings-store-test controller-labels-test math-test deferred-draw-test monster-bars-test telegraph-test aim-reach-test aim-rules-test target-cone-test gaze-test window-focus-test callback-ticket-test local-player-test shield-block-test trigger-melee-test companion-ai-test torch-light-test frame-generation-test)
+    vr-settings-test vr-settings-store-test controller-labels-test math-test deferred-draw-test monster-bars-test telegraph-test aim-reach-test aim-rules-test target-cone-test gaze-test window-focus-test callback-ticket-test local-player-test shield-block-test trigger-melee-test companion-ai-test torch-light-test frame-generation-test turn-capture-test panel-atlas-test)
   # These fixtures use assert for their checks, including in Release builds.
   if(MSVC)
     target_compile_options(${test_target} PRIVATE /UNDEBUG)

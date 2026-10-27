@@ -1198,6 +1198,10 @@ bool LocalPlayerUnit(uintptr_t& unit) {
        !Read(player.unit,header)||header[0]!=0||header[2]!=player.id)return false;
     unit=player.unit;return true;
 }
+bool UnitStat(uintptr_t unit,int stat,int& value) {
+    if(unit<0x10000||!d2rsig::Check(GetStatRva,GetStatSig,sizeof GetStatSig))return false;
+    value=reinterpret_cast<GetStatFn>(d2rsig::Addr(GetStatRva))(unit,stat,0);return true;
+}
 bool LocalPlayerId(uint32_t& id) {
     const auto identity=localIdentity.load();const auto session=localSession.load();
     if(!identity||!session||session!=gamestate::LocalPlayer()||uint32_t(GetTickCount())-uint32_t(identity>>32)>1500)return false;

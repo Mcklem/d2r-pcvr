@@ -200,6 +200,23 @@ headset frame are drawn:
   developer mode also DEV > Equipment > By turns ghosts; 0 as before). The
   ends are looked for up to 128 px of a 4096-wide eye either side. On an RTX
   5090 it adds 0.1 ms at 3072 square and 0.23 ms at 4096.
+  The game's picture of anything against the sky (the void, depth 0) is
+  larger than its depth: the pixel beside a roof, a treetop or a far
+  building is dark like it and the next one half so, its colour blended into
+  the void's black, which the sky is not painted over. With the sky's depth
+  that rim stayed where the drawn eye saw it while the thing moved across by
+  the eyes' parallax, about 7 px for a roof 10 m off: a dark, ragged outline
+  beside every silhouette against the sky in every other frame of each eye.
+  Captures in Kurast Docks showed it on all sides; against anything with
+  depth the picture keeps to its depth. Within 2 px of something, a pixel of
+  the sky now takes the nearest depth there in both eyes' depth before they
+  move, so the rim goes with what it belongs to (`[stereo] turns_rims=1`,
+  live; in developer mode also DEV > Character > By turns rims; 0 as
+  before). The sky shader also paints the sky over that rim itself, in both
+  stereo modes: a pixel with no depth beside at most two drawn ones (an
+  edge, not a hole in far ground) that is dim gets the sky; a light one (a
+  glow's edge) is laid over it (`[sky] cover_rims=1`, live; DEV > Character
+  > Sky over rims; 0 keeps the rim).
 
 By turns draws a pair on a snap turn, outside first person, in open menus,
 during stereo captures and on any frame without a reusable image for both eyes.
@@ -255,19 +272,35 @@ is given, so the game draws every other headset frame (45 of 90) and the
 bridge makes the rest: Both eyes then shows each eye half its frames for real,
 By turns only a quarter (22 a second, where By turns alone ran 83-89 frames on
 the owner's PC). So it runs with Both eyes only: by turns the loaded bridge is
-asked to step aside, and Both eyes brings it back, both live; the Perf line
-says it is paused. VR Settings turns it on only with Both eyes (once on, it
-can still be changed or turned off). The bridge takes over every color swapchain whose images are listed
+asked to step aside, and Both eyes brings it back, both live. VR Settings
+shows its rows and the Perf page's line about it with Both eyes only: chosen
+By turns, they go at once, before Apply. The bridge takes over every color swapchain whose images are listed
 through it (three more swapchains and an optical flow pipeline each); with the
 mod's panels SteamVR ran out of swapchains, and menus fell back to the flat
 panel. While it is loaded the mod lists the panels' images through the
 runtime's own `xrEnumerateSwapchainImages`, below the bridge, so it takes over
-the two eyes only; the log says so, or why not. If the loader does not list the layer (a game run
+the two eyes only; the log says so, or why not. The hand's map surface is
+made the first time a map shows; with the bridge loaded that failed in every
+session it was tried, and one failure left the minimap off for the session.
+It now uses the UI panel's swapchain usage, lists its images through the
+bridge should the list below it refuse them, logs which step failed with the
+result (`Frame menu map:`), and tries again 5 s later, three times a session.
+SteamVR gives a session 16 swapchains, and the bridge takes three more for
+each eye's, which leaves the panels about eight: with the map's surface made,
+VR Settings' atlas was refused (`XR_ERROR_LIMIT_REACHED`) and the panel never
+showed. Once that happens in a session, VR Settings takes the map's surface
+when it needs the room, the map waits while VR Settings is open, and closing
+it gives its atlas back so the map returns; a map refused for room waits and
+tries again every 5 s rather than counting it a failure.
+If the loader does not list the layer (a game run
 as administrator ignores `XR_API_LAYER_PATH`) or the instance fails with it,
 the game starts without it; Proton's WineOpenXR has no API layers. The
 generated frames come from color alone, so moving things and head turns can
-show artifacts, and the Perf page's frame rate counts the frames the game
-draws, not the generated ones. The layer needs the Microsoft Visual C++ x64
+show artifacts. While frame generation is active the Perf page shows no frame
+rate: with a menu open the bridge stops generating (Both eyes ran 30 pairs a
+second at 90 Hz with VR Settings up, 45 at 45 Hz doubled in play), so its
+numbers would be the menu's. It points to fpsVR or SteamVR's performance graph
+instead. The layer needs the Microsoft Visual C++ x64
 runtime. Its settings are `[render] frame_generation` (0 Off, 1 FidelityFX,
 2 NVIDIA), `frame_generation_preset` (0 Slow, 1 Medium, 2 Fast) and
 `frame_generation_scale` (0 100%, 1 75%, 2 50%).
@@ -458,6 +491,20 @@ F8 saves one complete gameplay pair through ReShade, with matching
 performance measurements. For remote debugging, increment `[debug] capture_pair`
 in the installed INI, or set/increment `capture_labels` to wait for a visible
 unit label before capturing. Normal play performs no readback or screenshot IO.
+
+With Stereo rendering By turns, the same request also records the next 4 frames
+by turns after that pair, into `d2rloader\logs\turn-captures\<time>` beside the
+frame log (a folder a game, named by its first capture, as N starts again at 1
+each game): for each frame `Frame-turns-N-F-<eye>-drawn.png` and `-turned.png` (both
+eyes as they go to the headset), `-kept.png` (the drawn eye's picture as the
+warp read it, before the interface), `-depth.bin` (its depth: float32,
+width x height, reverse-Z) and `Frame-turns-N-F.txt` (poses, FOVs and the
+warp's parameters, to replay the frame). Each frame waits for the GPU; at
+3072x3072 a capture's files take a few hundred MB. A `Frame capture: by turns`
+line logs each frame and then the files written. `turn-replay` (a development
+build's tool) runs one captured frame through the warp again offline, with
+`turns_rims`, `turns_fill` and `turns_sharp` either way: its comment says how
+to feed it.
 
 The current Proton installer supplies the Microsoft SDK shader compiler privately
 under `d2rloader/runtime`. ReShade had remained compiling throughout tests using
@@ -655,6 +702,12 @@ need not follow radius squared in a real scene. Check distant silhouettes and
 lighting. Higher refresh rates, transport lock splitting/dedicated frame calls,
 eye texture shape, and shared inter-eye skeleton/shadow work remain separate
 experiments. They are not included in the small-fix build.
+
+`[render] bone_armor_height` (game units, about 5.25 per metre; default 0.3,
+just above the floor) sets the Necromancer Bone Armor orbit's centre above the
+unit. The native effect places it 3 units up (waist height in VR) by one local
+point; 0 is the floor and 3 keeps it native. Other overlays and every other
+particle position stay native.
 
 `[render] symmetric_projection=1` is the default lighting compatibility
 setting. D2R's native light-bin shader assumes a centered projection;

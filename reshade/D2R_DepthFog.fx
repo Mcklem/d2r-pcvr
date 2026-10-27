@@ -94,6 +94,9 @@ uniform bool ShowCeilingCut <
 // and the left eye drew the right eye's sky.
 uniform bool SkyOn < hidden = true; > = false;
 uniform bool ArcaneSkyOn < hidden = true; > = false;
+// vrcam, [sky] cover_rims: the sky goes over the dark rim the game leaves round
+// anything against the void (DepthFogWorld).
+uniform bool SkyOverRims < hidden = true; > = true;
 
 // These are prepared from the player's game, never distributed. Without a
 // complete cache the original native weather cards remain installed.
@@ -1431,7 +1434,18 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         // it does not, the void goes on as before (fogged below).
         float3 sky = float3(0.0, 0.0, 0.0);
         bool back = false;
-        if (ceilMode == 0 && dNear <= 1e-6) {
+        // A rim: no depth here, but something drawn beside it. The game's picture of
+        // anything over the void is a pixel larger than its depth, its edge blended into
+        // the void's black, and the sky was not painted there: a dark outline round every
+        // roof, treetop and far building against the sky, which By turns moved off them in
+        // every other frame of each eye (the owner, Kurast Docks: "why don't we just get rid
+        // of that outline", 2026-10-25). With SkyOverRims the sky goes there too. Only at an
+        // edge - at most two of the four neighbours drawn: a single empty pixel in the far
+        // ground stays fogged as before (the dots along the horizon).
+        bool rim = false;
+        if (ceilMode == 0 && dNear > 1e-6 && d <= 1e-6 && SkyOn && SkyOverRims)
+            rim = (d1 > 1e-6 ? 1 : 0) + (d2 > 1e-6 ? 1 : 0) + (d3 > 1e-6 ? 1 : 0) + (d4 > 1e-6 ? 1 : 0) <= 2;
+        if (ceilMode == 0 && (dNear <= 1e-6 || rim)) {
             if (SkyOn) {
                 sky = Sky(dir);
                 // with the act's own fog colour the sky's low part sinks into it too:
@@ -1460,7 +1474,9 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         }
         if (back) {
             const float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
-            const float k = 1.0 - smoothstep(0.03, 0.08, luma);
+            // A rim is dim as what it rims (about 0.1): the sky takes it unless it is clearly
+            // light - a glow's edge beside a brazier stays, laid over the sky as below.
+            const float k = rim ? 1.0 - smoothstep(0.15, 0.35, luma) : 1.0 - smoothstep(0.03, 0.08, luma);
             // The interface over the void keeps its own colour; its dark parts are the void.
             const bool hud = uv.y >= HudTop && tex2Dlod(HudMaskSmp, float4(uv, 0, 0)).r > 0.0;
             if (hud) return lerp(colour, sky + dither, k);
