@@ -120,7 +120,7 @@ inline constexpr std::array<Definition,Count> Definitions{{
     {"Bottle physics", "Emptied bottles roll; thrown potions and traps stop at walls", L"interactions",L"bottle_physics",1,0,1,1},
     {"Knockable props", "Weapons and hands knock the level's cups, plates and vases about", L"interactions",L"prop_physics",1,0,1,1},
     {"Enhanced VR Mercenary", "Tactical positioning, dynamic detection range, elastic leash and anti-stuck watchdog", L"gameplay",L"companion_ai",1,0,1,1},
-    {"Decapitations", "Off, Crits only, Dynamic (35%), High (65%), or Always (100%)", L"gore",L"decapitation",0,0,4,1},
+    {"Decapitations", "Off, Crits only, Dynamic (35%), High (65%), or Always (100%)", L"gore",L"decapitation",1,0,4,1},
     {"Shield grip offset", "Slides the shield along the forearm so the hand reaches its grip", L"gameplay",L"shield_grip_cm",0,-10,40,1},
     {"Shield out from the arm", "Moves the shield away from the forearm (+) or into it (-)", L"gameplay",L"shield_out_cm",0,-30,30,1},
     {"Shield up", "Moves the shield across the forearm, square to Out", L"gameplay",L"shield_up_cm",0,-30,30,1},

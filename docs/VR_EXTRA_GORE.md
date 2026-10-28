@@ -14,10 +14,10 @@
 Implementing an **Extra Gore VR system** in Diablo II: Resurrected is fully feasible without altering player saves (`.d2s`), game master data tables, or breaking stock desktop compatibility.
 
 The architecture relies on 4 core reverse-engineered pillars in `d2r-pcvr`:
-1. **Combat Interception & Life Write Cycle:** Hooks in `ApplyDamage` (RVA `0x44CE80`) and `SetStat` (RVA `0x44D08F`, stat 6 HP) in [`vr/combat.cpp`](../vr/combat.cpp).
+1. **Combat Interception & Life Write Cycle:** Hooks in `ApplyDamage` (RVA `0x44CE80`) and `SetStat` (RVA `0x44D08F`, stat 6 HP) in [`vr/combat.cpp`](../vr/combat.cpp) and [`vr/melee.cpp`](../vr/melee.cpp).
 2. **Real-time Skeletal Modification (Granny 3D):** Hook in `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`) in [`vr/skeletons.cpp`](../vr/skeletons.cpp).
 3. **Dedicated 3D Particle & Shading Pipeline (Direct3D 12):** Custom GPU pipeline in [`steamvr/severed_head_renderer.cpp`](../steamvr/severed_head_renderer.cpp).
-4. **Multi-channel Haptic & Spatial Audio Feedback:** [`steamvr/haptic_pulse.h`](../steamvr/haptic_pulse.h) and [`vr/spatial_audio.cpp`](../vr/spatial_audio.cpp).
+4. **Multi-channel Haptic & Spatial Audio Feedback:** [`steamvr/haptic_strength.h`](../steamvr/haptic_strength.h) and [`steamvr/transport.cpp`](../steamvr/transport.cpp).
 
 ---
 
@@ -35,13 +35,13 @@ In `d2r-pcvr`, [`steamvr/blood_screen.h`](../steamvr/blood_screen.h) renders per
    - Monster gore: dark coagulated ichor (demons), rotting ichor / marrow dust (undead), yellow-green bile (insects/beasts).
 3. **Auditory & Haptic Decoupling:**
    - Player low health is accompanied by the heartbeat loop ([`heartHush`](../steamvr/transport.cpp#L2486)).
-   - Monster decapitation triggers a 3D localized bone-snap / flesh-tear haptic pulse and spatial sound without heartbeat.
+   - Monster kills double the duration of the player's configured melee haptic pulse (`GoreSampleFor`) on the striking hand (left or right).
 
 ---
 
 ## 3. Inter-Process Communication (IPC) Queue
 
-Gore events are captured in the game thread (`vr/` / `d2rl-pcvr.dll`) and transferred lock-free to the OpenXR rendering loop (`steamvr/`) via `shared/d2r_vr_shared.h` and [`shared/d2r_vr_gore.h`](../shared/d2r_vr_gore.h):
+Gore events are captured in the game thread (`vr/` / `d2rl-pcvr.dll`) and transferred lock-free to the OpenXR rendering loop (`steamvr/`) via [`shared/d2r_vr_gore.h`](../shared/d2r_vr_gore.h):
 
 ```cpp
 enum class GoreType : uint8_t {
@@ -50,7 +50,8 @@ enum class GoreType : uint8_t {
     BluntBoneCrush    = 2, // Blunt skull crushing impact
     PiercingArterial  = 3, // Puncture / arterial jet
     CorpseExplosion   = 4, // Necromancer corpse explosion
-    GenericLethal     = 5
+    ColdShatter       = 5, // Frozen shatter
+    GenericLethal     = 6
 };
 
 enum class BloodTaxonomy : uint8_t {
@@ -65,12 +66,13 @@ enum class BloodTaxonomy : uint8_t {
 
 ## 4. Subsystem Details
 
-### 4.1. Clean Neck Stump in Granny 3D (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
+### 4.1. Clean Neck Stump & ECS Entity Verification in Granny 3D (`vr/skeletons.cpp` / `shared/d2r_vr_decapitation.h`)
 - **Hook:** `SkeletonInstance::ComputeSelfWorldPose` (RVA `0xF78740`).
 - **Clean Stump Body:** Head and descendant facial bones (jaw, horns, eyes) are scaled down to `0.0001f` at the neck joint (`CollapseHeadBones`).
 - The headless corpse continues rendering completely natively through D2R's deferred PBR pipeline (receiving real-time torch flicker, normal maps, shadows, and depth fog).
 - Zero external `.pvr` head models are loaded, completely avoiding flat lighting artifacts, mismatched textures, or alien horns on unrelated enemies.
 - **Atomic Event Consumption (`ConsumeRecentDecapitation`):** Ensures that when a lethal strike hits, only the killed monster consumes the decapitation event within a strict 500 ms / 0.8 m window, preventing adjacent living monsters from losing heads.
+- **Versioned ECS Entity Verification (`EntityStillOwnsSkeleton`):** Each registered skeleton instance records its versioned ECS entity ID (`ecsEntity`). Before collapsing a tracked skeleton, `DecapitateMonster` verifies that the original ECS entity still owns `self`, dropping the entry if the corpse was freed and a newly spawned monster reused the skeleton address.
 
 ### 4.2. Procedural Cranial Burst (D3D12 `steamvr/severed_head_renderer.cpp`)
 At the decapitation instant, the severed head erupts into a violent visceral burst:
@@ -99,23 +101,38 @@ All weapon categories (swords, axes, maces, scepters, staves, wands, polearms, s
 
 Configurable in-game via **VR Settings > Combat > Decapitations**:
 - `0`: **Off** — Monster heads remain intact.
-- `1`: **Crits only** — Guaranteed on ripote, overkill damage (>150% HP), or high melee multiplier.
-- `2`: **Dynamic (35%)** — Guaranteed on crits/overkill + 35% chance on normal lethal hits (Recommended).
+- `1`: **Crits only (Default)** — Guaranteed on critical hits, lethal ripostes, overkill damage (>150% HP), or high melee multiplier ($\ge 1.5\times$).
+- `2`: **Dynamic (35%)** — Guaranteed on crits/overkill + 35% chance on normal lethal hits.
 - `3`: **High (65%)** — Guaranteed on crits/overkill + 65% chance on normal lethal hits.
 - `4`: **Always (100%)** — All lethal hits trigger the decapitation effect.
 
 Persisted in `d2r_pcvr.ini`:
 ```ini
 [gore]
-decapitation=0
+; Decapitations and hostile extra gore effects in VR (VR Settings > Combat > Decapitations)
+; decapitation: 0 = Off, 1 = Crits only (default: crits, ripostes and overkill >150% HP explode heads), 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
+; Always executed as a clean cut at the neck stump with zero mesh deformation.
+decapitation=1
 ```
 
 ---
 
-## 6. Automated Testing & Verification
+## 6. Implementation Phases & Current Status
 
-- `steamvr/gore_events_test.cpp`: Taxonomy verification, weapon classification, queue ring-buffer mechanics.
-- `steamvr/granny_decapitation_test.cpp`: 10 suites covering bone masking, humanoid filtering, boss/non-humanoid exclusions, and taxonomy accuracy.
-- **CTest Suite:** 144 / 144 native tests passing.
+| Phase | Scope | Status |
+| :--- | :--- | :--- |
+| **Phase 1** | Combat detection, IPC ring-buffer queue, `monstats.txt` taxonomy, left/right hand attribution & double-duration kill haptics | **Completed** |
+| **Phase 2** | Granny 3D skeletal clean neck-stump decapitation (`CollapseHeadBones`), atomic event consumption & versioned ECS entity verification | **Completed** |
+| **Phase 3** | VR Settings UI (`Page::Combat > Decapitations`, default `1 = Crits only`) & `d2r_pcvr.ini` persistence | **Completed** |
+| **Phase 4** | Direct3D 12 3D procedural cranial burst (ballistic bone shards, flesh chunks, collapsing-stump arterial jets & wet PBR shading) | **Completed** |
+| **Phase 5** | First-person blood accumulation & dripping on held weapon blades (`weapon_blood.h`) | Planned (Future) |
+| **Phase 6** | Spell-specific gore (`Corpse Explosion` shockwave & `Cold Shatter` ice fragments) | Planned (Future) |
+
+---
+
+## 7. Automated Testing & Verification
+
+- `steamvr/gore_events_test.cpp`: Taxonomy verification, weapon classification, queue ring-buffer mechanics, and kill haptic pulse duration checks.
+- `steamvr/granny_decapitation_test.cpp`: 10 suites covering bone masking, humanoid filtering, boss/non-humanoid exclusions, taxonomy accuracy, and recycled skeleton address ECS entity protection.
+- **CTest Suite:** 148 / 148 native tests passing.
 - **Python Verification:** 17 / 17 tests passing in `steamvr/mod_identity_test.py`.
-

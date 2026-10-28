@@ -44,7 +44,7 @@ using BlockFn=int(*)(uintptr_t,uintptr_t,uintptr_t,int,int);
 using DodgeFn=int(*)(uintptr_t,uintptr_t,int);
 HitFn originalHit=nullptr;SeedFn originalSeed=nullptr;BlockFn originalBlock=nullptr;DodgeFn originalDodge=nullptr;
 std::atomic<bool> enabled{false},ready{false};
-std::atomic<int> g_decapitationRate{0}; // 0 = Off, 1 = Crits, 2 = Dynamic 35%, 3 = High 65%, 4 = Always
+std::atomic<int> g_decapitationRate{1}; // 0 = Off, 1 = Crits (default), 2 = Dynamic 35%, 3 = High 65%, 4 = Always
 bool hitIn=false,seedIn=false,blockIn=false,dodgeIn=false,rollChecked=false;
 // One atomic value keeps freshness and id coherent, including native id zero.
 std::atomic<uint64_t> localIdentity{0},localSession{0};

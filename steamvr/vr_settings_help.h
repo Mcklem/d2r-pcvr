@@ -81,7 +81,7 @@ inline const char* HelpText(int id) {
         case RunWalkToggle:return "On: push the right stick up to switch between walking and Movement speed's run - from Walk, the full run. Not while a wheel is open or while you look at the wrist map. A new character, or a change of Movement speed, starts at Movement speed again. Off by default; right stick up then does nothing.";
         case LeftHandStrikes:return "Druid only. A melee skill on a trigger (Maul, Feral Rage, Fire Claws, Rabies, Hunger, Fury) casts when that hand's claw lands a full-cycle stroke; faster strokes stay basic attacks. Toggle it in the skill wheel's lower-left box. Weapon skill gestures Off keeps every strike basic.";
         case CompanionAi:return "Enhanced VR Mercenary overhaul: dynamic detection range matching enemy sight, elastic 40 sub-tile combat leash, and an anti-stuck watchdog that safely relocates the ally to your rear flank if trapped. Legacy restores vanilla AI constants and behavior.";
-        case Decapitations:return "Physical decapitation on lethal strikes, cleanly cut at the neck stump with no mesh deformation. Off: disabled. Crits only: criticals or overkill (>150% HP). Dynamic (35%): recommended balance. Always (100%): every lethal cut decapitates.";
+        case Decapitations:return "Cranial burst and clean neck-stump decapitation on lethal strikes. Crits only (default): critical hits, lethal ripostes or overkill (>150% HP) explode heads. Off: disabled. Dynamic (35%): 35% on standard kills + crits. High (65%): 65% + crits. Always (100%): every lethal hit.";
         case MeleeHitSpeed:return "Minimum weapon movement speed for a swing to count as a strike. Lower it for easier swings; raise it to require faster movement. Default: 12 m/s. Both melee modes use this value. Shield bash has its own threshold.";
         case ShieldBashSpeed:return "Minimum tracked hand speed for a physical shield bash, including assigned Smite. Default: 2 m/s. Move the hand at least 12 cm in one deliberate stroke; wrist twisting alone does not attack. The speed must still be met at contact. Applies in both melee modes; blocking, parries and trigger attacks are unchanged.";
         case MeleeThrustSpeed:return "Minimum forward speed for a stab along your weapon's tip. Default: 2 m/s. Move forward at least 12 cm, then pull back before stabbing again. This is separate from swing speed and applies in both melee modes.";
@@ -148,7 +148,7 @@ inline ChoiceHelp HelpChoice(int id,float value) {
             static constexpr const char* names[]={"Off","Crits only","Dynamic (35%)","High (65%)","Always (100%)"};
             static constexpr const char* text[]={
                 "Monsters never decapitate on death.",
-                "Triggers on critical hits, lethal ripostes, and massive overkill (>150% HP).",
+                "Default: triggers on critical hits, lethal ripostes, and massive overkill (>150% HP).",
                 "Recommended balance: 35% chance on lethal cuts, guaranteed on crits.",
                 "Frequent decapitations: 65% chance on lethal cuts, guaranteed on crits.",
                 "Every lethal cutting strike cleanly severs the neck stump."};

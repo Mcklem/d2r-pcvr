@@ -204,36 +204,34 @@ flowchart LR
 *Objetivo: Permitir al usuario calibrar la frecuencia de decapitación directamente desde el visor en tiempo de ejecución de forma clara e intuitiva.*
 1. **Control Unificado en `Page::Combat` (Fila 8):**
    - **`Decapitations`**: Selector escalonado con botones `[-]` y `[+]`:
-     - `Off`: Decapitaciones desactivadas.
-     - `Crits only`: Solo golpes críticos, riposte letal y daño masivo overkill (>150% HP).
-     - `Dynamic (35%)`: Garantizado en críticos/overkill y 35% en cortes estándar (Recomendado).
-     - `High (65%)`: Garantizado en críticos/overkill y 65% en cortes estándar.
-     - `Always (100%)`: En el 100% de los golpes letales con armas cortantes.
+     - `Off` (`0`): Decapitaciones desactivadas.
+     - `Crits only` (`1`, **Por defecto**): Golpes críticos, riposte letal y daño masivo overkill (>150% HP) explotan cabezas.
+     - `Dynamic (35%)` (`2`): Garantizado en críticos/overkill y 35% en golpes letales estándar.
+     - `High (65%)` (`3`): Garantizado en críticos/overkill y 65% en golpes letales estándar.
+     - `Always (100%)` (`4`): En el 100% de los golpes letales con cualquier arma.
 2. **Optimización de UI y Distribución:**
    - Se unificó la configuración eliminando sub-opciones complejas o emparejamientos propensos a confusión en una única fila dedicada y siempre visible (9 filas totales en `Page::Combat`), encajando perfectamente con margen holgado sobre la zona de dificultad y el pie de página.
    - Decapitación siempre ejecutada como corte limpio en muñón (`Clean Stump`), evitando estiramientos de malla.
 3. **Persistencia en `d2r_pcvr.ini`:**
-   - Clave `[gore] decapitation=2` sincronizada en el repositorio y en los árboles de mod instalados (`mods/D2R-PCVR` y `mods/pcvr-dev`).
+   - Clave `[gore] decapitation=1` sincronizada en el repositorio y en los árboles de mod instalados (`mods/D2R-PCVR` y `mods/pcvr-dev`).
 4. **Verificación automatizada:** Test nativo `vr-settings-test` (144/144 tests superados).
 
-### Fase 4: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo)
-*Objetivo: Trasladar el gore a la perspectiva en primera persona sin ensuciar la visión vital del visor.*
+### Fase 4: Estallido Craneal Visceral y Surtidores Arteriales 3D en Direct3D 12 [COMPLETADA]
+*Objetivo: Erupción volumétrica de sangre, hueso y tejido tridimensional con física balística.*
+1. **Pipeline D3D12 (`steamvr/severed_head_renderer.cpp`):** Renderizador estereoscópico Reverse-Z con 14 esquirlas óseas balísticas (rebote y deslizamiento en suelo), 9 fragmentos de carne, 48 gotas de géiser arterial a presión con pulso cardíaco y 18 gotas de goteo.
+2. **Seguimiento de colapso del cadáver:** El emisor desciende acompañando al cuello del cadáver durante la animación de muerte (sin partículas brotando del vacío) y sin bucles repetitivos.
+3. **Shading PBR visceral:** Sangre oscura húmeda de alto brillo especular, fragmentos de cráneo manchados de sangre por la cara interna y variación por partícula.
+
+### Fase 5: Sangre en el Mundo VR (Armas Ensangrentadas y Goteo) [PENDIENTE / FUTURA]
+*Objetivo: Trasladar el gore a la hoja del arma en primera persona sin ensuciar la visión vital del visor.*
 1. **Tracking de filo:** Implementar `weapon_blood.h` con el cálculo de la posición de la hoja de espadas, hachas y mazas.
 2. **Acumulación y secado:** Simular el manchado gradual de la hoja y el secado por inercia o sacudida.
 3. **Goteo físico:** Gotas de sangre que emergen de la punta y caen hacia el suelo.
-4. **Verificación automatizada:** Test unitario `weapon-blood-test`.
 
-### Fase 5: Surtidores Arteriales 3D en Direct3D 12
-*Objetivo: Erupción volumétrica de sangre tridimensional con física balística.*
-1. **Pipeline D3D12:** Adaptar `elemental_hands_renderer.cpp` para crear `gore_renderer.cpp` con pipeline state object (PSO) de partículas rojas/oscuras.
-2. **Física de partículas:** Simulación de gravedad, dispersión cónica y atenuación de opacidad.
-3. **Verificación visual:** Vista previa mediante `interaction-preview.exe` o test `blood-particles-render-test`.
-
-### Fase 6: Overkill Extremo y Corpse Explosion
+### Fase 6: Overkill Elemental y Corpse Explosion [PENDIENTE / FUTURA]
 *Objetivo: Culminación del sistema con soporte para hechizos brutales.*
 1. **Corpse Explosion masiva:** Activación del efecto con la habilidad `CorpsExp` si el jugador está a $<4\text{ m}$.
 2. **Gore elemental:** Quiebre de hielo para muertes por frío y bilis verde para muertes por veneno.
-3. **Verificación completa:** Suite de pruebas CTest (144/144 tests pasando) y pruebas en visor Quest 3 / Steam Frame.
 
 ---
 
@@ -242,9 +240,9 @@ flowchart LR
 ```ini
 [gore]
 ; Decapitations and hostile extra gore effects in VR (VR Settings > Combat > Decapitations)
-; decapitation: 0 = Off, 1 = Crits only, 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
+; decapitation: 0 = Off, 1 = Crits only (default: crits, ripostes and overkill >150% HP explode heads), 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
 ; Always executed as a clean cut at the neck stump with zero mesh deformation.
-decapitation=0
+decapitation=1
 ```
 
 ---
