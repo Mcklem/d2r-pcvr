@@ -20,10 +20,31 @@ inline constexpr uint8_t ModeSig[] = {
     0x8b, 0x05, 0x5e, 0x84, 0x99, 0x02, 0xc3
 };
 
-// PathMove RVA in D2R 3.3.93787: commands unit to pathfind/walk to target (x, y) in room.
+// PathMove RVA in D2R 3.3.93787 (0x381890): internal D2DynamicPathStrc coordinate/room setter
+// called by RelocateUnit (0x491ca0 at 0x491e42) and client missile cleanup (spells.cpp).
+// NOTE: This is a direct coordinate/room assignment helper, NOT a server walk/pathfinding entry point.
+// Do not call 0x381890 to initiate walking movement, as it snaps/teleports path coordinates.
 inline constexpr uint64_t PathMoveRva = 0x381890;
 inline constexpr uint8_t PathMoveSig[] = {
     0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x0f, 0xb7, 0x44, 0x24, 0x50, 0x49, 0x8b, 0xd0, 0x66, 0x89, 0x44
+};
+
+// ServerMoveToCoord RVA in D2R 3.3.93787 / 3.3.93847 (0x4a77e0):
+// Native 4-argument server coordinate walk/run wrapper:
+// int __fastcall ServerMoveToCoord(uintptr_t game, uintptr_t unit, int x, int y)
+// Calls ServerMoveUnit (0x4a8a10) with targetUnit=0, mode=15 (converted to MONMODE_WALK=2 for hirelings), pathType=1, flags=0.
+inline constexpr uint64_t ServerMoveToCoordRva = 0x4a77e0;
+inline constexpr uint8_t ServerMoveToCoordSig[] = {
+    0x48, 0x83, 0xec, 0x48, 0x33, 0xc0, 0x66, 0x89, 0x44, 0x24, 0x38, 0xc6, 0x44, 0x24, 0x30, 0x01
+};
+
+// ServerMoveUnit RVA in D2R 3.3.93787 / 3.3.93847 (0x4a8a10):
+// Core server AI movement dispatcher:
+// int __fastcall ServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, int moveMode, int x, int y, uint8_t pathType, uint16_t flags)
+// First 16 bytes are 4 complete non-RIP-relative instructions (5 + 5 + 5 + 1 = 16 bytes).
+inline constexpr uint64_t ServerMoveUnitRva = 0x4a8a10;
+inline constexpr uint8_t ServerMoveUnitSig[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57
 };
 }
 
