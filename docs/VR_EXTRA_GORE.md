@@ -107,7 +107,7 @@ Configurable in-game via **VR Settings > Combat > Decapitations**:
 Persisted in `d2r_pcvr.ini`:
 ```ini
 [gore]
-decapitation=2
+decapitation=0
 ```
 
 ---

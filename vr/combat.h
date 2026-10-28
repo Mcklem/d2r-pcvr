@@ -108,8 +108,6 @@ bool LocalPlayerId(uint32_t& id);
 bool UnitStat(uintptr_t unit,int stat,int& value);
 // Returns the maximum fire damage on the equipped item at body location (4=right hand, 5=left hand, 9/10=swap).
 int EquippedFireDamage(int location);
-void ConfigureGore(int decapitationRate, bool headPhysics = true);
-void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics = true);
+void ConfigureGore(int decapitationRate);
 int GoreDecapitationRate();
-bool GoreHeadPhysics();
 }

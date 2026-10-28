@@ -244,10 +244,7 @@ flowchart LR
 ; Decapitations and hostile extra gore effects in VR (VR Settings > Combat > Decapitations)
 ; decapitation: 0 = Off, 1 = Crits only, 2 = Dynamic (35%), 3 = High (65%), 4 = Always (100%)
 ; Always executed as a clean cut at the neck stump with zero mesh deformation.
-decapitation=2
-; 1 = Severed head has full 3D physics (tumbling arc, floor bounce at monster ground level, rest)
-; 0 = Head collapses into neck stump (clean cut body only, no severed head physics)
-head_physics=0
+decapitation=0
 ```
 
 ---

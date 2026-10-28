@@ -478,6 +478,7 @@ inline void SimulateHeadPhysics(float t, const float p0[3], const float v0[3],
 // State of an active decapitated monster instance
 struct DecapInstance {
     uintptr_t skeletonInstance = 0;
+    uint32_t ecsEntity = 0; // Versioned ECS entity owning this skeleton instance
     uint32_t monsterId = 0;
     uint8_t taxonomy = 0; // 0 = Undead, 1 = Demon, 2 = Beast
     uint64_t decapitatedAt = 0;
@@ -493,7 +494,6 @@ struct DecapInstance {
     float spinAxis[3] = {0.0f, 1.0f, 0.0f};
     float spinSpeed = 0.0f;
     float floorY = 0.0f;
-    bool headPhysics = true;
     bool initialized = false;
     float monsterWorldPos[3] = {};
     float currentHeadWorldPos[3] = {};
@@ -520,10 +520,10 @@ public:
     static constexpr uint64_t kDefaultTtlMs = 60000; // 60 seconds (covers death anim + corpse persistence)
     static constexpr size_t kMaxInstances = 512;
 
-    bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
+    bool RegisterDecapitation(uintptr_t self, uint32_t ecsEntity, uint32_t monsterId, int headBone, int neckBone,
                               const std::vector<uint8_t>& inHead, uint64_t now,
                               float floorY, const float* impulse,
-                              bool headPhysics, uint8_t taxonomy = 0,
+                              uint8_t taxonomy = 0,
                               const float* monsterWorldPos = nullptr,
                               uint64_t ttlMs = kDefaultTtlMs) {
         if (!self || headBone < 0) return false;
@@ -538,6 +538,7 @@ public:
 
         DecapInstance inst{};
         inst.skeletonInstance = self;
+        inst.ecsEntity = ecsEntity;
         inst.monsterId = monsterId;
         inst.taxonomy = taxonomy;
         inst.decapitatedAt = now;
@@ -546,7 +547,6 @@ public:
         inst.neckBone = neckBone;
         inst.inHead = inHead;
         inst.floorY = floorY;
-        inst.headPhysics = headPhysics;
 
         if (monsterWorldPos) {
             inst.monsterWorldPos[0] = monsterWorldPos[0];
@@ -586,29 +586,53 @@ public:
     }
 
     template <typename TaxType>
+    bool RegisterDecapitation(uintptr_t self, uint32_t ecsEntity, uint32_t monsterId, int headBone, int neckBone,
+                              const std::vector<uint8_t>& inHead, uint64_t now,
+                              float floorY, const float* impulse,
+                              TaxType taxonomy,
+                              const float* monsterWorldPos = nullptr,
+                              uint64_t ttlMs = kDefaultTtlMs) {
+        return RegisterDecapitation(self, ecsEntity, monsterId, headBone, neckBone, inHead, now, floorY, impulse, static_cast<uint8_t>(taxonomy), monsterWorldPos, ttlMs);
+    }
+
     bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
                               const std::vector<uint8_t>& inHead, uint64_t now,
                               float floorY, const float* impulse,
-                              bool headPhysics, TaxType taxonomy,
+                              uint8_t taxonomy = 0,
                               const float* monsterWorldPos = nullptr,
                               uint64_t ttlMs = kDefaultTtlMs) {
-        return RegisterDecapitation(self, monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics, static_cast<uint8_t>(taxonomy), monsterWorldPos, ttlMs);
+        return RegisterDecapitation(self, 0, monsterId, headBone, neckBone, inHead, now, floorY, impulse, taxonomy, monsterWorldPos, ttlMs);
     }
 
     bool RegisterDecapitation(uintptr_t self, uint32_t monsterId, int headBone, int neckBone,
                               const std::vector<uint8_t>& inHead, uint64_t now,
                               uint64_t ttlMs = kDefaultTtlMs) {
-        return RegisterDecapitation(self, monsterId, headBone, neckBone, inHead, now, 0.0f, nullptr, true, ttlMs);
+        return RegisterDecapitation(self, 0, monsterId, headBone, neckBone, inHead, now, 0.0f, nullptr, 0, nullptr, ttlMs);
     }
 
-    bool IsDecapitated(uintptr_t self, uint64_t now) const {
+    bool IsDecapitated(uintptr_t self, uint64_t now, uint32_t* outEntity = nullptr) const {
         if (!self) return false;
         std::shared_lock lock(mutex_);
         auto it = instances_.find(self);
-        if (it != instances_.end()) {
-            return now < it->second.expiresAt;
+        if (it != instances_.end() && now < it->second.expiresAt) {
+            if (outEntity) *outEntity = it->second.ecsEntity;
+            return true;
         }
         return false;
+    }
+
+    // Verifies that the skeleton address still belongs to the same versioned ECS entity;
+    // drops the entry and returns false if the corpse was freed and a new monster reused `self`.
+    bool IsDecapitated(uintptr_t self, uint32_t currentEntity, uint64_t now) {
+        if (!self) return false;
+        std::unique_lock lock(mutex_);
+        auto it = instances_.find(self);
+        if (it == instances_.end()) return false;
+        if (now >= it->second.expiresAt || (it->second.ecsEntity != 0 && it->second.ecsEntity != currentEntity)) {
+            instances_.erase(it);
+            return false;
+        }
+        return true;
     }
 
     template <typename Matrix16>
@@ -671,11 +695,7 @@ public:
         // This guarantees ZERO mesh stretching, ZERO rubber webbing, and ZERO deformation on the corpse.
         CollapseHeadBones(worldPoses, boneCount, inst.inHead, inst.headBone, inst.neckBone, nullptr);
 
-        if (!inst.headPhysics) {
-            return true;
-        }
-
-        // Simulate independent decoupled 3D severed head prop physics
+        // Simulate cranial burst origin / trajectory
         const float t = (now > inst.decapitatedAt) ? float(now - inst.decapitatedAt) / 1000.0f : 0.0f;
         float headPos[3] = {};
         float headRot[9] = {};
@@ -696,7 +716,7 @@ public:
         out.clear();
         for (const auto& pair : instances_) {
             const auto& inst = pair.second;
-            if (now < inst.expiresAt && inst.initialized && inst.headPhysics) {
+            if (now < inst.expiresAt && inst.initialized) {
                 SeveredHeadProp prop{};
                 prop.monsterId = inst.monsterId;
                 prop.taxonomy = inst.taxonomy;

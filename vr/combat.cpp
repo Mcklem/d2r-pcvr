@@ -44,7 +44,7 @@ using BlockFn=int(*)(uintptr_t,uintptr_t,uintptr_t,int,int);
 using DodgeFn=int(*)(uintptr_t,uintptr_t,int);
 HitFn originalHit=nullptr;SeedFn originalSeed=nullptr;BlockFn originalBlock=nullptr;DodgeFn originalDodge=nullptr;
 std::atomic<bool> enabled{false},ready{false};
-std::atomic<int> g_decapitationRate{2}; // 0 = Off, 1 = Crits, 2 = Dynamic 35%, 3 = High 65%, 4 = Always
+std::atomic<int> g_decapitationRate{0}; // 0 = Off, 1 = Crits, 2 = Dynamic 35%, 3 = High 65%, 4 = Always
 bool hitIn=false,seedIn=false,blockIn=false,dodgeIn=false,rollChecked=false;
 // One atomic value keeps freshness and id coherent, including native id zero.
 std::atomic<uint64_t> localIdentity{0},localSession{0};
@@ -1354,26 +1354,12 @@ OnHitScope GateOnHit(OnHitScope scope) {
 int LastSwingWouldHit() {return lastSwingVerdict;}
 void ConfigureShotRules(bool unleashed) {shotRules=unleashed;}
 void ConfigureButtonRules(bool unleashed) {buttonRules=unleashed;}
-std::atomic<bool> g_headPhysics{true};
-
-void ConfigureGore(int decapitationRate, bool headPhysics) {
-    (void)headPhysics;
+void ConfigureGore(int decapitationRate) {
     g_decapitationRate.store(std::clamp(decapitationRate, 0, 4));
-    g_headPhysics.store(true);
-}
-
-void ConfigureGore(bool enabled, int decapitationRate, bool headPhysics) {
-    (void)headPhysics;
-    g_decapitationRate.store(enabled ? std::clamp(decapitationRate, 0, 4) : 0);
-    g_headPhysics.store(true);
 }
 
 int GoreDecapitationRate() {
     return g_decapitationRate.load();
-}
-
-bool GoreHeadPhysics() {
-    return true; // Severed head 3D physics is always active during decapitation
 }
 
 void ConfigureRiposte(float bonus,uint32_t windowMs,float volume,const wchar_t* soundFile) {

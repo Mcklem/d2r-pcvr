@@ -3250,7 +3250,7 @@ void Input() {
         auto impact=settings::HapticSample(gestureSettings,haptics::Category::Melee,shield?1:0);
         framevr::gore::GoreEvent goreEv{};
         if(!shield&&framevr::gore::LatestForHand(hand,GetTickCount64(),150,goreEv)&&goreEv.type!=framevr::gore::GoreType::None) {
-            impact=haptics::GoreSampleFor(goreEv.type);
+            impact=haptics::GoreSampleFor(goreEv.type,impact);
         }
         const bool sent=MotionPulse(hand,haptics::Category::Melee,impact.amplitude,XrDuration(impact.milliseconds)*1000000,impact.frequency);
         static ULONGLONG reportAt[2]{};const auto now=GetTickCount64();

@@ -161,25 +161,39 @@ void TestGoreHaptics() {
     using namespace framevr::gore;
     using namespace framevr::haptics;
 
-    const auto slash = GoreSampleFor(GoreType::SlashDecapitation);
-    assert(slash.amplitude == 1.0f);
-    assert(slash.milliseconds == 35);
-    assert(slash.frequency == 160.0f);
+    const auto base = SampleFor(Category::Melee);
+    const GoreType types[] = {
+        GoreType::SlashDecapitation,
+        GoreType::BluntBoneCrush,
+        GoreType::PiercingArterial,
+        GoreType::CorpseExplosion,
+        GoreType::ColdShatter,
+        GoreType::GenericLethal
+    };
 
-    const auto crush = GoreSampleFor(GoreType::BluntBoneCrush);
-    assert(crush.amplitude == 1.0f);
-    assert(crush.milliseconds == 95);
-    assert(crush.frequency == 50.0f);
+    for (const auto type : types) {
+        const auto pulse = GoreSampleFor(type);
+        assert(pulse.milliseconds > base.milliseconds);
+        assert(pulse.milliseconds == base.milliseconds * 2);
+        assert(pulse.frequency == base.frequency);
+        assert(pulse.amplitude >= base.amplitude);
 
-    const auto explosion = GoreSampleFor(GoreType::CorpseExplosion);
-    assert(explosion.amplitude == 1.0f);
-    assert(explosion.milliseconds == 140);
-    assert(explosion.frequency == 60.0f);
+        const auto shortBase = SampleFor(Category::Melee, true, 0);
+        const auto shortPulse = GoreSampleFor(type, shortBase);
+        assert(shortPulse.milliseconds > shortBase.milliseconds);
+        assert(shortPulse.milliseconds == shortBase.milliseconds * 2);
+        assert(shortPulse.frequency == shortBase.frequency);
 
-    const auto cold = GoreSampleFor(GoreType::ColdShatter);
-    assert(cold.amplitude == 0.85f);
-    assert(cold.milliseconds == 45);
-    assert(cold.frequency == 200.0f);
+        const auto leftBase = SampleFor(Category::Melee, false, 1);
+        const auto leftPulse = GoreSampleFor(type, leftBase);
+        assert(leftPulse.milliseconds > leftBase.milliseconds);
+        assert(leftPulse.milliseconds == leftBase.milliseconds * 2);
+        assert(leftPulse.frequency == leftBase.frequency);
+    }
+
+    const auto nonePulse = GoreSampleFor(GoreType::None, base);
+    assert(nonePulse.milliseconds == base.milliseconds);
+    assert(nonePulse.frequency == base.frequency);
 
     std::puts("TestGoreHaptics: PASS");
 }

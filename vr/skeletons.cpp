@@ -581,7 +581,7 @@ bool EntityOf(uintptr_t self, uint32_t* e) {
     return false;
 }
 #ifdef D2RVR_NATIVE_OPENXR
-bool CandidatePosition(uintptr_t self,float position[3]) {
+bool CandidatePosition(uintptr_t self,float position[3],uint32_t* outEntity=nullptr) {
     AcquireSRWLockExclusive(&g_lock);
     struct Unlock {~Unlock(){ReleaseSRWLockExclusive(&g_lock);}} unlock;
     if(!IsStorage(g_xs,g_vtX)||!IsStorage(g_ss,g_vtS)) {
@@ -596,6 +596,7 @@ bool CandidatePosition(uintptr_t self,float position[3]) {
         if(g_candidateEntities.size()>4096)g_candidateEntities.clear();
         g_candidateEntities[self]=entity;
     }
+    if(outEntity)*outEntity=entity;
     uint32_t index=0;uintptr_t components=0;
     if(!Dense(g_xs,entity,&index)||!Get(g_xs+0x38,&components)||!components)return false;
     const auto at=components+uintptr_t(index)*kTransformSize;
@@ -603,6 +604,15 @@ bool CandidatePosition(uintptr_t self,float position[3]) {
     // Child transforms have their composed placement in +0x40.
     const uintptr_t matrix=at+((parentEntity&0xFFFFF)==0xFFFFF?0:0x40);
     return SafeCopy(position,reinterpret_cast<const void*>(matrix+12*sizeof(float)),3*sizeof(float));
+}
+
+bool EntityStillOwnsSkeleton(uint32_t entity, uintptr_t self) {
+    if (!entity || !self) return false;
+    AcquireSRWLockExclusive(&g_lock);
+    struct Unlock {~Unlock(){ReleaseSRWLockExclusive(&g_lock);}} unlock;
+    if (!IsStorage(g_ss, g_vtS)) return false;
+    uintptr_t held = 0;
+    return SkeletonOf(entity, &held) && held == self;
 }
 #endif
 }  // namespace ecs
@@ -3446,16 +3456,26 @@ void DecapitateMonster(uintptr_t self) {
     if (!self || self == g_heroSelf.load()) return;
     const uint64_t now = GetTickCount64();
 
-    // Fast path: already recognized and tracked as decapitated
-    if (framevr::decap::Manager().IsDecapitated(self, now)) {
-        uintptr_t world = 0;
-        int32_t wpCount = 0;
-        uintptr_t mats = 0;
-        if (Get(self + 0x20, &world) && Get(world, &wpCount) && Get(world + 4, &mats) && mats && wpCount > 0) {
-            float pivot[3] = {};
-            framevr::decap::Manager().ApplyCollapse(self, reinterpret_cast<Mat*>(mats), wpCount, now, pivot);
+    // Fast path: already recognized and tracked as decapitated.
+    // Require the stored ECS entity (with its version bits) to still own `self`;
+    // if the corpse was freed and a new monster reused this skeleton address, drop the entry.
+    uint32_t trackedEntity = 0;
+    if (framevr::decap::Manager().IsDecapitated(self, now, &trackedEntity)) {
+#ifdef D2RVR_NATIVE_OPENXR
+        const uint32_t currentEntity = (trackedEntity && ecs::EntityStillOwnsSkeleton(trackedEntity, self)) ? trackedEntity : 0;
+#else
+        const uint32_t currentEntity = 0;
+#endif
+        if (framevr::decap::Manager().IsDecapitated(self, currentEntity, now)) {
+            uintptr_t world = 0;
+            int32_t wpCount = 0;
+            uintptr_t mats = 0;
+            if (Get(self + 0x20, &world) && Get(world, &wpCount) && Get(world + 4, &mats) && mats && wpCount > 0) {
+                float pivot[3] = {};
+                framevr::decap::Manager().ApplyCollapse(self, reinterpret_cast<Mat*>(mats), wpCount, now, pivot);
+            }
+            return;
         }
-        return;
     }
 
     // Fast path: if no gore events in queue, skip matching
@@ -3470,10 +3490,11 @@ void DecapitateMonster(uintptr_t self) {
         return;
     }
 
-    // Get 3D world position of skeleton entity
+    // Get 3D world position and versioned ECS entity of skeleton
     float pos[3] = {};
+    uint32_t entity = 0;
 #ifdef D2RVR_NATIVE_OPENXR
-    if (!ecs::CandidatePosition(self, pos)) return;
+    if (!ecs::CandidatePosition(self, pos, &entity) || !entity) return;
 #else
     return;
 #endif
@@ -3503,19 +3524,18 @@ void DecapitateMonster(uintptr_t self) {
 
             const float* impulse = ev.impactNormal;
             const float floorY = 0.0f;
-            const bool headPhysics = true;
 
-            uint8_t propTaxonomy = 2; // default dm_head (official Blizzard horned demon head for Fallen, Shamans, Rogues, etc.)
+            uint8_t propTaxonomy = 2;
             if (model.find("skeleton") != std::string::npos || model.find("sk_") != std::string::npos || model.find("skmage") != std::string::npos) {
-                propTaxonomy = 0; // sk_skull (official Blizzard skeleton skull)
+                propTaxonomy = 0;
             } else if (model.find("zombie") != std::string::npos || model.find("corpse") != std::string::npos || model.find("reanimated") != std::string::npos || model.find("mummy") != std::string::npos) {
-                propTaxonomy = 1; // zb_head (official Blizzard bloody severed zombie head)
+                propTaxonomy = 1;
             } else if (model.find("brute") != std::string::npos || model.find("goat") != std::string::npos || model.find("yeti") != std::string::npos || model.find("bighead") != std::string::npos || model.find("blunderbore") != std::string::npos || model.find("gargoyle") != std::string::npos) {
-                propTaxonomy = 3; // gg_head (official Blizzard gargoyle / horned beast head)
+                propTaxonomy = 3;
             } else {
-                propTaxonomy = 2; // dm_head (official Blizzard horned demon head: Fallen, Shamans, Corrupt Rogues, Succubus, Doom Knights, Fetishes)
+                propTaxonomy = 2;
             }
-            framevr::decap::Manager().RegisterDecapitation(self, ev.monsterId, headBone, neckBone, inHead, now, floorY, impulse, headPhysics, propTaxonomy, pos);
+            framevr::decap::Manager().RegisterDecapitation(self, entity, ev.monsterId, headBone, neckBone, inHead, now, floorY, impulse, propTaxonomy, pos);
 
             uintptr_t world = 0;
             int32_t wpCount = 0;

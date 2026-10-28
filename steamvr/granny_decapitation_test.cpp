@@ -307,6 +307,23 @@ void TestDecapitationManagerLifecycle() {
     mgr.PruneExpired(t0 + 60001);
     assert(mgr.Count() == 0);
 
+    // Recycled skeleton address check: if a freed corpse's skeleton address is reused by a
+    // newly spawned monster (with a different ECS entity or incremented entity version),
+    // IsDecapitated(self, currentEntity, now) must reject it and drop the stale entry.
+    const uint32_t corpseEntity = 0x0010002Au; // version 1, index 0x2A
+    const uint32_t reusedSlotEntity = 0x0020002Au; // version 2, index 0x2A
+    assert(mgr.RegisterDecapitation(skelA, corpseEntity, 42, 3, 2, inHead, t0, 0.0f, nullptr));
+    uint32_t trackedEntity = 0;
+    assert(mgr.IsDecapitated(skelA, t0 + 500, &trackedEntity));
+    assert(trackedEntity == corpseEntity);
+    assert(mgr.IsDecapitated(skelA, corpseEntity, t0 + 500));
+    assert(mgr.Count() == 1);
+
+    // Same skeleton address, but now owned by a new ECS entity: rejected and dropped
+    assert(!mgr.IsDecapitated(skelA, reusedSlotEntity, t0 + 600));
+    assert(mgr.Count() == 0);
+    assert(!mgr.IsDecapitated(skelA, t0 + 600));
+
     mgr.Clear();
 }
 
@@ -411,11 +428,8 @@ void TestRigidHeadAndChildBonePreservation() {
 
     const float impulse[3] = {1.0f, 1.2f, 0.0f};
 
-    // 1. Instance with head physics ENABLED
-    mgr.RegisterDecapitation(skelPhys, 501, 3, 2, inHead, t0, 0.0f, impulse, true);
-
-    // 2. Instance with clean stump (head physics DISABLED)
-    mgr.RegisterDecapitation(skelStump, 502, 3, 2, inHead, t0, 0.0f, impulse, false);
+    mgr.RegisterDecapitation(skelPhys, 501, 3, 2, inHead, t0, 0.0f, impulse);
+    mgr.RegisterDecapitation(skelStump, 502, 3, 2, inHead, t0, 0.0f, impulse);
 
     std::vector<MockMatrix> posesA = {
         MockMatrix::Translation(0, 0, 0),        // Root
@@ -453,8 +467,7 @@ void TestRigidHeadAndChildBonePreservation() {
     // Published independently with realistic 3D ballistic trajectory and tumbling rotation
     std::vector<framevr::decap::SeveredHeadProp> activeHeads;
     mgr.GetActiveSeveredHeads(activeHeads, t0 + 500);
-    assert(activeHeads.size() == 1);
-    assert(activeHeads[0].monsterId == 501);
+    assert(activeHeads.size() == 2);
     assert(activeHeads[0].worldPos[0] > 0.05f); // horizontal ballistic movement
     assert(activeHeads[0].worldPos[1] > 0.0f);  // in air above floor
     const float rotRow0Len = activeHeads[0].worldRot[0]*activeHeads[0].worldRot[0] +
@@ -477,7 +490,7 @@ void TestCleanStumpBoneCollapsing() {
     // 5 bones: 0=root, 1=spine, 2=neck, 3=head, 4=jaw/horn (child of head)
     const std::vector<uint8_t> inHead = {0, 0, 0, 1, 1};
 
-    mgr.RegisterDecapitation(skel, 501, 3, 2, inHead, t0, 0.0f, nullptr, false);
+    mgr.RegisterDecapitation(skel, 501, 3, 2, inHead, t0, 0.0f, nullptr);
 
     std::vector<MockMatrix> poses = {
         MockMatrix::Translation(0, 0, 0),       // Root
