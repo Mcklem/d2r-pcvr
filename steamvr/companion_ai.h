@@ -790,9 +790,17 @@ struct TacticalOrder {
 
 struct TacticalOrderController {
     static constexpr float ArrivalTolerance = 2.0f;
+    static constexpr float NearObstacleArrivalTolerance = 4.5f;
     static constexpr float HoldReleaseDeadband = 3.5f;
+    static constexpr float MeleeSentryTetherRadius = 5.5f;
+    static constexpr float MeleeHoldEngageRadius = 6.0f;
+    static constexpr float RangedHoldEngageRadius = 24.0f;
     static constexpr float EngagementTolerance = 3.5f;
     static constexpr float EngagementReleaseDeadband = 5.0f;
+    static constexpr float RangedMinStandOff = 5.0f;
+    static constexpr float RangedOptimalStandOff = 10.0f;
+    static constexpr float RangedEngagementTolerance = 14.0f;
+    static constexpr float RangedEngagementReleaseDeadband = 16.5f;
     static constexpr float DuplicateTargetTolerance = 0.5f;
     static constexpr float ProgressThreshold = 0.25f;
     static constexpr uint64_t StallTimeoutMs = 2000;
@@ -812,6 +820,51 @@ struct TacticalOrderController {
     bool pendingMoveSubmission = false;
     uint32_t boundUnitId = 0;
     uintptr_t boundAreaRoom = 0;
+
+    // Computes archetype-aware arrival and release tolerances for the active order
+    static void GetOrderTolerances(TacticalOrderType type, Archetype arch, float& outArrivalTol, float& outReleaseDeadband) noexcept {
+        if (type == TacticalOrderType::MoveAndHold || type == TacticalOrderType::DefensiveHold) {
+            outArrivalTol = ArrivalTolerance;
+            outReleaseDeadband = (arch == Archetype::MeleeVanguard) ? HoldReleaseDeadband : HoldReleaseDeadband;
+            return;
+        }
+        if (type == TacticalOrderType::PrioritizeEnemy) {
+            if (arch == Archetype::RangedOverwatch) {
+                outArrivalTol = RangedEngagementTolerance;
+                outReleaseDeadband = RangedEngagementReleaseDeadband;
+            } else {
+                outArrivalTol = EngagementTolerance;
+                outReleaseDeadband = EngagementReleaseDeadband;
+            }
+            return;
+        }
+        outArrivalTol = ArrivalTolerance;
+        outReleaseDeadband = HoldReleaseDeadband;
+    }
+
+    // Computes the effective destination coordinate for a movement submission, respecting ranged stand-off
+    Vec2 ComputeEffectiveMoveTarget(Vec2 compPos, Archetype arch = Archetype::MeleeVanguard) const noexcept {
+        if (activeOrder.type == TacticalOrderType::PrioritizeEnemy && arch == Archetype::RangedOverwatch) {
+            const float dx = compPos.x - activeOrder.targetPos.x;
+            const float dy = compPos.y - activeOrder.targetPos.y;
+            const float dist = std::hypot(dx, dy);
+            if (dist > RangedEngagementTolerance && dist >= 1e-3f) {
+                // Walk to optimal stand-off firing distance (~10 sub-tiles) rather than melee contact
+                return {
+                    activeOrder.targetPos.x + (dx / dist) * RangedOptimalStandOff,
+                    activeOrder.targetPos.y + (dy / dist) * RangedOptimalStandOff
+                };
+            }
+            if (dist < RangedMinStandOff && dist >= 1e-3f) {
+                return {
+                    activeOrder.targetPos.x + (dx / dist) * RangedOptimalStandOff,
+                    activeOrder.targetPos.y + (dy / dist) * RangedOptimalStandOff
+                };
+            }
+            return compPos;
+        }
+        return activeOrder.targetPos;
+    }
 
     static void AssignConfirmationCue(TacticalOrderType type, TacticalVoiceCue& outCue) noexcept {
         switch (type) {
@@ -834,7 +887,7 @@ struct TacticalOrderController {
     // Deduplicates identical active orders so repeated inputs do not reset progress or spam requests.
     // Returns true if accepted (outCue set to confirmation cue),
     // or false if rejected (outCue set to TacticalVoiceCue::Impossible).
-    bool IssueOrder(const TacticalOrder& order, uint64_t nowMs, Vec2 compPos, Vec2 playerPos, TacticalVoiceCue& outCue, bool inRetreat = false, float health = 0.0f, float maxHealth = 0.0f) {
+    bool IssueOrder(const TacticalOrder& order, uint64_t nowMs, Vec2 compPos, Vec2 playerPos, TacticalVoiceCue& outCue, bool inRetreat = false, float health = 0.0f, float maxHealth = 0.0f, Archetype arch = Archetype::MeleeVanguard) {
         if (order.type == TacticalOrderType::None) {
             outCue = TacticalVoiceCue::None;
             return false;
@@ -914,8 +967,10 @@ struct TacticalOrderController {
         } else {
             const float distToTarget = std::hypot(compPos.x - order.targetPos.x, compPos.y - order.targetPos.y);
             bestDistToTarget = distToTarget;
-            const float tol = (order.type == TacticalOrderType::MoveAndHold) ? ArrivalTolerance : EngagementTolerance;
-            if (distToTarget <= tol) {
+            float arrivalTol = ArrivalTolerance;
+            float releaseDeadband = HoldReleaseDeadband;
+            GetOrderTolerances(order.type, arch, arrivalTol, releaseDeadband);
+            if (distToTarget <= arrivalTol) {
                 state = TacticalCommandState::Arrived;
                 pendingMoveSubmission = false;
             } else {
@@ -1005,11 +1060,29 @@ struct TacticalOrderController {
         CancelOrder(TacticalCommandCancelReason::TargetDefeated, nowMs);
     }
 
+    // If MoveAndHold walked up to an obstacle edge within NearObstacleArrivalTolerance (4.5 sub-tiles)
+    // and native A* cannot step any closer, snap anchor to compPos and mark Arrived rather than failing.
+    bool SnapArrivedIfNearObstacle(Vec2 compPos, uint64_t nowMs) noexcept {
+        if (!inTacticalOrder || activeOrder.type != TacticalOrderType::MoveAndHold || state != TacticalCommandState::Moving) {
+            return false;
+        }
+        const float dist = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
+        if (dist <= NearObstacleArrivalTolerance) {
+            activeOrder.targetPos = compPos;
+            state = TacticalCommandState::Arrived;
+            stateEnteredMs = nowMs;
+            retryCount = 0;
+            pendingMoveSubmission = false;
+            return true;
+        }
+        return false;
+    }
+
     // Evaluates the active order on tick.
     // Returns true ONLY when a single movement request should be submitted (on Requested -> Moving
     // or a bounded stall retry), never spamming on every tick.
     // If order is cancelled or fails, transitions state and sets outCue appropriately.
-    bool Evaluate(Vec2 compPos, Vec2 playerPos, uint64_t nowMs, bool inRetreat, Vec2& outTarget, TacticalVoiceCue& outCue, float health = 0.0f, float maxHealth = 0.0f) {
+    bool Evaluate(Vec2 compPos, Vec2 playerPos, uint64_t nowMs, bool inRetreat, Vec2& outTarget, TacticalVoiceCue& outCue, float health = 0.0f, float maxHealth = 0.0f, Archetype arch = Archetype::MeleeVanguard) {
         outCue = TacticalVoiceCue::None;
         if (!inTacticalOrder || activeOrder.type == TacticalOrderType::None) {
             return false;
@@ -1048,15 +1121,22 @@ struct TacticalOrderController {
 
         // Priority 4: State-machine evaluation by order type
         if (activeOrder.type == TacticalOrderType::DefensiveHold) {
+            const float distToHold = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
+            if (distToHold > HoldReleaseDeadband) {
+                outTarget = activeOrder.targetPos;
+                return true;
+            }
             state = TacticalCommandState::Arrived;
             pendingMoveSubmission = false;
             return false; // Hold current position
         }
 
         if (activeOrder.type == TacticalOrderType::MoveAndHold || activeOrder.type == TacticalOrderType::PrioritizeEnemy) {
-            const float arrivalTol = (activeOrder.type == TacticalOrderType::MoveAndHold) ? ArrivalTolerance : EngagementTolerance;
-            const float releaseDeadband = (activeOrder.type == TacticalOrderType::MoveAndHold) ? HoldReleaseDeadband : EngagementReleaseDeadband;
+            float arrivalTol = ArrivalTolerance;
+            float releaseDeadband = HoldReleaseDeadband;
+            GetOrderTolerances(activeOrder.type, arch, arrivalTol, releaseDeadband);
             const float distToTarget = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
+            const Vec2 effectiveMoveTarget = ComputeEffectiveMoveTarget(compPos, arch);
 
             if (state == TacticalCommandState::Arrived) {
                 // Hysteresis deadband prevents oscillation between Arrived and Moving on minor collision pushback
@@ -1071,7 +1151,7 @@ struct TacticalOrderController {
                 bestDistToTarget = distToTarget;
                 retryCount = 0;
                 pendingMoveSubmission = false;
-                outTarget = activeOrder.targetPos;
+                outTarget = effectiveMoveTarget;
                 return true;
             }
 
@@ -1091,7 +1171,7 @@ struct TacticalOrderController {
                 lastProgressMs = nowMs;
                 bestDistToTarget = distToTarget;
                 pendingMoveSubmission = false;
-                outTarget = activeOrder.targetPos;
+                outTarget = effectiveMoveTarget;
                 return true;
             }
 
@@ -1107,7 +1187,7 @@ struct TacticalOrderController {
                     if (retryCount < MaxMoveRetries) {
                         ++retryCount;
                         lastProgressMs = nowMs;
-                        outTarget = activeOrder.targetPos;
+                        outTarget = effectiveMoveTarget;
                         return true; // Bounded retry after stall timeout
                     }
                     // Stalled beyond retry limit: transition Moving -> Failed and stop retrying

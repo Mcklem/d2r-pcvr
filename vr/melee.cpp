@@ -211,9 +211,9 @@ uintptr_t Target(uintptr_t game,uintptr_t unit) {
     const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
     if(contact.game==game&&contact.attacker==unit&&
        (contact.smite||contact.skill||caller==d2rsig::Addr(0x42ffaa)||caller==d2rsig::Addr(0x43010a)))return contact.defender;
-    const auto tactical=companionai::GetTacticalCombatTarget(game,unit);
-    if(tactical)return tactical;
-    const auto result=originalTarget(game,unit);
+    uintptr_t tactical=0;if(companionai::TryOverrideCombatTarget(game,unit,tactical))return tactical;
+    const auto result=companionai::FilterNativeCombatTarget(game,unit,originalTarget(game,unit));
+    // Observe server state and return filtered combat target
     ObserveServer(game,unit);if(result)ObserveServer(game,result);
     return result;
 }

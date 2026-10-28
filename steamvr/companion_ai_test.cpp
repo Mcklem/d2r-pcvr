@@ -63,6 +63,20 @@ int FakeOriginalServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetU
     return 1;
 }
 
+int origServerStartWalkCalls = 0;
+int FakeOriginalServerStartWalk(uintptr_t game, uintptr_t moveStruct) {
+    (void)game; (void)moveStruct;
+    ++origServerStartWalkCalls;
+    return 1;
+}
+
+int origServerStartRunCalls = 0;
+int FakeOriginalServerStartRun(uintptr_t game, uintptr_t moveStruct) {
+    (void)game; (void)moveStruct;
+    ++origServerStartRunCalls;
+    return 1;
+}
+
 void PopulateCanonicalMonStats(std::vector<uint8_t>& buf, size_t rows = 600) {
     using namespace framevr::companionai;
     buf.assign(rows * RowSize, 0);
@@ -134,7 +148,9 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::RoomPointRva ||
         rva == companionai::abi::PathMoveRva ||
         rva == companionai::abi::ServerMoveToCoordRva ||
-        rva == companionai::abi::ServerMoveUnitRva) {
+        rva == companionai::abi::ServerMoveUnitRva ||
+        rva == companionai::abi::ServerStartWalkRva ||
+        rva == companionai::abi::ServerStartRunRva) {
         return signatures;
     }
     return false;
@@ -145,12 +161,22 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::RoomPointRva) return reinterpret_cast<uintptr_t>(&FakeRoomPoint);
     if (rva == companionai::abi::ServerMoveToCoordRva) return reinterpret_cast<uintptr_t>(&FakeServerMoveToCoord);
     if (rva == companionai::abi::ServerMoveUnitRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerMoveUnit);
+    if (rva == companionai::abi::ServerStartWalkRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartWalk);
+    if (rva == companionai::abi::ServerStartRunRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartRun);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
     if (!signatures) return false;
     if (rva == companionai::abi::ServerMoveUnitRva) {
         if (original) *original = reinterpret_cast<void*>(&FakeOriginalServerMoveUnit);
+        return true;
+    }
+    if (rva == companionai::abi::ServerStartWalkRva) {
+        if (original) *original = reinterpret_cast<void*>(&FakeOriginalServerStartWalk);
+        return true;
+    }
+    if (rva == companionai::abi::ServerStartRunRva) {
+        if (original) *original = reinterpret_cast<void*>(&FakeOriginalServerStartRun);
         return true;
     }
     return false;
@@ -1259,7 +1285,79 @@ int main() {
         assert(origServerMoveUnitCalls == 1); // Suppressed!
         assert(serverMoveCoordCalls == 2);    // No extra move call while holding at destination!
 
+        // 5. DetourServerStartWalk (0x445cc0) & DetourServerStartRun (0x445db0) block native 0x4a88fd->0x4475c0 follow-player walk
+        alignas(8) uint8_t moveStruct[0x40]{};
+        const uintptr_t mercUnitPtr = reinterpret_cast<uintptr_t>(mercUnit);
+        std::memcpy(moveStruct + 0x08, &mercUnitPtr, sizeof(mercUnitPtr));
+        const int wanderX = 100, wanderY = 102;
+        std::memcpy(moveStruct + 0x18, &wanderX, sizeof(wanderX));
+        std::memcpy(moveStruct + 0x1c, &wanderY, sizeof(wanderY));
+
+        origServerStartWalkCalls = 0;
+        origServerStartRunCalls = 0;
+        assert(companionai::DetourServerStartWalk(0x20000, reinterpret_cast<uintptr_t>(moveStruct)) == 0);
+        assert(companionai::DetourServerStartRun(0x20000, reinterpret_cast<uintptr_t>(moveStruct)) == 0);
+        assert(origServerStartWalkCalls == 0);
+        assert(origServerStartRunCalls == 0);
+
+        // 6. Combat target arbitration during MoveAndHold:
+        //    - While Moving (dist > ArrivalTolerance): TryOverrideCombatTarget suppresses combat targets (outTarget = 0)
+        //    - Once Arrived: FilterNativeCombatTarget allows close targets and rejects distant targets beyond hold radius
+        mercPath[1] = 100;
+        mercPath[3] = 95; // Far from (100, 80)
+        assert(companionai::g_tacticalOrderController.IssueOrder(moveOrder, 3000, { 100.0f, 95.0f }, { 100.0f, 100.0f }, cue));
+        assert(companionai::g_tacticalOrderController.Evaluate({ 100.0f, 95.0f }, { 100.0f, 100.0f }, 3000, false, evalTarget, cue));
+        uintptr_t overriddenTarget = 0x99999;
+        assert(companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, overriddenTarget));
+        assert(overriddenTarget == 0); // Suppressed while Moving to destination!
+
+        // Arrive at (100, 80) with MeleeVanguard (Act 2 Desert Mercenary classId = 338)
+        const uint32_t meleeMercHeader[4] = { 1, 338, 12345, 1 };
+        std::memcpy(mercUnit, meleeMercHeader, sizeof(meleeMercHeader));
+        mercPath[1] = 100;
+        mercPath[3] = 80;
+        assert(!companionai::g_tacticalOrderController.Evaluate({ 100.0f, 80.0f }, { 100.0f, 100.0f }, 4000, false, evalTarget, cue, 100.0f, 100.0f, Archetype::MeleeVanguard));
+        assert(!companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, overriddenTarget));
+
+        alignas(8) uint8_t enemyUnit[0x80]{};
+        alignas(8) uint16_t enemyPath[32]{};
+        const uintptr_t enemyPathPtr = reinterpret_cast<uintptr_t>(enemyPath);
+        std::memcpy(enemyUnit + 0x38, &enemyPathPtr, sizeof(enemyPathPtr));
+        enemyPath[1] = 100;
+        enemyPath[3] = 84; // 4 sub-tiles from anchor (<= 6.0 MeleeHoldEngageRadius)
+        assert(companionai::FilterNativeCombatTarget(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit)) == reinterpret_cast<uintptr_t>(enemyUnit));
+        enemyPath[1] = 100;
+        enemyPath[3] = 92; // 12 sub-tiles from anchor (> 6.0 MeleeHoldEngageRadius) -> rejected!
+        assert(companionai::FilterNativeCombatTarget(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit)) == 0);
+
+        // 7. Archetype-aware PrioritizeEnemy for RangedOverwatch (Act 1 Rogue classId = 271):
+        //    Engages from stand-off distance (10..14 sub-tiles) without closing into < 4 sub-tile panic-flee range
+        TacticalOrder rangedAtk{};
+        rangedAtk.type = TacticalOrderType::PrioritizeEnemy;
+        rangedAtk.targetUnitId = 777;
+        rangedAtk.targetPos = { 100.0f, 80.0f };
+        // Rogue at (100, 91) is 11 sub-tiles away -> already inside [5.0, 14.0] ranged firing window -> immediately Arrived!
+        assert(companionai::g_tacticalOrderController.IssueOrder(rangedAtk, 5000, { 100.0f, 91.0f }, { 100.0f, 100.0f }, cue, false, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+        // Rogue at (100, 100) is 20 sub-tiles away (> 14.0) -> walks to stand-off point (100, 90) (10 sub-tiles from enemy), NOT (100, 80)!
+        assert(companionai::g_tacticalOrderController.IssueOrder(rangedAtk, 6000, { 100.0f, 100.0f }, { 100.0f, 100.0f }, cue, false, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(companionai::g_tacticalOrderController.Evaluate({ 100.0f, 100.0f }, { 100.0f, 100.0f }, 6000, false, evalTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(std::fabs(evalTarget.x - 100.0f) < 1e-3f);
+        assert(std::fabs(evalTarget.y - 90.0f) < 1e-3f);
+
+        // 8. Near-obstacle arrival snap (<= 4.5 sub-tiles when A* stops at obstacle edge)
+        TacticalOrder wallOrder{};
+        wallOrder.type = TacticalOrderType::MoveAndHold;
+        wallOrder.targetPos = { 100.0f, 80.0f };
+        assert(companionai::g_tacticalOrderController.IssueOrder(wallOrder, 7000, { 100.0f, 95.0f }, { 100.0f, 100.0f }, cue));
+        assert(companionai::g_tacticalOrderController.Evaluate({ 100.0f, 95.0f }, { 100.0f, 100.0f }, 7000, false, evalTarget, cue));
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Moving);
+        assert(companionai::g_tacticalOrderController.SnapArrivedIfNearObstacle({ 100.0f, 83.7f }, 7500)); // dist = 3.7 <= 4.5
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+
         companionai::CancelTacticalOrder();
+        assert(companionai::g_pendingRegroupMove.load());
+        companionai::g_pendingRegroupMove.store(false);
     }
 
     return 0;

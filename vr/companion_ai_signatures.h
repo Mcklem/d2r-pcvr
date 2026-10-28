@@ -46,5 +46,21 @@ inline constexpr uint64_t ServerMoveUnitRva = 0x4a8a10;
 inline constexpr uint8_t ServerMoveUnitSig[] = {
     0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57
 };
+
+// ServerStartWalk RVA (0x445cc0) & ServerStartRun RVA (0x445db0) in D2R 3.3.93787 / 3.3.93847:
+// Mode-transition gatekeepers called by D2GAME_ExecuteMoveUnit (0x4475c0 at 0x4477c9):
+// int __fastcall ServerStartMoveMode(uintptr_t game, uintptr_t moveStruct)
+// where [moveStruct + 0x08] = unit, [moveStruct + 0x10] = targetUnit, [moveStruct + 0x18] = targetX, [moveStruct + 0x1c] = targetY.
+// Returning 0 causes 0x4475c0 to abort the path and keep the unit in MONMODE_NEUTRAL (1).
+// First 17 bytes are 5 complete non-RIP-relative instructions (5 + 1 + 4 + 4 + 3 = 17 bytes).
+inline constexpr uint64_t ServerStartWalkRva = 0x445cc0;
+inline constexpr uint8_t ServerStartWalkSig[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x5a, 0x08, 0x48, 0x8b, 0xf9
+};
+
+inline constexpr uint64_t ServerStartRunRva = 0x445db0;
+inline constexpr uint8_t ServerStartRunSig[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x5a, 0x08, 0x48, 0x8b, 0xf9
+};
 }
 

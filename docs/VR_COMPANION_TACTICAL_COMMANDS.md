@@ -1,217 +1,110 @@
-# VR Companion AI: Gesture-Based Tactical Commands (Point & Hold)
+# VR Companion AI: Gesture-Based Tactical Commands (Point, Focus, Hold & Regroup)
+
+> Español: [docs/es/VR_COMPANION_TACTICAL_COMMANDS.md](es/VR_COMPANION_TACTICAL_COMMANDS.md) | Core AI Architecture: [docs/VR_COMPANION_AI.md](VR_COMPANION_AI.md)
 
 ## 1. Overview & Motivation
 
-In flat *Diablo II: Resurrected*, mercenaries are passive followers governed by a rigid, autonomous state machine. Players have no direct agency to instruct their hireling to scout ahead, hold a defensive chokepoint, or focus down a high-priority elite monster (such as an *Extra Fast / Lightning Enchanted* boss or a dangerous resurrection shaman).
+In flat *Diablo II: Resurrected*, mercenaries are passive followers with no mechanism for the player to command them to hold a doorway, step onto a specific tile, or focus down a dangerous shaman/boss from a safe stand-off distance.
 
-In Virtual Reality (VR), your mercenary stands beside you as a physical, human-scale presence. Immersion and tactical depth demand that players can **communicate intent directly through natural VR gestures**:
-- **Point-and-Command (Move & Hold):** Pointing your finger at a doorway, corridor, or ground location and squeezing the grip commands the mercenary to advance and secure that position.
-- **Priority Target Marking (Focus Fire):** Pointing at a specific monster entity while clicking the grip commands the mercenary to prioritize that enemy over ambient threats.
-- **Defensive Hold (Open-Palm Stance):** Raising a flat, upright palm towards your companion commands a temporary halt and defensive stance at their current position.
-
-This document details the architectural integration of gesture-based tactical commands with the modernized VR Companion AI system ([`steamvr/companion_ai.h`](../steamvr/companion_ai.h) and [`vr/companion_ai.cpp`](../vr/companion_ai.cpp)), ensuring seamless coexistence with personal space proxemics, bodyguard peeling, emergency anti-stuck watchdogs, and tactical health retreats.
+In Virtual Reality (VR), `d2r-pcvr` gives players natural hand-gesture agency over their companion through the **Explicit Tactical Command State Machine** (`TacticalOrderController` in [`steamvr/companion_ai.h`](../steamvr/companion_ai.h) and [`vr/companion_ai.cpp`](../vr/companion_ai.cpp)):
+- **Move & Hold (`MoveAndHold`):** Point at a walkable ground coordinate and squeeze **Grip** to command the mercenary to walk there and hold that position without oscillating back toward the player.
+- **Focus Enemy (`PrioritizeEnemy`):** Point directly at a hostile monster and squeeze **Grip** to focus attacks on that target using archetype-aware engagement distances (`MeleeVanguard` closes to melee; `RangedOverwatch` engages from a `10.0`-sub-tile stand-off window).
+- **Defensive Hold (`DefensiveHold`):** Hold an upright open palm facing forward for `400 ms` to freeze the mercenary at their current position as a defensive turret/vanguard.
+- **Regroup / Cancel (`ExplicitCancel`):** Point at the companion itself (`<= 2.5` sub-tiles) and squeeze **Grip** while an order is active to cancel the hold and return to normal squad follow.
 
 ---
 
-## 2. Priority Hierarchy & State Machine Integration
+## 2. Explicit Command State Machine & Lifecycle
 
-### Placement within the Tactical Coordinator
-The companion coordinator in [`companionai::Tick`](../vr/companion_ai.cpp) evaluates movement intentions every frame. Tactical orders act as direct player directives, superseding ambient squad formation and autonomous blind-spot peeling, but strictly subordinating to **critical self-preservation** and **personal space safety**:
+Every tactical order transitions deterministically through `TacticalCommandState` and logs every state transition to `d2r-vr-frame.log` (`LogTacticalTransition`):
 
 ```mermaid
-flowchart TD
-    A["companionai::Tick()"] --> B{"Companion Critical?<br/>(Health < 50%)"}
-    B -- "YES" --> C["PRIORITY 1: Tactical Retreat<br/>(Auto-cancel tactical order; disengage for potion)"]
-    B -- "NO" --> D{"Personal Space Violation?<br/>(Distance < 1.5m)"}
-    D -- "YES" --> E["PRIORITY 2: Proxemic Evasion<br/>(Yield space to player)"]
-    D -- "NO" --> F{"Active Tactical Order?<br/>(MoveAndHold / Focus / Hold)"}
-    F -- "YES" --> G{"Leash Exceeded?<br/>(Distance > 40 sub-tiles)"}
-    G -- "YES" --> H["AUTO-CANCEL: Elastic Leash Break<br/>(Play regroup voice; return to formation)"]
-    G -- "NO" --> I["PRIORITY 3: Execute Tactical Order<br/>(Dispatch pathMoveFn to target)"]
-    F -- "NO" --> J["PRIORITY 4: Active Bodyguard Peeling<br/>(Intercept blind-spot flankers)"]
-    J --> K["PRIORITY 5: Squad Formation Anchor<br/>(Vanguard / Overwatch flanking)"]
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Requested : IssueOrder(MoveAndHold / PrioritizeEnemy)
+    Idle --> Arrived : IssueOrder(DefensiveHold) or already inside ArrivalTolerance
+    Requested --> Moving : Evaluate() dispatches ServerMoveToCoord (0x4a77e0)
+    Moving --> Arrived : Within archetype ArrivalTolerance (<=2.5 hold / 5..14 ranged)
+    Arrived --> Moving : Drifted outside HoldReleaseDeadband (>6.5 hold / >16.5 ranged)
+    Moving --> Moving : Retry if stalled >1500ms (up to MaxStallRetries = 4)
+    Moving --> Failed : Retry budget exhausted (>4 stalls)
+    Requested --> Cancelled : Unreachable / HealthRetreat / LeashBreak / ExplicitCancel
+    Moving --> Cancelled : HealthRetreat / LeashBreak / TargetDefeated / UnitInvalidated
+    Arrived --> Cancelled : HealthRetreat / LeashBreak / TargetDefeated / ExplicitCancel
 ```
 
-> [!IMPORTANT]
-> **The Golden Survival Rule:** If the player orders a companion to hold a dangerous position or fight a deadly pack, but the companion's health drops below 50% (`CriticalHealthRatio = 0.50f`), **self-preservation immediately overrides the tactical order**. The order is auto-cancelled, the companion emits an urgent distress cry, and retreats to the player's forward arc in a receiving stance to await a healing potion. Players cannot force an AI companion into a suicidal death lock.
-
-### Data Model (`TacticalOrder`)
-In [`steamvr/companion_ai.h`](../steamvr/companion_ai.h):
-
-```cpp
-enum class TacticalOrderType : uint8_t {
-    None = 0,         // Autonomous mode: standard formations and peeling
-    MoveAndHold,      // March to target ground coordinate and hold defensive ground
-    PrioritizeEnemy,  // Focus attack exclusively on a specific monster entity
-    DefensiveHold     // Cease movement and lock current ground position
-};
-
-struct TacticalOrder {
-    TacticalOrderType type = TacticalOrderType::None;
-    uint32_t targetUnitId = 0;       // Unit ID if type == PrioritizeEnemy
-    Vec2 targetPos{};                // Sub-tile world coordinates
-    uintptr_t targetRoom = 0;        // D2RoomStrc pointer
-    uint64_t issuedMs = 0;           // Timestamp of command issuance
-    uint64_t holdDurationMs = 0;     // 0 = indefinite until leash break or cancel
-};
-```
+### Cancellation Reasons (`TacticalCommandCancelReason`)
+- `None`: Order active or idle.
+- `Superseded`: Replaced by a newer player tactical command.
+- `ExplicitCancel`: Player pointed at the companion + Grip to regroup.
+- `HealthRetreat`: Companion HP dropped below `50%` (`CriticalHealthRatio = 0.50f`); self-preservation takes priority.
+- `LeashBreak`: Player or companion exceeded `ElasticCombatLeashDistance` (`40.0` sub-tiles / ~16m).
+- `TargetDefeated`: Marked `PrioritizeEnemy` monster died (`animMode == 0 || animMode == 12`) or despawned.
+- `DestinationUnreachable`: Target coordinate failed `RoomPoint` (`0x38dfb0`) walkability validation.
+- `StalledNoProgress`: Companion made `< 1.0` sub-tile progress across `4` consecutive `1500 ms` stall windows.
+- `UnitInvalidated` / `LevelTransition`: Companion died, was replaced, or player changed dungeon levels/rooms.
 
 ---
 
-## 3. Gesture Recognition & Kinematics
+## 3. Archetype-Aware Engagement & Anti-Oscillation Architecture
 
-### Gesto 1: Point-to-Command (*Raycast + Grip Click*)
-* **Aim Vector Extraction:** Derived from the OpenXR aim pose of the commanding hand (`handAim[h]` from `/user/hand/.../input/aim/pose`):
-  $$\mathbf{P}_{\text{origin}} = \mathbf{P}_{\text{aim}}, \quad \mathbf{D}_{\text{aim}} = \mathbf{Rotate}(\mathbf{Q}_{\text{aim}}, \{0, 0, -1\})$$
-* **Entity Intersection (Target Marking):**
-  * Evaluated via [`targetcone::Pick`](../steamvr/target_cone.h): checks ray against nearby `melee::Hostiles`.
-  * If a hostile monster lies within an angular tolerance ($\le 12^\circ$), it is designated as `PrioritizeEnemy`. Friendly/neutral NPCs (`AlignOffset == 1`) are explicitly filtered out.
-* **Ground Intersection (Move & Hold):**
-  * If no monster is targeted, [`spellaim::GroundPoint`](../steamvr/spell_aim.h) intersects the aim ray with the floor elevation plane ($Y = \text{floorY}$).
-  * Resolves room membership via `roomPointFn(playerRoom, targetX, targetY)`.
-  * If walkable, registers as `MoveAndHold`.
-* **Execution Trigger:** Flank rise of the controller grip squeeze (`in.grip[h] > 0.6f && !gripWas[h]`).
-  * **Input Conflict Filter:** Squeezing the grip is ignored if the hand is within belt or holster interaction distance (`interactionOutput.nearBelt >= 0 || interactionOutput.nearHolster >= 0`) to prevent accidental commands while pulling potions or drawing weapons.
+A critical finding from live runtime analysis in `D2R.exe 3.3.93847` is that vanilla `AITHINK_Fn061_Hireable` (`0x5c1610`) causes two severe conflicts if not arbitrated by archetype and low-level move gatekeepers:
+1. **Ranged Panic-Flee Conflict:** If an Act 1 Rogue (`271`) or Act 3 Iron Wolf (`359`) is ordered to walk to a monster's exact coordinate (`dist < 4` sub-tiles), `AITHINK_Fn061_Hireable` immediately triggers a hardcoded `< 4` sub-tile panic-flee walk back toward the player.
+2. **Dual Native Move Paths & Target Distraction:** Even when `ServerMoveUnit` (`0x4a8a10`) is hooked, `AITHINK_Fn061_Hireable` also calls `0x4a87e0` (`0x4a88fd -> 0x4475c0 -> 0x445cc0/0x445db0`) to walk back to the player once `MONMODE_NEUTRAL (1)` is reached, and `melee::Target` (`0x48fe20`) acquires distant monsters up to `48` sub-tiles away.
 
-### Gesto 2: Open-Palm Defensive Hold (*Upright Palm towards Companion*)
-* **Kinematic Detection Formula:**
-  1. **Upright Hand Orientation:** Hand upward axis aligned with room upward vector:
-     $$\mathbf{Up}_{\text{hand}} \cdot \mathbf{Up}_{\text{room}} > \cos(35^\circ) \approx 0.82$$
-  2. **Palm Directed at Companion:** Palm outward normal ($\mathbf{N}_{\text{palm}}$) points directly toward the companion's current position:
-     $$\mathbf{N}_{\text{palm}} \cdot \frac{\mathbf{P}_{\text{comp}} - \mathbf{P}_{\text{hand}}}{\|\mathbf{P}_{\text{comp}} - \mathbf{P}_{\text{hand}}\|} > 0.70$$
-  3. **Open / Relaxed Hand:** Neither grip nor trigger is engaged (`grip < 0.2f && trigger < 0.2f`).
-* **Temporal Hysteresis:** The open-palm posture must be sustained for **400 ms** to eliminate accidental triggers during natural hand movements.
-* **Effect:** Issues `DefensiveHold`, freezing companion movement at their current coordinates, accompanied by a subtle haptic pulse in the commanding controller.
+### 3.1. Archetype Tolerances (`TacticalOrderController::GetOrderTolerances`)
 
----
-
-## 4. Voice Line & Audio Architecture
-
-When mercenaries lack dedicated command voice recordings, D2R-PCVR borrows canonical hero voice files matching each hireling class archetype.
-
-### Archetype Voice Fallback Mapping
-Audio files reside in `data:locales\audio\<locale>\data\local\sfx\common` (e.g. `data:locales\audio\eses\data\local\sfx\common` for Spanish, `enus` for English), and are referenced via native `sounds.txt` row IDs:
-
-| Hireling Class | Class ID | Archetype | Canonical Voice Fallback | Engine Sound Prefix |
+| Order Type & Archetype | `minDist` | `arrivalTol` | `releaseDeadband` | Effective Move Target (`ComputeEffectiveMoveTarget`) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Act 1 Rogue Scout** | `271` | Ranged Overwatch | **Amazon** | `amazon_chat_*` / `amazon_*` |
-| **Act 2 Desert Guard** | `338` | Melee Vanguard | **Paladin** | `paladin_chat_*` / `paladin_*` |
-| **Act 3 Iron Wolf** | `359` | Elemental Overwatch | **Necromancer** | `necromancer_chat_*` / `necromancer_*` |
-| **Act 5 Barbarian** | `560`, `561` | Melee Vanguard | **Barbarian** | `barbarian_chat_*` / `barbarian_*` |
+| **`MoveAndHold` / `DefensiveHold` (All)** | `0.0` | `2.5` sub-tiles | `6.5` sub-tiles | Exact ground coordinate `order.targetPos`. |
+| **`PrioritizeEnemy` (`MeleeVanguard`)** | `0.0` | `3.5` sub-tiles | `7.5` sub-tiles | Monster coordinate `order.targetPos`. |
+| **`PrioritizeEnemy` (`RangedOverwatch`)** | `5.0` sub-tiles | `14.0` sub-tiles | `16.5` sub-tiles | Stand-off point at `RangedOptimalStandOff = 10.0` sub-tiles from monster along companion-to-enemy vector. |
 
-### Contextual Voice Lines
-
-```
-                           +-------------------------------+
-                           |      PLAYER GESTURE/ORDER     |
-                           +-------------------------------+
-                                           |
-                   +-----------------------+-----------------------+
-                   |                                               |
-         [Valid Order Issued]                            [Invalid / Impossible]
-                   |                                               |
-         +---------+---------+                       "x_impossible" ("Impossible / No")
-         |                   |                       - Out of range / Unwalkable path
-   [Move & Hold]      [Attack Target]                - Blocked doorway / Chasm
-         |                   |                       - Leash distance exceeded (> 40)
-  "x_follow_me"        "x_attack"
- ("On my way")       ("Attacking!")
-```
-
-1. **Order Rejection (`x_impossible`):**
-   * Played immediately if the player commands an action that cannot be fulfilled (e.g. clicking unnavigable terrain like lava or chasms, aiming beyond `ElasticCombatLeashDistance`, or commanding an action while the companion is in critical health retreat).
-   * Voice line: *"Impossible"*, *"I can't do that"*, *"No"*.
-2. **Move Confirmation (`x_follow_me` / `x_yes`):**
-   * Played upon issuing a valid `MoveAndHold` command.
-   * Voice line: *"Understood"*, *"On my way"*, *"Moving"*.
-3. **Target Prioritization (`x_attack` / Battle Cry):**
-   * Played when an elite or hostile monster is marked as `PrioritizeEnemy`.
-   * Voice line: *"Target acquired"*, *"For the cause!"*, or class combat shout.
-4. **Defensive Hold (`x_wait_here`):**
-   * Played when the open-palm hold gesture locks the companion's stance.
-   * Voice line: *"Holding ground"*, *"Standing firm"*.
-5. **Leash Break / Regrouping (`x_regroup` / `x_follow_me`):**
-   * Played when the player moves past the leash limit, forcing the companion to abandon their hold position and catch up to the player's formation.
-   * Voice line: *"Regrouping!"*, *"Coming with you!"*.
-6. **Critical Health Distress (`x_help`):**
-   * Automatically triggered when life drops below 50%, overriding any active hold order (already implemented via `GetArchetypeDistressSound`).
+### 3.2. Synchronized Locomotion & Target Lock While Holding Position
+1. **While `Moving` to `MoveAndHold`:**
+   - `TryOverrideCombatTarget` (`0x48fe20`) returns `outTarget = 0` (`true`), preventing the mercenary from getting distracted by ambient monsters before reaching the commanded position.
+   - `DetourServerStartWalk` (`0x445cc0`) and `DetourServerStartRun` (`0x445db0`) reject (`return 0`) any native AI move not aimed at `order.targetPos` and trigger an immediate next-frame re-dispatch if interrupted.
+2. **Once `Arrived` at `MoveAndHold` or `DefensiveHold`:**
+   - `DetourServerMoveUnit` (`0x4a8a10`), `DetourServerStartWalk` (`0x445cc0`), and `DetourServerStartRun` (`0x445db0`) block all native follow-player and panic-flee walks (`return 0` in `0x445cc0`/`0x445db0`, causing `0x4475c0` to clear the rogue path via `0x34f430` and keep the unit in `MONMODE_NEUTRAL (1)`).
+   - `FilterNativeCombatTarget` (`0x48fe20`) filters native target candidates so `MeleeVanguard` only attacks monsters within `6.0` sub-tiles of the hold anchor (inside the `6.5`-sub-tile release deadband), and `RangedOverwatch` fires from a stationary position at monsters within `24.0` sub-tiles of the anchor.
 
 ---
 
-## 5. Visual Feedback: Tactical Command Beacon & Decals
+## 4. Gesture Recognition & Disambiguation (`steamvr/transport.cpp`)
 
-To provide unambiguous spatial feedback in VR, an active tactical command renders a holographic world-space beacon and ground decal at the target location:
+### 4.1. Select Companion First: Grab, Aim & Release (`Grip Hold` on Companion -> Aim -> `Grip Release`)
+To prevent accidental tactical commands when using the Grip button for belt potions, weapon holsters, or world interactions, every Grip-based tactical order must **begin by pointing at the companion first**:
+- **Step 1 — Latch Companion (`Grip Press` on Companion):**
+  - Evaluated via 3D vertical cylinder intersection (`hitsUnitCylinder3D` in sheared `coordinates::RenderGround` world metres, radius `0.95m`, height `[-0.45m, 2.00m]`) or ground foot radius (`<= 3.5` sub-tiles).
+  - Pressing Grip anywhere else when not pointing at the companion is ignored by the tactical system.
+  - Engaging Grip on the companion triggers a short confirmation haptic pulse (`0.30f`) and places a Gold/Green ring (`color = 2`) under the companion's feet.
+- **Step 2 — Live Aim Preview (`Grip Held`):**
+  - While holding Grip and redirecting your hand:
+    - Aiming at a **hostile monster** (3D body cylinder `0.85m` or ground radius `2.5` sub-tiles) previews a **Red/Crimson ring** (`color = 1`) on that enemy.
+    - Aiming at **walkable ground** previews a **Cyan ring** (`color = 3`) at `{ gx, gy }`.
+    - Keeping aim on the **companion** previews the **Gold/Green ring** (`color = 2`) on the companion.
+- **Step 3 — Execute on Release (`Grip Release`):**
+  1. **Hostile Monster (`PrioritizeEnemy`):** Releasing Grip while aiming at a monster issues `PrioritizeEnemy` on that target.
+  2. **Companion Toggle (`DefensiveHold` / `Regroup`):** Releasing Grip while still pointing at the companion (or after a quick click `<= 300 ms`) toggles:
+     - If an order is currently active (`Requested`, `Moving`, or `Arrived`): calls `CancelTacticalOrder()` (`Regroup`) and actively dispatches a server walk (`DispatchServerMoveToCoord`) back to the player's flank.
+     - If following normally (`Idle` / `Cancelled`): issues `DefensiveHold` at the companion's current coordinates.
+  3. **Ground Coordinate (`MoveAndHold`):** Releasing Grip on a walkable floor point issues `MoveAndHold` at `{ gx, gy }`. If native A* stops at an obstacle edge within `NearObstacleArrivalTolerance` (`4.5` sub-tiles) of the target, the anchor snaps cleanly to `Arrived` instead of stalling.
 
-```
-          Beacon Column
-        [Vertical Beam]       <--- Translucent energy column (height: 2.5m, radius: 0.25m)
-              ||
-              ||
-             ====             <--- Ground Decal (Pulsing concentric ring, radius: 0.8m)
-          [Ground]
-```
-
-### Visual Specifications
-* **Shader Pipeline:** Rendered through the GPU particle pipeline in [`steamvr/elemental_hands_renderer.cpp`](../steamvr/elemental_hands_renderer.cpp) or a dedicated world-space decal pass with additive alpha blending and depth testing.
-* **Color Coding:**
-  * **Cyan / Neon Blue (`#00E5FF`):** `MoveAndHold` — Indicates a secure defensive move position.
-  * **Crimson / Fire Orange (`#FF3D00`):** `PrioritizeEnemy` — Projected as an overhead chevron and ground reticle highlighting the marked monster.
-  * **Amber / Gold (`#FFC107`):** `DefensiveHold` — Renders as an expanding-and-contracting ground ring around the companion's feet.
-* **Duration & Fading:**
-  * Beacons persist as long as the command is active.
-  * When a command completes or auto-cancels, the beacon smoothly fades out over 0.5 seconds.
-  * If a command is rejected (`x_impossible`), the decal flashes red twice and dissolves.
-
----
-
-## 6. Edge Cases & Safety Guarantees
-
-| Edge Case | Failure Mode | Architectural Solution |
-| :--- | :--- | :--- |
-| **Player Leaves Area / Runs Away** | Companion remains permanently pinned at hold position in another room while player dies without support. | **Elastic Leash Auto-Cancel:** If the distance between player and companion (or target position) exceeds `ElasticCombatLeashDistance` (40 sub-tiles / ~16 m), the tactical order automatically terminates. Companion plays regroup voice line and resumes formation follow. |
-| **Target Monster Dies or Despawns** | Companion freezes attempting to pathfind to a destroyed or null unit entity. | Active target validity is verified on every tick. When the marked monster dies, the order automatically transitions into `MoveAndHold` at the monster's death coordinate for 2.0 s, then smoothly reverts to autonomous formation. |
-| **Unwalkable / Invalid Navmesh Point** | Player points at a chasm, lava, wall, or off-map void. | Evaluated via `roomPointFn`. If the target coordinate is non-traversable, the command is immediately rejected: plays `x_impossible` voice line and flashes red rejection beacon. |
-| **Critical Health Danger (< 50% HP)** | Player holds companion inside an elite mob pack, resulting in companion death. | `TacticalRetreatController` holds supreme priority. When HP < 50%, tactical order is immediately aborted; companion cries for help and retreats to the player's front arc for potion tossing. |
-| **Level Transitions & Portals** | Companion retains obsolete target coordinates from a previous dungeon floor. | Level transitions, town portals, or `playerRoom` epoch changes automatically reset `TacticalOrder` to `None`. |
-| **Input Clashes (Potions & Holsters)** | Squeezing grip to draw a belt potion accidentally dispatches an unwanted move command. | Strict mutual exclusion: grip input is rejected if `interactionOutput.nearBelt >= 0` or `interactionOutput.nearHolster >= 0`. |
-| **Targeting Friendly / Neutral Units** | Player points at Deckard Cain, Charsi, or the companion itself. | Entity picking filters `AlignOffset != 1`. Pointing at the companion itself and clicking grip is interpreted as an explicit **"Regroup"** command. |
+### 4.2. Open-Palm Defensive Hold (`400 ms` Hold)
+- **Posture Filter:** Hand open (`grip < 0.2f && trigger < 0.2f`), fingers pointing upward (`handUp.y > 0.82f`), and palm normal aligned with headset forward vector (`dot > 0.70f`) sustained for `400 ms`.
+- **Action:** Issues `DefensiveHold` anchored at the companion's current sub-tile position (`compPos`).
 
 ---
 
-## 7. Configuration & VR Settings
+## 5. Voice Cues & Configuration
 
-* **INI Configuration (`d2r_pcvr.ini`):**
-  * `[gameplay] companion_tactical_commands=1`: Master toggle for gesture-based tactical commands.
-    * `1` (Default): Point-and-command and open-palm hold gestures are enabled.
-    * `0` (Disabled): Disables tactical gestures; mercenary operates in standard autonomous VR companion AI mode (squad formations, peeling, and tactical health retreat).
-* **VR Settings Menu Integration:**
-  * Configurable under the **Combat** page of the in-game VR Settings menu under the option **Tactical Commands** (`Enabled` / `Disabled`).
-  * Live status queried via `companionai::IsTacticalCommandsEnabled()`.
+| Tactical Event | `TacticalVoiceCue` | Act 1 Rogue (`271`) | Act 2 Desert (`338`) | Act 3 Iron Wolf (`359`) | Act 5 Barbarian (`560`/`561`) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`MoveAndHold` Accepted** | `MoveConfirm` | `4294` / `4291` | `3952` | `4040` / `4041` | `4565` |
+| **`PrioritizeEnemy` Accepted** | `AttackConfirm` | `2949` / `2950` | `3183` / `3184` | `3105` / `3106` | `3027` / `3028` |
+| **`DefensiveHold` Accepted** | `HoldConfirm` | `2943` / `2944` | `3177` / `3178` | `3099` / `3100` | `3021` / `3022` |
+| **Order Rejected / Failed** | `Impossible` | `2953` / `2954` | `3187` / `3188` | `3109` / `3110` | `3031` / `3032` |
+| **Leash Break Auto-Cancel** | `RegroupLeash` | `2939` / `2940` | `3173` / `3174` | `3095` / `3096` | `3017` / `3018` |
+| **Critical HP (`< 50%`)** | `Distress` | `2937` / `2938` | `3171` / `3172` | `3093` / `3094` | `3015` / `3016` |
 
----
-
-## 8. Implementation Roadmap
-
-### Phase 1: Core Tactical State Machine ([`steamvr/companion_ai.h`](../steamvr/companion_ai.h))
-- Implement `TacticalOrderType` and `TacticalOrderController`.
-- Implement `IssueOrder()`, `CancelOrder()`, leash-break auto-cancel, and health override checks.
-- Add comprehensive automated unit tests in [`steamvr/companion_ai_test.cpp`](../steamvr/companion_ai_test.cpp).
-
-### Phase 2: Engine Movement Dispatcher ([`vr/companion_ai.cpp`](../vr/companion_ai.cpp))
-- Integrate tactical order execution into `companionai::Tick`.
-- Connect `MoveAndHold` and `PrioritizeEnemy` to native `pathMoveFn(compPath, hireling, targetRoom, targetX, targetY)` at RVA `0x381890`.
-- Integrate audio voice line triggers (`x_impossible`, affirmations, hold calls) via `threads->runOnUiThread`.
-
-### Phase 3: Gestures & Kinematic Input ([`steamvr/transport.cpp`](../steamvr/transport.cpp))
-- Bind `handAim` raycast against `melee::Hostiles` and `spellaim::GroundPoint`.
-- Implement open-palm hold orientation filter (upright vector dot product $> 0.82$, palm normal to companion $> 0.70$, 400 ms hold timer).
-- Wire grip press with belt/holster exclusion guards.
-
-### Phase 4: Visual Holographic Beacon & Decals
-- Add command beacon cylinder and ground ring rendering.
-- Wire color states (Cyan for move, Red for focus, Gold for hold).
-
-### Phase 5: In-Headset Calibration & Verification
-- Test in Meta Quest 3 across Act 1 Catacombs and Blood Moor.
-- Validate audio responsiveness and leash auto-cancels.
-
+- **INI Setting:** `[gameplay] companion_tactical_commands=1` in `d2r_pcvr.ini` (also toggleable live in the in-VR Settings menu under **Combat -> Tactical Commands**).
