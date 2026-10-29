@@ -425,3 +425,74 @@ stateDiagram-v2
 3. **Visual & Skeletal Stability:** Skills conflicting with native hireling animation tokens are rejected, guaranteeing zero skeletal glitches.
 4. **Clean Baseline Fallback:** Setting `companion_item_skills = 0` immediately bypasses all level adjustments and charge evaluations, returning companion behavior 100% to Blizzard's vanilla AI.
 
+---
+
+## 9. In-Game Testing Guide and Developer Buttons
+
+To streamline hands-on gameplay verification without needing to farm or search for rare charged items in long playthroughs, two dedicated developer buttons have been integrated into the **DEV** tab (**HERO** page) of the VR interaction menu:
+
+### 9.1 Developer Buttons on the DEV Menu
+
+1. **`Merc charged item` (Slot 9 on HERO page):**
+   * **Function:** Generates and deposits into the player's inventory a random/cycling unique equipment item with charged skills (`Stat 204`) spanning every equipment slot mercenaries can use.
+   * **Covered slots & items:**
+     * **Head:** *Darksight Helm* (Level 5 *Cloak of Shadows* charges), *Wolfhowl* (Level 3-6 *Feral Rage / Werewolf* charges).
+     * **Body:** *Corpsemourn* (Level 5 *Corpse Explosion* charges).
+     * **Shield (Iron Wolf):** *Radament's Sphere* (Level 6 *Poison Nova* charges), *Stormchaser* (Level 5 *Tornado* / Level 4 *Blizzard* charges).
+     * **Weapons (all mercenary-compatible weapon types):**
+       * **Bows (Act 1 Rogue):** *Magewrath* (Level 5 *Guided Arrow* charges), *Witchwild String* (Level 20 *Magic Arrow* charges).
+       * **Polearms (Act 2 Desert Guard):** *Pierre Tombale Couant* (Level 3 *Iron Maiden* charges).
+       * **Spears (Act 2 Desert Guard):** *Arioc's Needle*, *Spire of Honor*.
+       * **1-Hand Swords (Act 3 Iron Wolf / Act 5 Barbarian):** *Hexfire* (Level 6 *Hydra* charges), *Ginther's Rift*.
+       * **2-Hand Swords (Act 5 Barbarian):** *Todesfaelle Flamme* (Level 10 *Enchant* and Level 10 *Fire Wall* charges), *Flamebellow* (Level 16 *Inferno* charges).
+       * **Multi-Skill Utility Tools:** *Spellsteel* (Bearded Axe with Level 1 *Teleport [20/20]*, Level 3 *Decrepify [30/30]*, Level 12 *Firestorm [60/60]*, Level 10 *Holy Bolt [100/100]*), *Demon Limb* (Level 23 *Enchant [20/20]*).
+   * Successive presses cycle through all items in the pool, ensuring quick access to test any slot.
+
+2. **`Merc class gear` (Slot 10 on HERO page):**
+   * **Function:** Real-time inspection of the currently hired mercenary, depositing a full kit of level 99 unique gear providing matching virtual class bonuses (`+ClassSkills`, `+TabSkills`, `+SingleSkill`):
+     * **Act 1 Rogue (Amazon):** Amazon-tailored bow (*Lycander's Aim* with +2 Amazon / +2 Bow & Crossbow), helm (*Valkyrie Wing* with +1-2 Amazon), armor (*Skin of the Vipermagi* with +1 All Skills).
+     * **Act 2 Desert Guard (Paladin):** Paladin-tailored spear (*Arioc's Needle* with +2-4 All Skills), helm (*Harlequin Crest* with +2 All Skills), armor (*Guardian Angel* with +1 Paladin Skills).
+     * **Act 3 Iron Wolf (Sorceress):** 1H Sword (*Hexfire* with +3 Fire Skills), shield (*Lidless Wall* with +1 All Skills), helm (*Harlequin Crest* with +2 All Skills), armor (*Skin of the Vipermagi* with +1 All Skills).
+     * **Act 5 Barbarian (Barbarian):** 2H Sword (*The Grandfather* with +2 All Skills), helm (*Arreat's Face* with +2 Barbarian / +2 Combat Skills), armor (*Arkaine's Valor* with +2 All Skills).
+
+---
+
+### 9.2 Step-by-Step Test Protocol
+
+#### Step 1: Session & Environment Setup
+1. Launch D2R via D2RLoader in isolated mod mode `pcvr-dev` (offline local game).
+2. Open the DEV menu on your VR interaction hand wheel (`DEV` tab -> `HERO` page).
+3. Optionally press `Unlock Quests & Waypoints` and `Level 90` to instantly unlock all Acts and hireling vendors.
+
+#### Step 2: Virtual Class Skill Bonuses Verification (Phase 1)
+1. Hire the desired mercenary (Rogue in Act I, Desert Guard in Act II, Iron Wolf in Act III, Barbarian in Act V).
+2. Open the wheel menu and press `Merc class gear`. The class equipment kit will appear in your inventory.
+3. Open the mercenary inventory screen (native `O` key or VR gesture) and equip the items.
+4. Step outside town into combat (e.g. *Blood Moor* or *River of Flame*):
+   * Monitor `framevr.log` for level interception confirmations:
+     `Frame companion AI: computed effective skill level for companion...`
+   * Observe increased projectile potency and damage numbers from the Rogue, Iron Wolf spells, and Desert Guard / Barbarian combat strikes.
+
+#### Step 3: Tactical Charged Casting Verification (Phases 2 & 3)
+1. With your mercenary hired, press `Merc charged item` until you obtain key tactical pieces:
+   * e.g., *Spellsteel* (*Teleport* and *Decrepify*), *Darksight Helm* (*Cloak of Shadows*), or *Corpsemourn* (*Corpse Explosion*).
+2. Equip the charged piece on the companion.
+3. Perform the following situational combat tests:
+   * **P1 Emergency Teleport:** Allow companion health to drop below 40% (or get surrounded by 2+ melee attackers). The companion triggers `P1 Emergency Teleport retreat`, casting Teleport and snapping immediately to your player position.
+   * **P2 Threat Suppression:** Engage distant ranged attackers (archers or gloams > 12 sub-tiles away). The companion casts *Cloak of Shadows* or *Slow Missiles* to protect the squad.
+   * **P3 Debuff Curse:** Engage a Boss, Champion, or pack (>3 enemies). The companion casts *Decrepify*, *Life Tap*, or *Lower Resist*.
+   * **P5 Summon / Buff:** Equipping a summon item (e.g. *Heart of Wolverine* or *Oak Sage*) prompts the companion to cast the spirit immediately upon engaging combat.
+
+#### Step 4: Charge Wear vs. Zero-Wear Accounting Verification
+1. By default, `companion_consume_item_charges = 0` under `[dev]` in `d2r_pcvr.ini` operates in **Zero-Wear** mode:
+   * After repeated casts, inspect the item in the companion's inventory. Confirm charges remain unchanged (e.g. 20/20).
+2. To test realistic charge wear:
+   * Set `companion_consume_item_charges = 1` in `[dev]` in `d2r_pcvr.ini` and restart the session.
+   * After each confirmed cast, verify the charge count decrements by 1 (20 -> 19 -> 18) via native `SetStatRva (0x2f7d10)`.
+
+#### Step 5: Master Feature Toggle Verification
+1. In the VR Settings menu under the **GAMEPLAY** page, toggle off `Companion Item Skills` (or set `companion_item_skills = 0` in `d2r_pcvr.ini`).
+2. Verify:
+   * Companion stops casting charged spells completely.
+   * Skill levels revert strictly to unaugmented baseline values from `hireling.txt`.
+

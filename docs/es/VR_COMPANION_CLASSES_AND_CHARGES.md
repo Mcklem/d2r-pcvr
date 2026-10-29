@@ -413,3 +413,75 @@ stateDiagram-v2
 1. **Invariante de Formato de Guardado:** Las modificaciones ocurren 100% en la representación en memoria del servidor local en tiempo de ejecución. Ningún byte modificado de datos se guarda en el archivo `.d2s` que pueda invalidar la partida fuera del mod.
 2. **Aislamiento de Hilos:** Toda consulta o alteración de inventario y despacho de conjuros se ejecuta estrictamente en el hilo del juego (`runOnGameThread`), evitando condiciones de carrera de memoria o bloqueos concurrentes.
 3. **Compatibilidad Visual y Antioscilación:** No se permite la ejecución de habilidades cuyo modo de animación entre en conflicto con el esqueleto del mercenario, y todo casteo respeta las compuertas de locomoción (`DetourServerMoveUnit`, `DetourServerStartWalk`), evitando que el mercenario oscile o rompa sus anclajes de guardia.
+
+---
+
+## 9. Guía de Pruebas en el Juego y Botones de Desarrollo (DEV)
+
+Para facilitar la verificación práctica de esta funcionalidad sin necesidad de buscar o farmear objetos específicos en partidas largas, se han incorporado dos botones dedicados en la pestaña **DEV** (Página **HERO**) del menú de interacción de realidad virtual:
+
+### 9.1 Botones de Desarrollo en el Menú DEV
+
+1. **`Merc charged item` (Ranura 9 de la página HERO):**
+   * **Función:** Genera y deposita en el inventario del jugador un objeto aleatorio/rotativo con habilidades de cargas (`Stat 204`) correspondiente a una de las ranuras que los mercenarios pueden equipar.
+   * **Ranuras cubiertas:**
+     * **Cabeza:** *Darksight Helm* (cargas de *Manto de Sombras / Cloak of Shadows*), *Wolfhowl* (cargas de *Feral Rage / Rabia Furiosa*).
+     * **Cuerpo:** *Corpsemourn* (cargas de *Explosión de Cadáveres / Corpse Explosion*).
+     * **Escudo (Lobo de Hierro):** *Esfera de Radament / Radament's Sphere* (cargas de *Nova de Veneno*), *Stormchaser* (cargas de *Tornado / Ventisca*).
+     * **Armas (todos los tipos compatibles con mercenarios):**
+       * **Arcos (Pícara Acto 1):** *Magewrath* (cargas de *Flecha Guiada / Guided Arrow*), *Witchwild String* (cargas de *Flecha Mágica*).
+       * **Armas de asta (Guardia del Desierto Acto 2):** *Pierre Tombale Couant* (cargas de *Dama de Hierro / Iron Maiden*).
+       * **Lanzas (Guardia del Desierto Acto 2):** *Aguja de Arioc / Arioc's Needle*, *Spire of Honor*.
+       * **Espadas de 1 mano (Lobo de Hierro Acto 3 / Bárbaro Acto 5):** *Hexfire* (cargas de *Hidra*), *Ginther's Rift*.
+       * **Espadas de 2 manos (Bárbaro Acto 5):** *Todesfaelle Flamme* (cargas de *Encantar* y *Muro de Fuego*), *Flamebellow* (cargas de *Infierno*).
+       * **Herramientas multilínea:** *Spellsteel* (hacha con cargas de *Teletransporte [20/20]*, *Decrepitud [30/30]*, *Ráfaga de Fuego [60/60]* y *Saeta Sagrada [100/100]*), *Demon Limb* (cargas de *Encantar [20/20]*).
+   * Cada pulsación cicla por los distintos tipos para que el desarrollador pueda probar cualquier ranura inmediatamente.
+
+2. **`Merc class gear` (Ranura 10 de la página HERO):**
+   * **Función:** Inspecciona en tiempo real al mercenario que el jugador tiene contratado y genera en el inventario un kit completo de equipo único de nivel 99 con bonificaciones a habilidades de su clase virtual (`+ClassSkills`, `+TabSkills`, `+SingleSkill`):
+     * **Si tienes contratada a la Pícara del Acto 1 (Amazona):** Genera arco con bonificaciones de Amazona (*Lycander's Aim* con +2 Amazona y +2 Arco), yelmo (*Valkyrie Wing* con +1-2 Amazona) y armadura (*Skin of the Vipermagi* con +1 a todas las habilidades).
+     * **Si tienes contratado al Guardia del Desierto del Acto 2 (Paladín):** Genera lanza (*Arioc's Needle* con +2-4 a todas las habilidades), yelmo (*Harlequin Crest* con +2 a todas las habilidades) y armadura (*Guardian Angel* con +1 a habilidades de Paladín).
+     * **Si tienes contratado al Lobo de Hierro del Acto 3 (Hechicera):** Genera espada de 1 mano (*Hexfire* con +3 a Fuego), escudo (*Lidless Wall* con +1 a todas las habilidades), yelmo (*Harlequin Crest* con +2 a todas las habilidades) y armadura (*Skin of the Vipermagi* con +1 a todas las habilidades).
+     * **Si tienes contratado al Bárbaro del Acto 5 (Bárbaro):** Genera espada de 2 manos (*The Grandfather* con +2 a todas las habilidades), yelmo (*Arreat's Face* con +2 Bárbaro y +2 Combate) y armadura (*Arkaine's Valor* con +2 a todas las habilidades).
+
+---
+
+### 9.2 Protocolo Idóneo de Pruebas Paso a Paso
+
+#### Paso 1: Configuración de la Sesión de Pruebas
+1. Inicia D2R con el cargador D2RLoader en modo mod aislado `pcvr-dev` (partida offline local).
+2. Abre el menú DEV en la rueda de interacción VR (pestaña `DEV` -> página `HERO`).
+3. Si lo deseas, pulsa `Unlock Quests & Waypoints` y `Level 90` para tener acceso total a todos los actos y mercenarios.
+
+#### Paso 2: Prueba de Bonificaciones de Clase Virtual (Fase 1)
+1. Contrata al mercenario deseado en el campamento o ciudad (Pícara en Acto I, Guardia en Acto II, Lobo de Hierro en Acto III, Bárbaro en Acto V).
+2. Abre la rueda de interacción, pulsa `Merc class gear`. Recibirás en tu inventario las piezas de equipo optimizadas para esa clase.
+3. Abre el inventario del mercenario (tecla nativa `O` o interacción VR) y equípale las armas, yelmos y armaduras recibidas.
+4. Sal a una zona de combate exterior (e.g. *Blood Moor* o *River of Flame*):
+   * Comprueba en el registro de depuración (`framevr.log`) cómo `DetourSkillLevel (0x33d1e0)` intercepta la consulta de nivel y añade los bonos de clase/rama:
+     `Frame companion AI: computed effective skill level for companion...`
+   * Observa el aumento visible de potencia y daño elemental en los proyectiles de la Pícara, los hechizos del Lobo de Hierro o las auras/golpes del Guardia y Bárbaro.
+
+#### Paso 3: Prueba de Lanzamiento Táctico de Cargas (Fases 2 y 3)
+1. Con el mercenario contratado, pulsa el botón `Merc charged item` repetidamente hasta obtener objetos con cargas clave:
+   * Por ejemplo, *Spellsteel* (con cargas de *Teleport* y *Decrepify*), *Darksight Helm* (con cargas de *Cloak of Shadows*), o *Corpsemourn* (cargas de *Corpse Explosion*).
+2. Equipa el objeto cargado en el mercenario.
+3. Realiza las siguientes pruebas situacionales en combate:
+   * **Prueba de Teletransporte de Emergencia (P1):** Permite que la salud del mercenario baje del 40% o que sea rodeado por varios enemigos cuerpo a cuerpo. En el registro se confirmará el casteo táctico (`P1 Emergency Teleport retreat`) y el mercenario se teletransportará instantáneamente junto a tu posición en VR.
+   * **Prueba de Supresión de Proyectiles (P2):** Enfréntate a enemigos a distancia (arqueras, fuegos fatuos/gloams a más de 12 sub-tiles). El mercenario casteará *Manto de Sombras* o *Lentitud de Proyectiles* para proteger al escuadrón.
+   * **Prueba de Maldición Asistencial (P3):** Entabla combate contra un monstruo Jefe, Campeón o grupo denso (>3 enemigos). El mercenario lanzará *Decrepitud*, *Grifo de la Vida* o *Baja Resistencia*.
+   * **Prueba de Invocación / Apoyo (P5):** Si equipas un item con *Corazón del Lobezno* o *Sabio del Roble*, el mercenario invocará el espíritu en cuanto empiece el combate.
+
+#### Paso 4: Prueba del Desgaste de Cargas (Modo Cero Desgaste vs. Desgaste Real)
+1. Por defecto, en `d2r_pcvr.ini` (`[dev]`), el parámetro interno `companion_consume_item_charges = 0` mantiene el modo **Zero-Wear**:
+   * Tras múltiples lanzamientos de hechizos por parte del mercenario, inspecciona el objeto en su inventario. Comprueba que las cargas se mantienen intactas (e.g. 20/20).
+2. Si deseas comprobar el modo de consumo realista:
+   * Establece `companion_consume_item_charges = 1` en la sección `[dev]` del archivo `d2r_pcvr.ini` y reinicia la sesión.
+   * Tras cada casteo confirmado, comprueba que el contador de cargas decrece unitariamente (20 -> 19 -> 18) vía `SetStatRva (0x2f7d10)`.
+
+#### Paso 5: Prueba del Interruptor Maestro
+1. En el menú de VR Settings, entra en la pestaña **GAMEPLAY** y desmarca la opción `Companion Item Skills` (o pon `companion_item_skills = 0` en `d2r_pcvr.ini`).
+2. Verifica que:
+   * El mercenario deja de castear habilidades de cargas inmediatamente.
+   * Los niveles de habilidad vuelven a sus valores básicos de `hireling.txt` sin bonos de clase.
+
