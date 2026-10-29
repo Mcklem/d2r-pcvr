@@ -252,8 +252,13 @@ inline std::array<const char*,10> Kit(int cls,int choice,int mercClassId=-1){
             constexpr const char* pool[] = {
                 "7sp", // Bonehew (Ogre Axe, Corpse Explosion lvl 14)
                 "9pa", // Soulfeast Tine (Partizan, Decrepify lvl 7)
+                "7pa", // Tomb Reaver (Cryptic Axe, Revive lvl 1-3)
+                "9b7", // Blackleach Blade (Bill, Weaken lvl 5)
+                "7s8", // Stormspire (Giant Thresher, Charged Bolt lvl 5)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+                "xhn", // Shaftstop (Mesh Armor, Damage Reduction)
+                "uap", // Guardian Angel (Templar Coat, Paladin Skills)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
@@ -263,22 +268,40 @@ inline std::array<const char*,10> Kit(int cls,int choice,int mercClassId=-1){
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
                 "7ls", // Frostwind (Cryptic Sword, Arctic Blast lvl 14)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+                "9sm", // Coldsteel Eye (Cutlass, Slows Target 50%)
+                "9cm", // Ginther's Rift (Dimensional Blade, Magic Damage)
+                "9wd", // Bloodletter (Gladius, Skills)
+                "9sb", // The Atlantean (Ancient Sword, Skills)
+                "xsh", // Lidless Wall (Grim Shield, All Skills, FCR)
+                "xea", // Skin of the Vipermagi (All Skills, FCR)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
         } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian
             constexpr const char* pool[] = {
                 "7ls", // Frostwind (Cryptic Sword, Arctic Blast lvl 14)
+                "9fb", // Sureshrill Frost (Flanged Mace, Frozen Orb lvl 9)
+                "9ba", // Moonfall (Jagged Star, Meteor lvl 11)
+                "6hx", // Demonlimb (Tyrant Club, Enchant lvl 23)
+                "7cr", // Lightsabre (Phase Blade, Chain Lightning lvl 20)
+                "72h", // The Grandfather (Colossus Blade)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+                "baa", // Arreat's Face (Slayer Guard, Barbarian Skills)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
         } else { // Rogue / Amazon (default)
             constexpr const char* pool[] = {
                 "8cb", // Cliffkiller (Large Siege Bow, Weaken lvl 10)
+                "8sb", // Witchwild String (Short Siege Bow, Magic Arrow lvl 20)
+                "8hb", // Riphook (Razor Bow, Slows Target 30%)
+                "8s8", // Kuko Shakaku (Cedar Bow, Exploding Arrows)
+                "6sw", // Widowmaker (Ward Bow, Guided Arrow)
+                "7o7", // Hellrack (Colossus Crossbow, Immolation Arrow lvl 18)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+                "xea", // Skin of the Vipermagi (Serpentskin Armor, All Skills)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};

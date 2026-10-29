@@ -897,37 +897,126 @@ void ExecuteCompanionTacticalChargesInternal(
         auto prevCharges = std::move(s_cachedCharges);
         s_cachedCharges.clear();
 
-        constexpr uint16_t CandidateSkills[] = {
-            54,  // Teleport
-            9, 7, 264, // Slow Missiles, Inner Sight, Cloak of Shadows
-            82, 87, 91, 66, 71, 76, 77, 86, 69, 72, // Curses
-            44, 45, 55, 59, 78, 89, 240, // Crowd Control (Frost Nova, Ice Blast, Glacial Spike, Blizzard, Bone Wall, Bone Prison, Twister)
-            246, 226, 227, 237, 247, 75, 85, 90, 94, 95, 221, 222, 232, 236, 242, // Summons
-            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
-            52, 68, 235 // Buffs
-        };
-
         for (size_t sIdx = 0; sIdx < slotCount; ++sIdx) {
             const auto& slot = slots[sIdx];
-            for (uint16_t cSkill : CandidateSkills) {
-                if (!framevr::companionai::IsSkillUsableByCompanion(vclass, cSkill)) continue;
+            bool foundChargeOnItem = false;
 
-                for (uint8_t lvl = 1; lvl <= 33; ++lvl) {
-                    const uint16_t param = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
-                    const int32_t statVal = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, param);
-                    if (statVal > 0) {
-                        auto cSkillObj = framevr::companionai::UnpackChargedSkill(slot.itemId, slot.bodyLocation, param, statVal);
-                        if (cSkillObj.skillId > 0 && cSkillObj.maxCharges > 0) {
-                            cSkillObj.kind = framevr::companionai::GetTacticalSkillKind(cSkillObj.skillId);
-                            for (const auto& prev : prevCharges) {
-                                if (prev.itemId == cSkillObj.itemId && prev.skillId == cSkillObj.skillId) {
-                                    cSkillObj.lastCastMs = prev.lastCastMs;
-                                    break;
-                                }
+            // Probe 1: Full 16-bit parameter sweep on the item unit
+            for (uint32_t p = 0; p <= 0xFFFF; ++p) {
+                const int32_t statVal = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, static_cast<uint16_t>(p));
+                if (statVal > 0) {
+                    foundChargeOnItem = true;
+                    char hitBuf[256];
+                    std::snprintf(hitBuf, sizeof hitBuf,
+                        "Frame companion AI: [STAT 204 ITEM HIT] loc=%d itemId=%u param=%u (0x%04X) val=%d (0x%08X)",
+                        slot.bodyLocation, slot.itemId, p, p, statVal, statVal);
+                    framevr::logging::Write(hitBuf);
+
+                    const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
+                    const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
+
+                    const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
+                    const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
+
+                    const uint16_t sB = static_cast<uint16_t>(p);
+                    const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
+
+                    const uint16_t s3 = static_cast<uint16_t>(p & 0x3FF);
+                    const uint8_t l3 = static_cast<uint8_t>((p >> 10) & 0x3F);
+
+                    const uint16_t s4 = static_cast<uint16_t>((p >> 6) & 0x3FF);
+                    const uint8_t l4 = static_cast<uint8_t>(p & 0x3F);
+
+                    uint16_t skillId = 0;
+                    uint8_t lvl = 1;
+                    if (sA > 0 && sA < 600 && lA > 0 && lA <= 40) { skillId = sA; lvl = lA; }
+                    else if (sB > 0 && sB < 600) { skillId = sB; lvl = (lB > 0 && lB <= 40) ? lB : 5; }
+                    else if (s3 > 0 && s3 < 600 && l3 > 0 && l3 <= 40) { skillId = s3; lvl = l3; }
+                    else if (s4 > 0 && s4 < 600 && l4 > 0 && l4 <= 40) { skillId = s4; lvl = l4; }
+                    else { skillId = sA ? sA : sB; lvl = lA ? lA : 1; }
+
+                    if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
+                        framevr::companionai::CompanionChargedSkill cSkillObj{};
+                        cSkillObj.itemId = slot.itemId;
+                        cSkillObj.bodyLocation = slot.bodyLocation;
+                        cSkillObj.skillId = skillId;
+                        cSkillObj.level = lvl;
+                        cSkillObj.currentCharges = cur;
+                        cSkillObj.maxCharges = maxC;
+                        cSkillObj.kind = framevr::companionai::GetTacticalSkillKind(skillId);
+                        for (const auto& prev : prevCharges) {
+                            if (prev.itemId == cSkillObj.itemId && prev.skillId == cSkillObj.skillId) {
+                                cSkillObj.lastCastMs = prev.lastCastMs;
+                                break;
                             }
-                            s_cachedCharges.push_back(cSkillObj);
-                            break; // matched this skill level
                         }
+                        s_cachedCharges.push_back(cSkillObj);
+                    }
+                }
+            }
+
+            if (!foundChargeOnItem) {
+                const int def = statFn(slot.itemUnit, 31, 0);
+                const int dur = statFn(slot.itemUnit, 72, 0);
+                const int maxdur = statFn(slot.itemUnit, 73, 0);
+
+                char statDump[256];
+                int offset = std::snprintf(statDump, sizeof statDump,
+                    "Frame companion AI: [ITEM NO 204] loc=%d itemId=%u def=%d dur=%d/%d stats:",
+                    slot.bodyLocation, slot.itemId, def, dur, maxdur);
+
+                for (int s = 0; s < 360 && offset < (int)sizeof(statDump) - 20; ++s) {
+                    const int sv = statFn(slot.itemUnit, s, 0);
+                    if (sv != 0 && s != 31 && s != 72 && s != 73) {
+                        offset += std::snprintf(statDump + offset, sizeof(statDump) - offset, " %d=%d", s, sv);
+                    }
+                }
+                framevr::logging::Write(statDump);
+            }
+        }
+
+        // Probe 2: Also check if Stat 204 is linked on the hireling unit itself
+        for (uint32_t p = 0; p <= 0xFFFF; ++p) {
+            const int32_t statVal = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, static_cast<uint16_t>(p));
+            if (statVal > 0) {
+                char hitBuf[256];
+                std::snprintf(hitBuf, sizeof hitBuf,
+                    "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u (0x%04X) val=%d (0x%08X)",
+                    compHeader[2], p, p, statVal, statVal);
+                framevr::logging::Write(hitBuf);
+
+                const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
+                const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
+
+                const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
+                const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
+                const uint16_t sB = static_cast<uint16_t>(p);
+                const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
+
+                uint16_t skillId = (sA > 0 && sA < 600 && lA > 0 && lA <= 40) ? sA : sB;
+                uint8_t lvl = (lA > 0 && lA <= 40) ? lA : ((lB > 0 && lB <= 40) ? lB : 5);
+
+                if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
+                    bool already = false;
+                    for (const auto& existing : s_cachedCharges) {
+                        if (existing.skillId == skillId) { already = true; break; }
+                    }
+                    if (!already) {
+                        framevr::companionai::CompanionChargedSkill cSkillObj{};
+                        cSkillObj.itemId = slots.empty() ? 0 : slots[0].itemId;
+                        cSkillObj.bodyLocation = slots.empty() ? 1 : slots[0].bodyLocation;
+                        cSkillObj.skillId = skillId;
+                        cSkillObj.level = lvl;
+                        cSkillObj.currentCharges = cur;
+                        cSkillObj.maxCharges = maxC;
+                        cSkillObj.kind = framevr::companionai::GetTacticalSkillKind(skillId);
+                        for (const auto& prev : prevCharges) {
+                            if (prev.skillId == cSkillObj.skillId) {
+                                cSkillObj.lastCastMs = prev.lastCastMs;
+                                break;
+                            }
+                        }
+                        s_cachedCharges.push_back(cSkillObj);
                     }
                 }
             }
