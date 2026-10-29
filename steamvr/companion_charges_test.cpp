@@ -285,6 +285,23 @@ void TestTacticalPriorityArbitration() {
         assert(decision.skillId == 246);
     }
 
+    // Test P6: In combat, target cursed, no dense pack, summon present -> MUST select Fire Ball (DamageSpell)
+    {
+        sensors.companionHealthPct = 0.90f;
+        sensors.meleeAttackersCount = 1;
+        sensors.nearbyHostilesCount = 1;
+        sensors.rangedShootersCount = 0;
+        sensors.hasActiveBoss = false;
+        sensors.targetHasCurse = true;
+        sensors.isCombatActive = true;
+        sensors.hasAlliedSummon = true; // Summon present!
+
+        auto decision = SelectBestTacticalCharge(skills, sensors, true, true);
+        assert(decision.shouldCast);
+        assert(decision.kind == TacticalSkillKind::DamageSpell);
+        assert(decision.skillId == 47);
+    }
+
     // Test Master Toggle Disabled: `isMasterEnabled == false`
     {
         auto decision = SelectBestTacticalCharge(skills, sensors, false, true);

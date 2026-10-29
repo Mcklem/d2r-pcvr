@@ -423,19 +423,22 @@ Para facilitar la verificación práctica de esta funcionalidad sin necesidad de
 ### 9.1 Botones de Desarrollo en el Menú DEV
 
 1. **`Merc charged item` (Ranura 9 de la página HERO):**
-   * **Función:** Genera y deposita en el inventario del jugador un objeto aleatorio/rotativo con habilidades de cargas (`Stat 204`) correspondiente a una de las ranuras que los mercenarios pueden equipar.
-   * **Ranuras cubiertas:**
-     * **Cabeza:** *Darksight Helm* (cargas de *Manto de Sombras / Cloak of Shadows*), *Wolfhowl* (cargas de *Feral Rage / Rabia Furiosa*).
-     * **Cuerpo:** *Corpsemourn* (cargas de *Explosión de Cadáveres / Corpse Explosion*).
-     * **Escudo (Lobo de Hierro):** *Esfera de Radament / Radament's Sphere* (cargas de *Nova de Veneno*), *Stormchaser* (cargas de *Tornado / Ventisca*).
-     * **Armas (todos los tipos compatibles con mercenarios):**
-       * **Arcos (Pícara Acto 1):** *Magewrath* (cargas de *Flecha Guiada / Guided Arrow*), *Witchwild String* (cargas de *Flecha Mágica*).
-       * **Armas de asta (Guardia del Desierto Acto 2):** *Pierre Tombale Couant* (cargas de *Dama de Hierro / Iron Maiden*).
-       * **Lanzas (Guardia del Desierto Acto 2):** *Aguja de Arioc / Arioc's Needle*, *Spire of Honor*.
-       * **Espadas de 1 mano (Lobo de Hierro Acto 3 / Bárbaro Acto 5):** *Hexfire* (cargas de *Hidra*), *Ginther's Rift*.
-       * **Espadas de 2 manos (Bárbaro Acto 5):** *Todesfaelle Flamme* (cargas de *Encantar* y *Muro de Fuego*), *Flamebellow* (cargas de *Infierno*).
-       * **Herramientas multilínea:** *Spellsteel* (hacha con cargas de *Teletransporte [20/20]*, *Decrepitud [30/30]*, *Ráfaga de Fuego [60/60]* y *Saeta Sagrada [100/100]*), *Demon Limb* (cargas de *Encantar [20/20]*).
-   * Cada pulsación cicla por los distintos tipos para que el desarrollador pueda probar cualquier ranura inmediatamente.
+   * **Función:** Inspecciona en tiempo real al mercenario contratado y genera de forma rotativa en el inventario del jugador objetos únicos con cargas verificadas (`Stat 204`) que corresponden exactamente a las ranuras y tipos de armas/armaduras que **ese mercenario en concreto puede equipar**:
+     * **Si tienes contratado al Lobo de Hierro del Acto 3 (Hechicera):**
+       - **Escudo:** *Esfera de Radament / Radament's Sphere (`xts`)* con cargas de *Nova de Veneno (Nivel 5, 86/86 cargas)*.
+       - **Yelmo:** *Yelmo de la Visión Oscura / Darksight Helm (`xh9`)* con cargas de *Manto de Sombras / Cloak of Shadows (Nivel 5, 30/30 cargas)*.
+       - **Espada de 1 mano:** *Viento de Escarcha / Frostwind (`7ls`)* con cargas de *Ráfaga Ártica / Arctic Blast (Nivel 14, 75/75 cargas)*.
+       - **Armadura:** *Mortaja de Cadáveres / Corpse Mourn (`xar`)* con cargas de *Explosión de Cadáveres (Nivel 5, 40/40 cargas)*.
+     * **Si tienes contratado al Guardia del Desierto del Acto 2 (Paladín):**
+       - **Arma de asta / Lanza:** *Trinchador de Huesos / Bonehew (`7sp`)* con cargas de *Explosión de Cadáveres (Nivel 14, 30/30 cargas)* y *Púa de Festín de Almas / Soulfeast Tine (`9pa`)* con cargas de *Decrepitud / Decrepify (Nivel 7, 45/45 cargas)*.
+       - **Yelmo y Armadura:** *Darksight Helm (`xh9`)* y *Corpse Mourn (`xar`)*.
+     * **Si tienes contratado al Bárbaro del Acto 5 (Bárbaro):**
+       - **Espada:** *Frostwind (`7ls`)* con *Arctic Blast (Nivel 14)*.
+       - **Yelmo y Armadura:** *Darksight Helm (`xh9`)* y *Corpse Mourn (`xar`)*.
+     * **Si tienes contratada a la Pícara del Acto 1 (Amazona):**
+       - **Arco:** *Asesino del Acantilado / Cliffkiller (`8cb`)* con cargas de *Debilitamiento / Weaken (Nivel 10, 65/65 cargas)*.
+       - **Yelmo y Armadura:** *Darksight Helm (`xh9`)* y *Corpse Mourn (`xar`)*.
+   * Cada pulsación cicla por las piezas disponibles para equipar al mercenario de inmediato.
 
 2. **`Merc class gear` (Ranura 10 de la página HERO):**
    * **Función:** Inspecciona en tiempo real al mercenario que el jugador tiene contratado y genera en el inventario un kit completo de equipo único de nivel 99 con bonificaciones a habilidades de su clase virtual (`+ClassSkills`, `+TabSkills`, `+SingleSkill`):

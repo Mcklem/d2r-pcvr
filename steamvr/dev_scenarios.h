@@ -248,13 +248,41 @@ inline constexpr int PreparationCount=5;
 // nullptr skips an off-hand item for a two-handed staff/maul.
 inline std::array<const char*,10> Kit(int cls,int choice,int mercClassId=-1){
     if(ValidClass(cls)&&choice==MercChargesChoice) {
-        constexpr const char* pool[] = {
-            "xhl", "xar", "xts", "amb", "7o7",
-            "9fb", "9ba", "6hx", "usk", "7sp"
-        };
-        static size_t rot = 0;
-        const char* picked = pool[rot++ % std::size(pool)];
-        return {picked};
+        if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin
+            constexpr const char* pool[] = {
+                "7sp", // Bonehew (Ogre Axe, Corpse Explosion lvl 14)
+                "9pa", // Soulfeast Tine (Partizan, Decrepify lvl 7)
+                "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
+                "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else if(mercClassId==359||(mercClassId<0&&cls==1)) { // Iron Wolf / Sorceress
+            constexpr const char* pool[] = {
+                "xts", // Radament's Sphere (Ancient Shield, Poison Nova lvl 5)
+                "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
+                "7ls", // Frostwind (Cryptic Sword, Arctic Blast lvl 14)
+                "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian
+            constexpr const char* pool[] = {
+                "7ls", // Frostwind (Cryptic Sword, Arctic Blast lvl 14)
+                "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
+                "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else { // Rogue / Amazon (default)
+            constexpr const char* pool[] = {
+                "8cb", // Cliffkiller (Large Siege Bow, Weaken lvl 10)
+                "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5)
+                "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        }
     }
     if(ValidClass(cls)&&choice==MercSkillsChoice) {
         if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin

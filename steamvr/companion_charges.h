@@ -130,6 +130,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
 
         // Crowd Control
         case 44:  // Frost Nova
+        case 45:  // Ice Blast
         case 55:  // Glacial Spike
         case 59:  // Blizzard
         case 78:  // Bone Wall
@@ -158,9 +159,12 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         // Targeted Damage Spells & AoE
         case 36:  // Fire Bolt
         case 38:  // Charged Bolt
+        case 39:  // Ice Bolt
+        case 42:  // Static Field
         case 47:  // Fire Ball
         case 48:  // Nova
         case 49:  // Lightning
+        case 51:  // Fire Wall
         case 53:  // Chain Lightning
         case 56:  // Meteor
         case 62:  // Hydra
@@ -172,6 +176,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 93:  // Bone Spirit
         case 101: // Holy Bolt
         case 121: // Fist of the Heavens
+        case 223: // Arctic Blast
         case 225: // Firestorm
         case 229: // Molten Boulder
         case 234: // Fissure
@@ -339,16 +344,16 @@ inline bool EvaluateTacticalCharge(
             return false;
 
         case TacticalSkillKind::Curse:
-            // High-value debuff: Target Elite/Boss or dense pack lacking active curse
-            if ((sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 3) && !sensors.targetHasCurse) {
+            // High-value debuff: Target Elite/Boss or active combat lacking active curse
+            if ((sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 1) && !sensors.targetHasCurse) {
                 outReason = "P3 Assistance Curse (Life Tap / Lower Resist / Decrepify)";
                 return true;
             }
             return false;
 
         case TacticalSkillKind::CrowdControl:
-            // Area crowd control: Dense pack within range
-            if (sensors.nearbyHostilesCount >= 3) {
+            // Area crowd control: Dense pack or boss within range
+            if (sensors.nearbyHostilesCount >= 2 || sensors.hasActiveBoss) {
                 outReason = "P4 Area Crowd Control (Frost Nova / Glacial Spike)";
                 return true;
             }
@@ -363,8 +368,8 @@ inline bool EvaluateTacticalCharge(
             return false;
 
         case TacticalSkillKind::DamageSpell:
-            // Tactical offense: Engaging Boss or group
-            if (sensors.isCombatActive && (sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 2)) {
+            // Tactical offense: Engaging Boss or hostile target
+            if (sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 1 || sensors.isCombatActive) {
                 outReason = "P6 Elemental Damage Burst";
                 return true;
             }

@@ -832,8 +832,8 @@ void ExecuteCompanionTacticalChargesInternal(
     uint32_t classId,
     float health,
     float maxHealth,
-    framevr::companionai::Vec2 compPos,
-    framevr::companionai::Vec2 plyrPos,
+    const framevr::companionai::Vec2& compPos,
+    const framevr::companionai::Vec2& plyrPos,
     uint64_t nowMs,
     bool inRetreat,
     bool isTacticalActive)
@@ -861,6 +861,7 @@ void ExecuteCompanionTacticalChargesInternal(
     static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
     static uint64_t s_lastChargeScanMs = 0;
     static uint32_t s_lastHirelingUnitId = 0;
+    static uint64_t s_lastDiagScanLogMs = 0;
 
     const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
     const auto eqFn = reinterpret_cast<EquippedFn>(d2rsig::Addr(abi::EquippedRva));
@@ -879,10 +880,9 @@ void ExecuteCompanionTacticalChargesInternal(
         return;
     }
 
-    const uint32_t hirelingUnitId = compHeader[2];
-    if (nowMs - s_lastChargeScanMs >= 1000 || s_lastHirelingUnitId != hirelingUnitId) {
+    if (nowMs - s_lastChargeScanMs > 1000 || s_lastHirelingUnitId != compHeader[2]) {
         s_lastChargeScanMs = nowMs;
-        s_lastHirelingUnitId = hirelingUnitId;
+        s_lastHirelingUnitId = compHeader[2];
 
         std::array<framevr::companionai::EquippedItemSlot, 4> slots{};
         size_t slotCount = 0;
@@ -901,9 +901,9 @@ void ExecuteCompanionTacticalChargesInternal(
             54,  // Teleport
             9, 7, 264, // Slow Missiles, Inner Sight, Cloak of Shadows
             82, 87, 91, 66, 71, 76, 77, 86, 69, 72, // Curses
-            44, 55, 59, 78, 89, 240, // Crowd Control
+            44, 45, 55, 59, 78, 89, 240, // Crowd Control (Frost Nova, Ice Blast, Glacial Spike, Blizzard, Bone Wall, Bone Prison, Twister)
             246, 226, 227, 237, 247, 75, 85, 90, 94, 95, 221, 222, 232, 236, 242, // Summons
-            36, 38, 47, 48, 49, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
+            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
             52, 68, 235 // Buffs
         };
 
@@ -912,7 +912,7 @@ void ExecuteCompanionTacticalChargesInternal(
             for (uint16_t cSkill : CandidateSkills) {
                 if (!framevr::companionai::IsSkillUsableByCompanion(vclass, cSkill)) continue;
 
-                for (uint8_t lvl : {1, 2, 3, 4, 5, 6, 10, 12, 33}) {
+                for (uint8_t lvl = 1; lvl <= 33; ++lvl) {
                     const uint16_t param = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
                     const int32_t statVal = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, param);
                     if (statVal > 0) {
@@ -926,10 +926,30 @@ void ExecuteCompanionTacticalChargesInternal(
                                 }
                             }
                             s_cachedCharges.push_back(cSkillObj);
-                            break;
+                            break; // matched this skill level
                         }
                     }
                 }
+            }
+        }
+
+        static size_t s_lastLoggedChargeCount = 999;
+        if (s_cachedCharges.size() != s_lastLoggedChargeCount || nowMs - s_lastDiagScanLogMs > 10000) {
+            s_lastLoggedChargeCount = s_cachedCharges.size();
+            s_lastDiagScanLogMs = nowMs;
+
+            char scanBuf[256];
+            std::snprintf(scanBuf, sizeof scanBuf,
+                "Frame companion AI: scanned equipped items (%zu slots), detected %zu charged skill(s)",
+                slotCount, s_cachedCharges.size());
+            framevr::logging::Write(scanBuf);
+
+            for (const auto& cs : s_cachedCharges) {
+                char skillBuf[256];
+                std::snprintf(skillBuf, sizeof skillBuf,
+                    "Frame companion AI:   charge skillId=%u lvl=%u (%u/%u charges) kind=%u loc=%d",
+                    cs.skillId, cs.level, cs.currentCharges, cs.maxCharges, static_cast<unsigned>(cs.kind), cs.bodyLocation);
+                framevr::logging::Write(skillBuf);
             }
         }
     }
@@ -953,8 +973,28 @@ void ExecuteCompanionTacticalChargesInternal(
         for (int i = 0; i < hCount; ++i) {
             const float d = std::hypot(hostiles[i].x - compPos.x, hostiles[i].y - compPos.y);
             if (d <= 2.5f) sensors.meleeAttackersCount++;
-            if (d <= 8.0f) sensors.nearbyHostilesCount++;
+            if (d <= 18.0f) sensors.nearbyHostilesCount++;
             if (d > 12.0f) sensors.rangedShootersCount++;
+
+            // Boss / Elite detection
+            const uint32_t clsId = hostiles[i].classId;
+            if (clsId == 156 || clsId == 211 || clsId == 242 || clsId == 243 || clsId == 544) {
+                sensors.hasActiveBoss = true;
+            } else if (game && hostiles[i].id) {
+                uintptr_t u = melee::ServerUnit(game, 1, hostiles[i].id);
+                uintptr_t mdata = 0;
+                if (u && Read(u + 0x10, mdata) && mdata) {
+                    uint8_t spec = 0;
+                    if (Read(mdata + 0x1a, spec) && (spec & (0x02 | 0x04 | 0x08))) {
+                        sensors.hasActiveBoss = true;
+                    }
+                    uintptr_t mrow = 0; uint32_t mflags = 0;
+                    if (Read(mdata, mrow) && mrow && Read(mrow + 0x3c, mflags) && (mflags & (1u << 7))) {
+                        sensors.hasActiveBoss = true;
+                    }
+                }
+            }
+
             if (hostiles[i].clear && d < closestDist) {
                 closestDist = d;
                 primaryTargetX = hostiles[i].x;
@@ -983,6 +1023,15 @@ void ExecuteCompanionTacticalChargesInternal(
         s_cachedCharges, sensors, true, consumeCharges);
 
     if (!decision.shouldCast) {
+        static uint64_t s_lastNoCastLogMs = 0;
+        if (sensors.isCombatActive && nowMs - s_lastNoCastLogMs > 5000) {
+            s_lastNoCastLogMs = nowMs;
+            char noCastBuf[256];
+            std::snprintf(noCastBuf, sizeof noCastBuf,
+                "Frame companion AI: tactical combat active (hostiles=%d boss=%d), %zu charge(s) available but gated by trigger/cooldown",
+                sensors.nearbyHostilesCount, sensors.hasActiveBoss ? 1 : 0, s_cachedCharges.size());
+            framevr::logging::Write(noCastBuf);
+        }
         return;
     }
 
@@ -1008,10 +1057,16 @@ void ExecuteCompanionTacticalChargesInternal(
             ~CommandedActionScope() noexcept { g_inCommandedAction = false; }
         } actionScope;
 
-        (void)startFn(game, hireling, decision.skillId, decision.level, 0);
+        const int startRes = startFn(game, hireling, decision.skillId, decision.level, 0);
         const int castRes = dispatchFn(game, hireling, decision.skillId, decision.level, 1, destX, destY);
 
-        if (castRes != 0) {
+        char logBuf[256];
+        std::snprintf(logBuf, sizeof logBuf,
+            "Frame companion AI: tactical cast skill %u (lvl %u, %s) -> dest (%d,%d) startRes=%d castRes=%d",
+            decision.skillId, decision.level, decision.reason, destX, destY, startRes, castRes);
+        framevr::logging::Write(logBuf);
+
+        if (castRes != 0 || startRes != 0) {
             s_lastTacticalCastMs = nowMs;
             for (auto& s : s_cachedCharges) {
                 if (s.itemId == decision.itemId && s.skillId == decision.skillId) {
@@ -1031,12 +1086,6 @@ void ExecuteCompanionTacticalChargesInternal(
                     break;
                 }
             }
-
-            char logBuf[192];
-            std::snprintf(logBuf, sizeof logBuf,
-                "Frame companion AI: tactical cast skill %u (lvl %u, %s) -> dest (%d,%d) res=%d",
-                decision.skillId, decision.level, decision.reason, destX, destY, castRes);
-            framevr::logging::Write(logBuf);
         }
     }
 }
