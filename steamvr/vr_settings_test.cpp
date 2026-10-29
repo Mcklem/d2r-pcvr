@@ -884,11 +884,15 @@ int main(int argc,char** argv){
         const auto* leather=content::RowOf(LeatherMenu);
         Check(leather&&leather->beside&&leather->page==View::Interface&&PageOf(MenuDistance)==View::Interface&&
               std::strcmp(content::RowOf(MenuDistance)->label,"Menu distance")==0,"Menu distance shares its row with the leather menu");
+        Check(leather->kind==content::RowKind::Stepper&&leather->nameCount==3&&Definitions[LeatherMenu].max==2&&
+              content::ValueText(*leather,0)=="Off"&&content::ValueText(*leather,1)=="Leather"&&content::ValueText(*leather,2)=="Menu only","Hold menu: Off / Leather / Menu only, a named stepper beside Menu distance");
         Model m;m.Open(s);
         layout::Press(m,{Kind::Set,LeatherMenu,0,0},0);Check(m.Get()[LeatherMenu]==0&&m.Get()[MenuDistance]==1,"the switch turns the leather off, distance kept");
+        layout::Press(m,{Kind::Set,LeatherMenu,0,2},0);Check(m.Get()[LeatherMenu]==2,"Menu only: the menu held without the hide");
         layout::Press(m,{Kind::Set,LeatherMenu,0,1},0);layout::Press(m,{Kind::Set,LeatherMenu,0,0},0);
         Check(m.Click({Kind::Apply}).changed==(ChangeMask{1}<<LeatherMenu),"Apply saves only the leather menu");
-        Check(Normalize(LeatherMenu,.4f)==0&&Normalize(LeatherMenu,7)==1&&Normalize(LeatherMenu,NAN)==1,"an odd INI value reads Off or On; missing reads On");
+        Check(Normalize(LeatherMenu,2)==2&&Normalize(LeatherMenu,.4f)==1&&Normalize(LeatherMenu,7)==1&&Normalize(LeatherMenu,NAN)==1,
+              "Off, On or Menu only; an odd INI value or none reads On");
     }
     PrintReport();
     std::puts("VR settings draft, persistence requests, conflicts, row rules and input-gating tests passed");

@@ -700,13 +700,16 @@ struct Builder {
     // reading "<word> On" / "<word> Off" that flips on a press, PairGap right of the row's
     // own control, as wide as its longer word. A number beside a row (Scenery distance |
     // Big objects) reads "<word> <value>" and opens the list of its steps (StepsOf), as
-    // wide as its widest step. The word: its besideLabel, else its label.
+    // wide as its widest step. The word: its besideLabel, else its label; an empty
+    // besideLabel ("") shows the value alone (Hold menu: "Menu only" with a word
+    // squeezed Menu distance's label, vr-settings-fit-test 2026-10-29).
     static std::string BesideWord(const content::ContentRow& b,const Context& c){return b.besideLabel?b.besideLabel:LabelOf(b,c);}
+    static std::string BesideText(const std::string& word,const std::string& value){return word.empty()?value:word+" "+value;}
     int BesideWidth(const content::ContentRow& b)const{
         const std::string word=BesideWord(b,c);
         float w=0;
-        if(b.kind==content::RowKind::Toggle)w=std::max(W(word+" Off",draw::TextStyle::Strong),W(word+" On",draw::TextStyle::Strong));
-        else for(const auto& o:StepsOf(b,c).options)w=std::max(w,W(word+" "+o.label,draw::TextStyle::Strong));
+        if(b.kind==content::RowKind::Toggle)w=std::max(W(BesideText(word,"Off"),draw::TextStyle::Strong),W(BesideText(word,"On"),draw::TextStyle::Strong));
+        else for(const auto& o:StepsOf(b,c).options)w=std::max(w,W(BesideText(word,o.label),draw::TextStyle::Strong));
         return std::max(MinTarget,int(std::ceil(w))+40);
     }
     void Row(const content::ContentRow& r,int y,int pitch,int vw,const content::ContentRow* beside=nullptr){
@@ -789,12 +792,12 @@ struct Builder {
                 const bool on=bv>.5f&&!bLocked;
                 auto& e=control(Role::Value,{right+PairGap,cy,bw,ctlH},{Kind::Set,b,0,on?0.f:1.f},
                     uint16_t((!blocked&&!bLocked?Enabled:0)|(on?Selected:0)|(Same(bv,Definitions[b].defaultValue)?IsDefault:0)|(bDirty?Changed:0)|(bLocked?Locked:0)),
-                    word+(on?" On":" Off"));
+                    BesideText(word,on?"On":"Off"));
                 e.help=b;e.key=b;
             }else{
                 auto& e=control(Role::Value,{right+PairGap,cy,bw,ctlH},{Kind::Popover,b},
                     uint16_t((!blocked&&!bLocked?Enabled:0)|(Same(bv,Definitions[b].defaultValue)?IsDefault:0)|(bDirty?Changed:0)|(bLocked?Locked:0)),
-                    word+" "+ValueOf(*beside,bv,c));
+                    BesideText(word,ValueOf(*beside,bv,c)));
                 e.help=b;e.key=b;
             }
         }

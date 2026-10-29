@@ -20,7 +20,9 @@ constexpr int Hand=1;   // the left hand (index 1 in every hand array)
 // (stash, merchants, trade, gambling, imbue, hiring, waypoints, NPC talk)
 // keep the room panel, even with a cube or inventory beside them.
 inline bool SheetPanel(std::string_view name) {
-    return name=="UISwitcher"||name.starts_with("HoradricCube");
+    // Advanced Stats (opened by Start, stats_button.h): kept on the leather should the
+    // game close UISwitcher for it, as it does for the cube.
+    return name=="UISwitcher"||name.starts_with("HoradricCube")||name.starts_with("AdvancedStats");
 }
 inline bool RoomPanel(std::string_view name) {
     for(auto key:{"Vendor","Trade","Gamble","Bank","Stash","Waypoint","Imbue","HireMenu","ScrollSpeech","ScrollOfInifuss"})
@@ -126,6 +128,22 @@ inline void Premultiply(std::vector<uint8_t>& rgba) {
     }
 }
 
+// [interactions] leather_menu (VR Settings > Interface, beside Menu distance):
+// 0 Off, the tabbed menu in front of you against black; 1 On, on the hide in the
+// left hand; 2 Menu only, the same menu held in the left hand with no hide
+// (owner 2026-10-29: "in case players dont like the hide"). A value that is
+// not one of these reads On.
+enum class Style:int {Off=0,Hide=1,MenuOnly=2};
+inline Style NormalizeStyle(float value) {
+    if(!std::isfinite(value)||value!=std::round(value)||value<0||value>2)return Style::Hide;
+    return Style(int(value));
+}
+// The menu's art inside its 16:9 band, across: x 384-2688 of 3072 (Cal's captures,
+// 2026-10-28/29, the tabbed menu and the cube alike), so 12.5% of the band's
+// width is see-through on each side. With Menu only the fist holds the art's left
+// edge, not the band's (owner: "Make sure the menu left edge is held in the hand").
+constexpr float MenuArtInset=384.f/3072;
+
 // [interactions] leather_menu_width: the menu across, in metres; the leather
 // is sized round it (the hide comes out about 0.83 m for the default).
 constexpr float DefaultMenuWidth=.57f,MinMenuWidth=.30f,MaxMenuWidth=.90f;
@@ -146,17 +164,20 @@ inline Size Measure(const Art& art,float menuWidth) {
 }
 
 // The menu's 16:9 band of the UI canvas: the canvas's full width at the top of
-// a taller canvas for the tabbed menu (the native "upper widescreen band",
-// native_panels.h UpperBand), in its middle for the other layouts (a cube shown
-// without the tabbed menu), as the room panel centres them; the full height in
-// the middle of a wider canvas. The sheet shows only this band, so nothing the
-// game draws outside it (a dimmed backdrop, the lower canvas) leaves the leather.
+// a taller canvas (the native "upper widescreen band", native_panels.h
+// UpperBand); the full height in the middle of a wider canvas. The sheet shows
+// only this band, so nothing the game draws outside it (a dimmed backdrop, the
+// lower canvas) leaves the leather. The Horadric Cube opened from the inventory
+// is laid out in the same band as the tabbed menu (owner's capture 2026-10-29:
+// cube and inventory at x 384-2687, y 80-1489 of 3072x3072, as the tabbed menu),
+// though the game closes UISwitcher for it, so the band never follows
+// native_panels' UpperBand list (v0.3.29 showed the middle band: the cube cut).
 struct Rect {int x=0,y=0,w=0,h=0;};
-inline Rect Band(int width,int height,bool upper=true) {
+inline Rect Band(int width,int height) {
     if(width<=0||height<=0)return {};
     if(int64_t(width)*9<=int64_t(height)*16) {
         const int h=int(int64_t(width)*9/16);
-        return {0,upper?0:(height-h)/2,width,h};
+        return {0,0,width,h};
     }
     const int w=int(int64_t(height)*16/9);
     return {(width-w)/2,0,w,height};
@@ -166,17 +187,20 @@ inline Rect Band(int width,int height,bool upper=true) {
 // fist's top, its up along the fist), turned back by `tilt` degrees. The fist
 // holds the leather at the middle of the menu's left edge, Gap short of it, so
 // whatever leather is beyond (the hide's neck and legs) reaches past the hand.
-// The menu sits Lift in front of the leather.
+// The menu sits Lift in front of the leather. `inset` (metres): how far inside
+// the band's left edge the edge held is (Menu only: the art's, MenuArtInset of
+// the width; 0 with the hide).
 struct Placement {math::Vec p{};math::Quat q{0,0,0,1};};
 struct Strapped {Placement sheet{},menu{};};
 constexpr float Gap=.01f,Raise=.025f,Lift=.003f;
 inline math::Quat AboutX(float radians){return {std::sin(radians*.5f),0,0,std::cos(radians*.5f)};}
-inline Strapped Strap(math::Vec hand,math::Quat grip,const Art& art,float menuWidth,float tilt) {
+inline Strapped Strap(math::Vec hand,math::Quat grip,const Art& art,float menuWidth,float tilt,float inset=0) {
     const auto size=Measure(art,menuWidth);
     const float back=NormalizeTilt(tilt)*3.14159265f/180;
     Strapped out;
     out.sheet.q=out.menu.q=math::Multiply(grip,AboutX(-1.57079633f+back));
-    const auto centre=hand+math::Rotate(out.sheet.q,{size.menuWidth*.5f+Gap,0,Raise});
+    inset=std::isfinite(inset)?std::clamp(inset,0.f,size.menuWidth*.5f):0;
+    const auto centre=hand+math::Rotate(out.sheet.q,{size.menuWidth*.5f-inset+Gap,0,Raise});
     out.sheet.p=centre-math::Rotate(out.sheet.q,size.menuCentre);
     out.menu.p=centre+math::Rotate(out.menu.q,{0,0,Lift});
     return out;
@@ -190,12 +214,12 @@ public:
     void Open(){placed=false;pose={};}
     bool Placed() const{return placed;}
     Strapped Get() const{return pose;}
-    void Step(math::Vec hand,math::Quat grip,bool tracked,const Art& art,float menuWidth,float tilt) {
+    void Step(math::Vec hand,math::Quat grip,bool tracked,const Art& art,float menuWidth,float tilt,float inset=0) {
         const bool finite=std::isfinite(hand.x)&&std::isfinite(hand.y)&&std::isfinite(hand.z)&&
             std::isfinite(grip.x)&&std::isfinite(grip.y)&&std::isfinite(grip.z)&&std::isfinite(grip.w);
         const float length=finite?std::sqrt(grip.x*grip.x+grip.y*grip.y+grip.z*grip.z+grip.w*grip.w):0;
         if(!tracked||length<.5f)return;
-        pose=Strap(hand,{grip.x/length,grip.y/length,grip.z/length,grip.w/length},art,menuWidth,tilt);placed=true;
+        pose=Strap(hand,{grip.x/length,grip.y/length,grip.z/length,grip.w/length},art,menuWidth,tilt,inset);placed=true;
     }
 };
 

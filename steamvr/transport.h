@@ -78,7 +78,7 @@ bool BodyPhysics();                   // on, with physical melee
 // [interactions] leather_menu (VR Settings > Interface, beside Menu distance), leather_menu_width (m), leather_tilt (degrees),
 // leather_world, leather_backdrop: the tabbed menu on a leather sheet strapped to the left hand
 // (leather_menu.h); backdrop keeps the game's translucent dim under the menu on the hide.
-void ConfigureLeatherMenu(bool on,float menuWidth,float tilt,bool world,bool backdrop=false);
+void ConfigureLeatherMenu(bool on,float menuWidth,float tilt,bool world,bool backdrop=false,bool hide=true);   // hide false: Menu only
 // Any thread: the tabbed menu is on the leather with the world kept round it, so
 // the world's effects (sky, fog, cave ceiling) stay on as for the spatial menus.
 bool LeatherMenuWorld();   // also: the left stick walks while the leather is out (vrcam DirectWalkNow)

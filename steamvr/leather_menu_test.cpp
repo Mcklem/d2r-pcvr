@@ -32,6 +32,8 @@ int main(){
         Check(!OnSheet(with({"UISwitcher",room})),"a world panel over the tabbed menu takes the room panel");
     }
     Check(!OnSheet(with({"PlayerInventoryExpansionLayout"})),"the stash's inventory alone is not the tabbed menu");
+    Check(OnSheet(with({"UISwitcher","AdvancedStatsPanel"}))&&OnSheet(with({"AdvancedStatsPanel","CharacterStatsPanel"})),
+          "Advanced Stats (the stats button's Start) stays on the leather, even should the game close UISwitcher for it");
     Check(!OnSheet(with({"QuestLogPanelExpansion"})),"the quest log alone keeps its own handheld book");
     Check(!OnSheet(Names{"PauseLayout"})&&!OnSheet(Names{"CharacterSelectPanel","MainMenuPanel"}),"pause and title menus are not on it");
 
@@ -123,8 +125,7 @@ int main(){
         auto b=leather::Band(3072,3264);Check(b.x==0&&b.y==0&&b.w==3072&&b.h==1728,"tall canvas: its upper 16:9 band");
         b=leather::Band(1920,1080);Check(b.x==0&&b.y==0&&b.w==1920&&b.h==1080,"16:9 canvas: all of it");
         b=leather::Band(2560,1080);Check(b.w==1920&&b.h==1080&&b.x==320&&b.y==0,"wide canvas: centred 16:9");
-        b=leather::Band(3072,3264,false);Check(b.x==0&&b.y==768&&b.w==3072&&b.h==1728,"other layouts: the middle band, as the room panel centres them");
-        b=leather::Band(2560,1080,false);Check(b.w==1920&&b.x==320&&b.y==0,"wide canvas: the same either way");
+        b=leather::Band(3072,3072);Check(b.x==0&&b.y==0&&b.w==3072&&b.h==1728,"the cube from the inventory: the same upper band (2026-10-29 capture)");
         b=leather::Band(0,100);Check(b.w==0&&b.h==0,"no canvas, no band");
     }
 
@@ -144,6 +145,24 @@ int main(){
         const float lean=std::acos(std::clamp(math::Dot(face,quest),-1.f,1.f))*180/3.14159265f;
         Check(Near(lean,tilt,.05f),"tilt leans the face back from the quest log's");
         Check(Near(menu.q.w,sheet.q.w)&&Near(menu.q.x,sheet.q.x),"menu and leather face the same way");
+    }
+    // Menu only (owner 2026-10-29): no hide, and the fist holds the menu art's own left edge.
+    {
+        using leather::Style;using leather::NormalizeStyle;
+        Check(NormalizeStyle(0)==Style::Off&&NormalizeStyle(1)==Style::Hide&&NormalizeStyle(2)==Style::MenuOnly,"Off, On, Menu only");
+        Check(NormalizeStyle(.4f)==Style::Hide&&NormalizeStyle(3)==Style::Hide&&NormalizeStyle(-1)==Style::Hide&&NormalizeStyle(NAN)==Style::Hide,
+              "an odd value reads On");
+        const auto grip=math::Multiply(math::Yaw(.7f),leather::AboutX(.6f));const math::Vec hand{.3f,1.1f,-.4f};
+        const float width=.57f,inset=leather::MenuArtInset*width;
+        const auto only=leather::Strap(hand,grip,hide,width,0,inset),with=leather::Strap(hand,grip,hide,width,0);
+        const auto right=math::Rotate(only.menu.q,{1,0,0}),face=math::Rotate(only.menu.q,{0,0,1});
+        const auto art=only.menu.p-right*(width*.5f-inset)-face*(leather::Raise+leather::Lift);
+        Check(Near(art,hand+right*leather::Gap,1e-5f),"menu only: the art's left edge (12.5% in) in the fist, Gap short of it");
+        Check(Near(only.menu.p,with.menu.p-right*inset,1e-5f),"menu only: the menu slid toward the hand by the see-through margin");
+        Check(Near(leather::MenuArtInset,.125f),"the art starts 384 of 3072 in");
+        Check(Near(leather::Strap(hand,grip,hide,width,0,-1).menu.p,with.menu.p,1e-5f)&&
+              Near(leather::Strap(hand,grip,hide,width,0,NAN).menu.p,with.menu.p,1e-5f),"a bad inset is none");
+        leather::Holder h;h.Step(hand,grip,true,hide,width,0,inset);Check(Near(h.Get().menu.p,only.menu.p,1e-5f),"the holder passes the inset");
     }
     {
         leather::Holder h;Check(!h.Placed(),"nothing to show before a tracked hand");

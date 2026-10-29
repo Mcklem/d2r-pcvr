@@ -75,7 +75,7 @@ static const GoldenRow Golden[]={
     {"interactions.map_rotate",View(6),1,content::RowKind::Toggle,"Turn map with you",0,0},
     {"interactions.companion_counts",View(6),1,content::RowKind::Toggle,"Buffs and companions",0,0},
     {"hud.menu_distance",View(7),0,content::RowKind::Choice,"Menu distance",3,0},
-    {"interactions.leather_menu",View(7),0,content::RowKind::Toggle,"Leather menu",0,0},   // main's #360, drawn inside Menu distance's row
+    {"interactions.leather_menu",View(7),0,content::RowKind::Stepper,"Hold menu",0,3},   // main's #360, drawn inside Menu distance's row; Off / On / Menu only (2026-10-29)
     {"hud.tooltip_timing",View(7),0,content::RowKind::Choice,"Item details delay",3,0},
     {"interactions.controller_labels",View(7),0,content::RowKind::Choice,"Button names",5,0},
     {"hud.labels_size",View(7),1,content::RowKind::Slider,"Loot name size",0,0},

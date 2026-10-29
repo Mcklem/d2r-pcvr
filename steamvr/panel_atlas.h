@@ -22,11 +22,18 @@ constexpr int Gap=8;
 // Static: the gameplay art (palette labels, arrow guide, bow hints, sewer
 // prompt), the pointer beam and dot beside it, the compass strip under it,
 // and the menu's leather (leather_menu.h: the cached game hide, or the
-// stand-in, at the region's top left) under that.
+// stand-in, at the region's top left) under that, the Advanced Stats button
+// beside it.
 constexpr Region Gameplay{0,0,1024,1024};
 constexpr Region Pointer{Gameplay.w+Gap,0,64,96};
 constexpr Region Compass{0,Gameplay.h+Gap,compass::Width,compass::Height};
 constexpr Region Leather{0,Compass.y+Compass.h+Gap,1024,800};
+// Beside the leather: the tabbed menu's Advanced Stats button (stats_button.h), and lit
+// under the laser. 64 texels: it shows about 45 pixels wide in the headset (2 cm at
+// arm's length), and the quads have no mips, so a larger picture would only shimmer.
+constexpr int StatsSize=64;
+constexpr Region Stats{Leather.w+Gap,Leather.y,StatsSize,StatsSize};
+constexpr Region StatsLit{Stats.x,Stats.y+Stats.h+Gap,StatsSize,StatsSize};
 constexpr int StaticWidth=1536,StaticHeight=Leather.y+Leather.h;
 // Dynamic: VR Settings (its help card inside the panel) across the top, the
 // blood visor under it, then the strain light, the quest card and the bow

@@ -160,8 +160,9 @@ inline constexpr std::array<Definition,Count> Definitions{{
     {"Fog distance", "Where the fog is complete; farther shows more of the distance", L"fog",L"end",600,100,1200,50},
     // The tabbed menu on the hide in the left hand (leather_menu.h), or in front of you as before;
     // VR Settings > Interface, beside Menu distance on its row (owner 2026-10-28: "a toggle in VR Settings
-    // so people can opt out and just use the normal full screen menu").
-    {"Leather menu", "The tabbed menu on a hide in your left hand; Off: in front of you", L"interactions",L"leather_menu",1,0,1,1},
+    // so people can opt out and just use the normal full screen menu"); 2 Menu only: the menu held without the hide
+    // (owner 2026-10-29: "in case players dont like the hide"; leather::Style).
+    {"Hold menu", "The tabbed menu held in your left hand, on a hide (Leather) or alone (Menu only); Off: in front of you", L"interactions",L"leather_menu",1,0,2,1},
     // Mercenary item skills and charges (companion_skills.h):
     // VR Settings > Combat, skills and throws section; master toggle for class gear skill bonuses and item skills/charges.
     {"Mercenary item skills", "Allow mercenaries to benefit from matching class skills on gear and cast skills from equipped items", L"gameplay",L"companion_item_skills",1,0,1,1},
@@ -206,7 +207,7 @@ inline float Normalize(Key key,float value){
     if(key==RunSpeed)return float(runspeed::NormalizePercent(value));
     if(key==VitalsTilt)return vitals::NormalizeTilt(value);
     if(HapticKey(key))return haptics::NormalizeStrength(value);
-    if((key==ControllerLabels||key==VitalsLocation||key==NavigationLocation||key==RenderResolution||key==MenuDistance||key==TooltipTiming||key==ProjectileAimAssist||key==GroundAim||key==SpellLock||key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale)&&(value<d.min||value>d.max||value!=std::round(value)))return d.defaultValue;
+    if((key==ControllerLabels||key==VitalsLocation||key==NavigationLocation||key==RenderResolution||key==MenuDistance||key==TooltipTiming||key==ProjectileAimAssist||key==GroundAim||key==SpellLock||key==FoveationStrength||key==StereoRendering||key==FrameGeneration||key==FrameGenPreset||key==FrameGenScale||key==LeatherMenu)&&(value<d.min||value>d.max||value!=std::round(value)))return d.defaultValue;
     value=std::clamp(value,d.min,d.max);
     return d.step==1?std::round(value):value;
 }

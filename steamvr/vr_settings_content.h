@@ -124,7 +124,7 @@ struct Override {
     WarnWhen warnWhen{};
     bool beside=false;               // a toggle or a number drawn as the right half of the previous override's row (main's PairOf)
     bool instead=false;              // shows only when the previous override's row does not (RowShown: snap / smooth turn speed)
-    const char* besideLabel=nullptr; // beside: the word before its value in the box ("Big:" -> "Big: 600"); nullptr: the label
+    const char* besideLabel=nullptr; // beside: the word before its value in the box ("Big:" -> "Big: 600"); nullptr: the label; "": the value alone
 };
 
 // One row of the menu as the layout reads it: a Definitions entry merged with
@@ -360,6 +360,7 @@ inline constexpr Option FrameGenScaleOptions[]={
 };
 
 inline constexpr ValueName OffAtZero[]={{0,"Off"}};
+inline constexpr ValueName LeatherNames[]={{0,"Off"},{1,"Leather"},{2,"Menu only"}};   // leather::Style; owner 2026-10-29: "Hold Menu > Off/Leather/Menu Only"
 inline constexpr ValueName ByRangeAtZero[]={{0,"By range"}};
 inline constexpr ValueName LaserOffName[]={{LaserOff,"Off"}};
 inline constexpr ValueName ShieldFollowNames[]={{0,"Forearm"},{100,"Wrist"}};
@@ -517,12 +518,13 @@ inline constexpr Override Overrides[]={
 
     // Interface: Game menus
     {.id="hud.menu_distance",.page=View::Interface,.section="Game menus",.kind=RowKind::Choice,.label="Menu distance",
-     .help="How far away merchants, the stash and the main menu open, and the inventory with Leather menu Off. Point at one, hold Right Grip and push or pull it.",
+     .help="How far away merchants, the stash and the main menu open, and the inventory with Hold menu Off. Point at one, hold Right Grip and push or pull it.",
      FRAMEVR_OPTIONS(MenuDistanceOptions)},
-    // The leather menu (main's #360): its right half, as main pairs them (PairOf).
-    {.id="interactions.leather_menu",.page=View::Interface,.section="Game menus",.kind=RowKind::Toggle,.label="Leather menu",
-     .help="On: the inventory and the other tabs open on a hide in your left hand; reaching over your left shoulder and gripping opens it too. Off: in front of you.",
-     .beside=true,.besideLabel="Leather"},
+    // The leather menu (main's #360): its right half, as main pairs them (PairOf). Off / On / Menu only
+    // (owner 2026-10-29: the menu held without the hide), a stepper so it still fits beside.
+    {.id="interactions.leather_menu",.page=View::Interface,.section="Game menus",.kind=RowKind::Stepper,.label="Hold menu",
+     .help="Leather: the inventory and other tabs on a hide in your left hand; reach over your left shoulder and grip. Menu only: no hide. Off: in front of you.",
+     FRAMEVR_NAMES(LeatherNames),.beside=true,.besideLabel=""},   // the value alone: "Hold: Menu only" squeezed Menu distance's label
     {.id="hud.tooltip_timing",.page=View::Interface,.section="Game menus",.kind=RowKind::Choice,.label="Item details delay",
      .help="How soon an item's details pop up when you point the laser at it in a menu.",
      FRAMEVR_OPTIONS(TooltipOptions)},

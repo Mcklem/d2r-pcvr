@@ -885,9 +885,12 @@ void LoadSettings() {
         }
         framevr::limbs::Tuned().Set(tuning);
     }
-    framevr::ConfigureLeatherMenu(IniB(L"interactions",L"leather_menu",true),IniF(L"interactions",L"leather_menu_width",framevr::leather::DefaultMenuWidth),
-        IniF(L"interactions",L"leather_tilt",framevr::leather::DefaultTilt),IniB(L"interactions",L"leather_world",true),
-        IniB(L"interactions",L"leather_backdrop",false));
+    {   // [interactions] leather_menu: 0 Off, 1 On (the hide), 2 Menu only (no hide)
+        const auto style=framevr::leather::NormalizeStyle(IniF(L"interactions",L"leather_menu",1));
+        framevr::ConfigureLeatherMenu(style!=framevr::leather::Style::Off,IniF(L"interactions",L"leather_menu_width",framevr::leather::DefaultMenuWidth),
+            IniF(L"interactions",L"leather_tilt",framevr::leather::DefaultTilt),IniB(L"interactions",L"leather_world",true),
+            IniB(L"interactions",L"leather_backdrop",false),style==framevr::leather::Style::Hide);
+    }
     projectiles::Configure(IniB(L"gameplay",L"motion_controls",false),IniF(L"gameplay",L"arrow_speed",2.f),IniB(L"gameplay",L"arrow_direct_release",true));
     // Movement speed (VR Settings > Body): % of the way from the no-gear base run speed to the gear's (-10 walks).
     projectiles::ConfigureRunSpeed(framevr::runspeed::NormalizePercent(IniF(L"gameplay",L"run_speed_pct",100)));

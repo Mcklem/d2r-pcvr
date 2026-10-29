@@ -80,6 +80,7 @@
 #include "../vr/settings_menu.h"
 #include "journal.h"
 #include "leather_menu.h"
+#include "stats_button.h"
 #include "native_panels.h"
 #include "npc_dialogue.h"
 #include "native_hud.h"
@@ -794,8 +795,13 @@ journal::Placement journalPlacement;
 // leatherShown: the world (sky, fog, cave ceiling) stays round it (vrcam).
 // leatherArt: the game's hide from d2r_vr_leather (prepare_leather.py), else the stand-in.
 std::atomic<bool> leatherOn{true},leatherWorld{true},leatherShown{false},leatherBackdrop{false};
+std::atomic<bool> leatherHide{true};   // Leather On: the hide; false with Menu only (the menu alone in the hand)
 std::atomic<float> leatherMenuWidth{leather::DefaultMenuWidth},leatherTilt{leather::DefaultTilt};
 bool leatherMode=false;
+// The tabbed menu's Advanced Stats button (stats_button.h): painted into the static
+// image; shown and lit this frame (MenuPointer); its press sends the game one View.
+bool statsIconReady=false,statsShown=false,statsLit=false;
+statsbutton::Press statsPress;
 leather::Holder leatherHolder;
 leather::Back leatherBack;   // Right B the game leaves unanswered closes the leather's menu
 leather::Art leatherArt=leather::PlaceholderArt();
@@ -1006,6 +1012,7 @@ void ClearInput() {
     panelinput::WorldInput(false);
     gamestate::MenuMap(false);
     menuControls.Suspend();menuNavigation.Reset();nativeMenuPad={};laserClick={};panelinput::UseController();
+    statsPress.Reset();statsShown=statsLit=false;
     handControls.Suspend();
     bodyCalibration.Suspend();
     settingsInputGate.Suspend();
@@ -1648,7 +1655,11 @@ bool SetupStatic(DXGI_FORMAT eyeFormat) {
                            leatherArt.width,leatherArt.height,leatherArt.menuW,leatherArt.menuX,leatherArt.menuY);
         Say(line);return true;
     }();
+    // The tabbed menu's Advanced Stats button, plain and lit (stats_button.h); premultiplied, as its quad blends.
+    const bool statsPainted=put(statsbutton::Paint(StatsSize,false),Stats)&&put(statsbutton::Paint(StatsSize,true),StatsLit);
     if(!UploadAtlas(staticChain,eyeFormat,StaticWidth,StaticHeight,pixels))return false;
+    statsIconReady=statsPainted;
+    if(!statsPainted)Say("Frame panels: the Advanced Stats button could not be painted; the menu button alone opens it");
     pointerChain=staticChain;
     compassAtlasReady=compassPainted;compassChain=compassPainted?staticChain:XR_NULL_HANDLE;
     gameplayChain=gameplayPainted?staticChain:XR_NULL_HANDLE;
@@ -1848,10 +1859,22 @@ void MenuPointer(const menus::Pad& controls) {
             dotPose=surfacePose;dotPose.position={point.x,point.y,point.z};
         }
     }
+    // The Advanced Stats button below the tabbed menu's hint row (stats_button.h): the laser
+    // on it moves no game cursor; a trigger pull begun on it sends the game one View (the
+    // pad's View, which opens Advanced Stats; Start would close the menu; VR controllers have no View free).
+    statsShown=statsIconReady&&spatialReady&&!journalMode&&gamestate::StatsButtonShown();
+    const auto statsSpot=statsShown?statsbutton::Place(surface.width,surface.height):statsbutton::Spot{};
+    const bool onStats=statsShown&&aimTracked&&pointerHit&&!(mouseDown||rightMouseDown)&&
+        statsbutton::Hit(statsSpot,surface.width,surface.height,hit.u,hit.v);
+    statsLit=onStats;
+    if(statsPress.Step(onStats&&uiActive,pressed,GetTickCount64()))
+        Say(focused?"Frame panels: Advanced Stats button - View sent to the game":"Frame panels: Advanced Stats button - View sent (game window not focused)");
     const bool wasNative=menuNavigation.Native();
     menus::Pad navigation=controls;   // on the leather the left stick walks: no menu cursor, no switch from the laser
     if(leatherMode&&leatherShown.load())navigation.lx=navigation.ly=0;
-    nativeMenuPad=menuNavigation.Step(uiActive&&focused,navigation,pointerHit,hit.u,hit.v,mouseDown||rightMouseDown);
+    if(onStats||statsPress.Held())navigation.rt=0;   // the button's trigger is never the game's RT
+    nativeMenuPad=menuNavigation.Step(uiActive&&focused,navigation,pointerHit&&!onStats,hit.u,hit.v,mouseDown||rightMouseDown);
+    if(statsPress.Held())nativeMenuPad.buttons|=menus::Back;   // View: Advanced Stats (Start closes the menu)
     if(wasNative!=menuNavigation.Native()&&uiActive&&focused)
         Say(menuNavigation.Native()?"Frame panels: native controller navigation":"Frame panels: laser navigation");
     const bool laser=!menuNavigation.Native();
@@ -1863,7 +1886,7 @@ void MenuPointer(const menus::Pad& controls) {
         panels::MenuDistance(int(vrsettings::Read().values[settings::MenuDistance]),!spatialMode));
     const bool active=uiActive&&focused&&aimTracked&&laser;
     if(active)panelinput::OwnPointer();
-    if(active&&pointerHit) {
+    if(active&&pointerHit&&!onStats) {
         RECT client{};
         if(GetClientRect(gameWindow,&client)) {
             math::Vec native{hit.u,hit.v,0};
@@ -1873,12 +1896,13 @@ void MenuPointer(const menus::Pad& controls) {
             else pointerHit=false;
         } else pointerHit=false;
     }
-    const bool modifiers=active&&(pointerHit||mouseDown||rightMouseDown);
+    const bool gamePointer=pointerHit&&!onStats;   // on the button the dot shows, the game's cursor stays put
+    const bool modifiers=active&&(gamePointer||mouseDown||rightMouseDown);
     PanelModifier(VK_CONTROL,modifiers&&controls.lt>140,controlDown);
     PanelModifier(VK_SHIFT,modifiers&&!grabbing&&(controls.buttons&menus::RightBumper),shiftDown);
     laserClick.Step(pressed&&!grabbing,(controls.buttons&menus::LeftBumper)!=0);
-    const auto edges=panelMouse.Step(active,pointerHit,laserClick.Left(),laserClick.Right());
-    panelinput::ItemHover(active,pointerHit,panelMouse.down[0]||panelMouse.down[1]);
+    const auto edges=panelMouse.Step(active,gamePointer,laserClick.Left(),laserClick.Right());
+    panelinput::ItemHover(active,gamePointer,panelMouse.down[0]||panelMouse.down[1]);
     for(int i=0;i<2;++i) {
         bool& held=i?rightMouseDown:mouseDown;
         if(edges.release[i]&&held) {INPUT up{};up.type=INPUT_MOUSE;up.mi.dwFlags=i?MOUSEEVENTF_RIGHTUP:MOUSEEVENTF_LEFTUP;SendInput(1,&up,sizeof up);held=false;}
@@ -2980,7 +3004,9 @@ void Input() {
         const auto needed=XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT|
                           XR_SPACE_LOCATION_POSITION_TRACKED_BIT|XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
         const bool tracked=XR_SUCCEEDED(pLocateSpace(handSpaces[leather::Hand],space,frameState.predictedDisplayTime,&hand))&&(hand.locationFlags&needed)==needed;
-        leatherHolder.Step(V(hand.pose.position),Q(hand.pose.orientation),tracked,leatherArt,leatherMenuWidth.load(),leatherTilt.load());
+        // Menu only: the fist holds the art's left edge, not the band's (leather::MenuArtInset).
+        const float width=leatherMenuWidth.load(),inset=leatherHide.load()?0.f:leather::MenuArtInset*width;
+        leatherHolder.Step(V(hand.pose.position),Q(hand.pose.orientation),tracked,leatherArt,width,leatherTilt.load(),inset);
         const auto menu=leatherHolder.Get().menu;uiPose=XrPose({menu.p,menu.q});
     }
     if(!settingsOwned&&!settingsChord)MenuPointer(controls);
@@ -4210,8 +4236,11 @@ bool Begin() {
         if(sheet)leatherHolder.Open();
         if(sheet) {
             const auto size=leather::Measure(leatherArt,leatherMenuWidth.load());
-            char line[200];std::snprintf(line,sizeof line,"Frame panels: tabbed menu on the leather, left hand (menu %.2f m on %.2f x %.2f m, tilt %.0f, %s)",
+            char line[220];
+            if(leatherHide.load())std::snprintf(line,sizeof line,"Frame panels: tabbed menu on the leather, left hand (menu %.2f m on %.2f x %.2f m, tilt %.0f, %s)",
                 size.menuWidth,size.width,size.height,leather::NormalizeTilt(leatherTilt.load()),leatherWorld.load()?"world kept":"black behind");
+            else std::snprintf(line,sizeof line,"Frame panels: tabbed menu in the left hand, menu only - no hide (menu %.2f m, its art's left edge in the fist, tilt %.0f, %s)",
+                size.menuWidth,leather::NormalizeTilt(leatherTilt.load()),leatherWorld.load()?"world kept":"black behind");
             Say(line);
         } else Say(spatial?(book?"Frame panels: handheld quest log":"Frame panels: native menus in stereo world"):"Frame panels: native surface closed");
         releaseUiChain=!spatial&&swapchainsShort;   // short of swapchains: its surface back for the map (at the frame's end)
@@ -4866,12 +4895,12 @@ bool CopyUi(reshade::api::command_queue* rq) {
     completeNpcLogged=npcChoicesMode;
     // On the leather only the menu's 16:9 band: nothing beyond it leaves the sheet.
     if(leatherMode) {
-        const auto band=leather::Band(int(w),int(h),upperBandMenuMode);
+        const auto band=leather::Band(int(w),int(h));   // the tabbed menu's and the cube's band alike
         crop[0]=band.x;crop[1]=band.y;crop[2]=band.w;crop[3]=band.h;
         static int told[4]{};   // once per change: which part of the canvas is on the sheet
         if(told[0]!=band.x||told[1]!=band.y||told[2]!=band.w||told[3]!=band.h) {
-            char line[160];std::snprintf(line,sizeof line,"Frame leather: menu band %d,%d %dx%d of the %ux%u canvas (%s)",
-                band.x,band.y,band.w,band.h,w,h,upperBandMenuMode?"upper":"middle");
+            char line[160];std::snprintf(line,sizeof line,"Frame leather: menu band %d,%d %dx%d of the %ux%u canvas",
+                band.x,band.y,band.w,band.h,w,h);
             Say(line);told[0]=band.x;told[1]=band.y;told[2]=band.w;told[3]=band.h;
         }
     }
@@ -5475,7 +5504,7 @@ void EndPair() {
     bowLaserWasShown=bowLaserShown;
     // The leather under the tabbed menu, the same pose a hair behind it.
     XrCompositionLayerQuad leatherQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    if(layer&&leatherChain&&leatherMode&&leatherHolder.Placed()&&!settingsModel.open&&!bodyCalibration.Active()&&uiEye.copied&&uiCrop[2]>0) {
+    if(layer&&leatherChain&&leatherHide.load()&&leatherMode&&leatherHolder.Placed()&&!settingsModel.open&&!bodyCalibration.Active()&&uiEye.copied&&uiCrop[2]>0) {
         const auto sheet=leatherHolder.Get().sheet;const auto size=leather::Measure(leatherArt,leatherMenuWidth.load());
         motionQuad(leatherQuad,XrPose({sheet.p,sheet.q}),size.width,size.height,At(panelatlas::Leather,{{0,0},{leatherArt.width,leatherArt.height}}),leatherChain);
         leatherQuad.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied (SetupStatic)
@@ -5486,6 +5515,15 @@ void EndPair() {
         motionQuad(book,UiSurfacePose(),size.width,size.height,
             {{uiCrop[0],uiCrop[1]},{uiCrop[2],uiCrop[3]}},uiEye.chain);
         book.layerFlags=opaqueMenuMode?0:XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    }
+    // The Advanced Stats button, a hair in front of the menu below its hint row (MenuPointer).
+    XrCompositionLayerQuad statsQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    if(book.subImage.swapchain&&statsShown&&staticChain) {
+        const auto size=UiSurfaceSize();const auto spot=statsbutton::Place(size.width,size.height);
+        const auto at=UiSurfacePose();const auto q=Q(at.orientation);
+        const auto p=V(at.position)+math::Rotate(q,{spot.x,spot.y,.004f});
+        motionQuad(statsQuad,XrPose({p,q}),spot.size,spot.size,Rect(statsLit?panelatlas::StatsLit:panelatlas::Stats),staticChain);
+        statsQuad.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied (SetupStatic)
     }
     XrCompositionLayerQuad settingsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};
     if(layer&&(settingsModel.open||bodyCalibration.Active())&&settingsImageReady){
@@ -5650,8 +5688,8 @@ void ConfigureInteractions(bool seated,float waist,float forward,int dominant) {
     std::lock_guard lock(mutex);interactions.Configure(c);interactionstate::Cancel();previous=c;configured=true;
 }
 void ConfigureBottlePhysics(bool on){bottlePhysics=on;}
-void ConfigureLeatherMenu(bool on,float menuWidth,float tilt,bool world,bool backdrop) {
-    leatherOn=on;leatherMenuWidth=leather::NormalizeMenuWidth(menuWidth);leatherTilt=leather::NormalizeTilt(tilt);leatherWorld=world;leatherBackdrop=backdrop;
+void ConfigureLeatherMenu(bool on,float menuWidth,float tilt,bool world,bool backdrop,bool hide) {
+    leatherOn=on;leatherHide=hide;leatherMenuWidth=leather::NormalizeMenuWidth(menuWidth);leatherTilt=leather::NormalizeTilt(tilt);leatherWorld=world;leatherBackdrop=backdrop;
 }
 bool LeatherMenuWorld(){return leatherShown.load();}
 void ConfigurePropPhysics(bool on){propPhysics=on;propscan::Configure(on);}
@@ -6105,7 +6143,7 @@ void Shutdown(bool preserveResolution) {
     noticeWatch={};noticeCards.Clear();noticeCard={};noticePaintRequest=noticeRequestedSequence=noticePaintedSequence=0;noticeAtlasPending=noticeImageReady=false;
     heartStream.Stop();heartPlaying=false;heartLevel.Reset();heartAt=0;heartHush.Reset();heartHealth=-1;
     guardStrain.Reset();strainOutput={};strainPaintKey=~0ull;strainPaintSession=0;strainPaintAt=0;strainAtlasPending=strainImageReady=strainSlotReported=false;
-    if(staticChain&&pDestroySwapchain)pDestroySwapchain(staticChain);staticChain=pointerChain=leatherChain=XR_NULL_HANDLE;
+    if(staticChain&&pDestroySwapchain)pDestroySwapchain(staticChain);staticChain=pointerChain=leatherChain=XR_NULL_HANDLE;statsIconReady=statsShown=statsLit=false;
     if(aimSpace&&pDestroySpace)pDestroySpace(aimSpace);aimSpace=XR_NULL_HANDLE;
     if(leftAimSpace&&pDestroySpace)pDestroySpace(leftAimSpace);leftAimSpace=XR_NULL_HANDLE;
     if(gazeSpace&&pDestroySpace)pDestroySpace(gazeSpace);gazeSpace=XR_NULL_HANDLE;

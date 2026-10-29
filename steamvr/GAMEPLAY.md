@@ -365,7 +365,11 @@ game at install) strapped to your left hand, and the world stays in view all
 round it: no black backdrop. You hold the hide at the menu's left edge; its
 neck and legs reach past your fist. The hide follows the hand whether or not
 you hold the grip, until the menu closes (Right B, its close button, or anything
-that closes the native menu); then it is gone. Right B goes to the game first,
+that closes the native menu); then it is gone. Below the menu's hint row sits a
+small stone **Advanced Stats** button (three gold bars), the same one the room
+panel shows when the leather is off: laser + trigger sends the game one View
+press, a button VR controllers lack (log:
+`Frame panels: Advanced Stats button - View sent to the game`). Right B goes to the game first,
 so a cube, a dialog or the options pages still step back one at a time; a press
 the game leaves unanswered for a quarter of a second, with only the menu and
 its pages open and nothing on the cursor, closes the menu (the log:
@@ -393,9 +397,11 @@ hand = Left** a left grip over either shoulder swaps weapons, so the shoulder
 reach is off; Left Grip + left stick click and the wheel still open the leather
 (the menu laser stays on the right hand).
 
-**VR Settings > Interface > Menu distance** carries the switch on its right half:
-**Leather menu On** (the default) or **Off**: the tabbed menu in front of you against
-black as before, with no shoulder reach. It applies at Apply.
+**VR Settings > Interface > Menu distance** carries **Hold menu** on its right half:
+**Leather** (the default), **Menu only** (the same menu held in your left hand with
+no hide: the fist holds the menu's own left edge, and the shoulder reach, walking
+and the Advanced Stats button work the same) or **Off** (the tabbed menu in front of
+you against black as before, with no shoulder reach). It applies at Apply.
 
 The installer cuts the hide out of the game's own colour map
 (`act1_town_farming_pelt_hanging_b`) into `d2rloader\plugins\d2r_vr_leather`
@@ -404,7 +410,7 @@ menu sits on a painted stand-in hide. Settings, live in `[interactions]`:
 
 ```ini
 [interactions]
-leather_menu=1      ; 0: the tabbed menu back on the room panel, no shoulder reach
+leather_menu=1      ; Hold menu: 1 Leather, 2 Menu only (no hide), 0 Off (the room panel, no shoulder reach)
 leather_menu_width=0.57  ; the menu across, metres (0.30 to 0.90); the hide is sized round it (about 0.83 m)
 leather_tilt=0      ; degrees leaned back toward you from the quest log's angle (-45 to 60)
 leather_world=1     ; 0: the old black backdrop behind the leather (if the eyes disagree)
@@ -417,7 +423,8 @@ stand-in`) once at start, `Frame panels: tabbed menu on the leather, left hand
 canvas on the hide changes. Still needs a headset check: whether the world behind matches
 in both eyes (on 2026-10-09 the transparent tabbed-menu background differed
 between eyes, which is why the room panel went black), readability at arm's
-length, tooltips near the band's lower edge, and the cube from the inventory.
+length and tooltips near the band's lower edge. The cube from the inventory
+shares the tabbed menu's band (fixed after v0.3.29, where it showed cut off).
 
 The VR Settings panel is grabbed like a real window with the same right grip:
 the point you grabbed stays on the end of the laser. Moving the hand without
@@ -495,7 +502,7 @@ sets the page's rows back to their defaults, with **Undo reset** for 6 seconds.
 | Targets | The aimed monster's outline: its strength, which hands show it, and each hand's outline color (By range or one color, shown as a swatch); the arrow path line |
 | Shield | Bash speed to hit, the guard strain shadow (On or Off), and where a held shield sits on the forearm: along, out and across (all 0 by default), wrist turn and roll |
 | Wrist | Life and mana location and tilt, map and compass location, map view (Isometric, Top-down, Full map or Full top-down), turning the map with you, buffs and companions |
-| Interface | Menu distance with the **Leather menu** switch beside it (On by default: the tabbed menu on a hide in your left hand), item details delay, button names, loot name size and weak monster bars |
+| Interface | Menu distance with **Hold menu** beside it (Leather by default: the tabbed menu on a hide in your left hand; Menu only: no hide; Off), item details delay, button names, loot name size and weak monster bars |
 | Survival | The low life and mana alert, heartbeat, blood on the visor and wiping it, offline difficulty, monster sight range and the smarter mercenary |
 | World | Outdoor sky, distance fog with its **Fog distance** beside it while the fog is on (where it is complete, 100-1200 units, 600 by default), dungeon ceilings, rolling bottles, knockable props, pushable bodies, the experimental Sorceress spell glow on hands (Off by default) and the torch club's flame (On; its light stays when it is off) |
 | Vibration | Overall vibration and separate melee, short melee taps, bow draw, bow/throw release, spell, loot/potion/menu and alert strengths; **Feel it** on a row's card |

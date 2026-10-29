@@ -5,6 +5,7 @@ bool JournalOnly();
 bool OpaqueMenuOpen();
 bool UpperBandMenuOpen();
 bool LeatherMenuOpen();   // the tabbed menu (or a cube from it) with no world-opened panel: leather_menu.h
+bool StatsButtonShown();  // the tabbed menu alone (not a cube or world panel): its Advanced Stats button, stats_button.h
 uint32_t PanelChanges();  // counts every panel opened or closed (leather::Back)
 bool CloseLeatherMenu();  // queue: close the tabbed menu if only it and its pages are open, the cursor empty
 bool NpcChoicesOnly();

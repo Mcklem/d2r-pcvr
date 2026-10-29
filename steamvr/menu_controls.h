@@ -6,7 +6,7 @@
 namespace framevr::menus {
 // XInput bit values; portable so menu transitions can be exercised without XR.
 enum Button : uint16_t {
-    Start=0x10,LeftStick=0x40,RightStick=0x80,LeftBumper=0x100,RightBumper=0x200,
+    Start=0x10,Back=0x20,LeftStick=0x40,RightStick=0x80,LeftBumper=0x100,RightBumper=0x200,
     A=0x1000,B=0x2000,X=0x4000,Y=0x8000
 };
 struct Pad {

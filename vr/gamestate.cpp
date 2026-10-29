@@ -38,6 +38,7 @@
 #include "journal_ui.h"
 #include "../steamvr/native_panels.h"
 #include "../steamvr/leather_menu.h"
+#include "../steamvr/stats_button.h"
 #include "../steamvr/notice_card.h"
 #include "../steamvr/weapon_skills.h"
 #include "../steamvr/callback_ticket.h"
@@ -325,6 +326,7 @@ std::atomic<bool> g_journalOnly{false};
 std::atomic<bool> g_opaqueMenu{false};
 std::atomic<bool> g_upperBandMenu{false};
 std::atomic<bool> g_leatherMenu{false};
+std::atomic<bool> g_statsButton{false};   // the tabbed menu alone: its Advanced Stats button (stats_button.h)
 std::atomic<uint32_t> g_panelChanges{0};   // every panel opened or closed (leather::Back)
 std::atomic<bool> g_npcChoices{false};
 std::atomic<uint32_t> g_questNotices{0};   // quest updates while the notification panel is hidden
@@ -886,6 +888,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
         g_opaqueMenu.store(std::any_of(g_panels.begin(),g_panels.end(),
             [](const auto& name){return framevr::panels::OpaqueBackground(name);}));
         g_leatherMenu.store(framevr::leather::OnSheet(g_panels));
+        g_statsButton.store(framevr::statsbutton::Shown(g_panels));
         bool menu = false;
         for (const std::string& n : g_panels) if (IsMenuPanel(n)) { menu = true; break; }
         if(menu!=before)++g_menuEpoch;
@@ -1110,6 +1113,7 @@ bool JournalOnly(){return g_journalOnly.load();}
 bool OpaqueMenuOpen(){return g_opaqueMenu.load();}
 bool UpperBandMenuOpen(){return g_upperBandMenu.load();}
 bool LeatherMenuOpen(){return g_leatherMenu.load();}
+bool StatsButtonShown(){return g_statsButton.load();}
 uint32_t PanelChanges(){return g_panelChanges.load();}
 bool NpcChoicesOnly(){return g_npcChoices.load();}
 void ReadNpcChoicesRect() {

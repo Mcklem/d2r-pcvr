@@ -62,7 +62,7 @@ Quest left X/Y correspond to Index left A/B; right A/B labels are the same.
 | Assign / change quick-use item | Hold the trigger over **QUICK USE** for 0.65 seconds, then select a carried scroll, tome or other usable item. An empty slot also opens the picker on a short click. **CLEAR SLOT** removes the assignment |
 | Walk / run speed | VR Settings > **Body** > **Movement speed** (Hands and moving), then Apply: **Walk**; **Base run** (your class's run with no speed bonus); **Run 10%…90%** of the way up; **Full run** (the default, the full speed your gear and skills give). Saved to `[gameplay] run_speed_pct`; the game's own run / walk toggle is kept in line with it. Movement skills keep their own speed, and it never runs faster than the game. With **Stick toggle** beside it on (Off by default; `[gameplay] run_walk_toggle`), push the **right stick up** to switch between walking and that run (from Walk, the full run) |
 | Finish editing | Click the wheel hand's stick again, or select CLOSE in its center |
-| Inventory / character / skills / journal | Reach the **left hand over the left shoulder** and grip; or Left Grip + left stick click; or either wheel > INVENTORY. However it opens, the tabbed menu comes up on a leather sheet strapped to your left hand, with the world still around you; the right laser works on it as before, the left stick still walks, and closing the menu (Right B or its close button) puts the leather away. Native tabs retain their controls. **VR Settings > Interface > Leather menu Off** keeps the menu in front of you instead, without the shoulder reach. With Dominant hand = Left the left shoulder stays the weapon swap; use the other two |
+| Inventory / character / skills / journal | Reach the **left hand over the left shoulder** and grip; or Left Grip + left stick click; or either wheel > INVENTORY. However it opens, the tabbed menu comes up on a leather sheet strapped to your left hand, with the world still around you; the right laser works on it as before, the left stick still walks, and closing the menu (Right B or its close button) puts the leather away. Native tabs retain their controls. **VR Settings > Interface > Hold menu** sets it: **Leather**, **Menu only** (held by its left edge, no hide) or **Off** (in front of you instead, without the shoulder reach). With Dominant hand = Left the left shoulder stays the weapon swap; use the other two |
 | VR settings / body calibration | Either wheel → VR SETTINGS |
 | Explain a VR setting | Point the right-hand laser at its label or controls for about half a second. Help appears beside the panel and disappears when you point away; no click needed |
 | Minimap | Either wheel → MAP; movement remains available |
@@ -522,6 +522,14 @@ not convert it into a context-click.
 | LB / RB | Left Grip / Right Grip | Left Grip / Right Grip |
 | LT / RT | Left Trigger / Right Trigger | Left Trigger / Right Trigger |
 | Menu / Start, where available to the game | Controller menu button | Controller menu button |
+| Advanced Stats (the game's View in the tabbed menu) | Laser + trigger on the stone stats button below the menu's hint row | Laser + trigger on the stone stats button below the menu's hint row |
+
+Quest and most VR controllers have no View button (the menu buttons belong to
+the headset), so the
+tabbed menu (on the leather or the room panel alike) carries its own Advanced
+Stats button: a small stone badge with three gold bars just below the menu's
+hint row. Point the laser at it (it lights) and pull the trigger: the game gets
+one View press, as from an Xbox pad, and opens or closes Advanced Stats. It is not shown with the cube, the stash, merchants or other panels.
 
 Native menu actions use the same buttons in the main menu, tabbed menu, stash,
 inventory and merchant panels. **Inside a native menu, left primary performs the displayed X action.**
