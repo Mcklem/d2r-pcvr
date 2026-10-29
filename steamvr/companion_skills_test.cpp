@@ -95,10 +95,12 @@ int main() {
 
     // Barbarian: Class 4
     assert(GetSkillClass(126) == 4); // Bash
-    assert(GetSkillClass(138) == 4); // Iron Skin
+    assert(GetSkillClass(138) == 4); // Shout
+    assert(GetSkillClass(145) == 4); // Iron Skin
     assert(GetSkillClass(147) == 4); // Frenzy
     assert(GetSkillTab(126) == 12);  // Bash -> Combat (tab 12)
-    assert(GetSkillTab(138) == 13);  // Iron Skin -> Masteries (tab 13)
+    assert(GetSkillTab(138) == 14);  // Shout -> Warcries (tab 14)
+    assert(GetSkillTab(145) == 13);  // Iron Skin -> Masteries (tab 13)
     assert(GetSkillTab(147) == 12);  // Frenzy -> Combat (tab 12)
 
     // 3. Skill Matching Virtual Class

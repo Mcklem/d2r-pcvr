@@ -142,6 +142,23 @@ inline int ComputeEffectiveCompanionSkillLevel(
     if (!featureEnabled || vclass == VirtualPlayerClass::None || skillId <= 0) {
         return baseLevel;
     }
+
+    // Direct grants (Stat 107 single skill / staffmod, Stat 97 non-class skill / oskill)
+    int directGrant = 0;
+    for (uintptr_t item : equippedItems) {
+        if (!item) continue;
+        const int s = getStat(item, ItemStat::SingleSkill, skillId);
+        if (s > 0) directGrant += s;
+        const int nc = getStat(item, ItemStat::NonClassSkill, skillId);
+        if (nc > 0) directGrant += nc;
+    }
+
+    // In Diablo II, class skills (+X to Class) and tab skills (+X to Tree) never unlock
+    // a skill if the unit's baseLevel is 0 and the skill is not granted directly by an item.
+    if (baseLevel <= 0 && directGrant <= 0) {
+        return 0;
+    }
+
     const int bonus = ComputeCompanionEquipmentSkillBonus(vclass, skillId, equippedItems, getStat);
     return baseLevel + bonus;
 }

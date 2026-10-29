@@ -752,7 +752,7 @@ int DetourSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, i
         return baseLevel;
     }
 
-    const int bonus = framevr::companionai::ComputeCompanionEquipmentSkillBonus(
+    return framevr::companionai::ComputeEffectiveCompanionSkillLevel(
         baseLevel,
         vclass,
         skillId,
@@ -760,8 +760,6 @@ int DetourSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, i
         [&](uintptr_t itm, int st, int pr) {
             return statFn(itm, st, pr);
         });
-
-    return baseLevel + bonus;
 }
 
 void EnsureSkillLevelInstalled() noexcept {
