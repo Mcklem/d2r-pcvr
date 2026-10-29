@@ -322,9 +322,9 @@ inline bool EvaluateTacticalCharge(
     // Tactical trigger evaluation by priority category
     switch (skill.kind) {
         case TacticalSkillKind::Teleport:
-            // Emergency escape: Health < 40% and surrounded by melee or dense pack
-            if (sensors.companionHealthPct < 0.40f &&
-                (sensors.meleeAttackersCount >= 2 || sensors.nearbyHostilesCount >= 3)) {
+            // Emergency escape: Health < 40% (critical retreat) or (Health < 60% and surrounded by melee attackers >= 2)
+            if (sensors.companionHealthPct < 0.40f ||
+                (sensors.companionHealthPct < 0.60f && sensors.meleeAttackersCount >= 2)) {
                 outReason = "P1 Emergency Teleport retreat";
                 return true;
             }

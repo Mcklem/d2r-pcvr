@@ -8,6 +8,7 @@
 #include "companion_ai.h"
 #include "../steamvr/companion_ai.h"
 #include "../steamvr/companion_skills.h"
+#include "../steamvr/companion_charges.h"
 #include "../steamvr/telegraph.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/logging.h"
@@ -59,6 +60,7 @@ std::atomic<bool> g_companionConsumeItemCharges{false};
 std::atomic<bool> g_nativeMoveBlockedWhileMoving{false};
 std::atomic<bool> g_pendingRegroupMove{false};
 thread_local bool g_inCommandedMove = false;
+thread_local bool g_inCommandedAction = false;
 
 std::atomic<bool> g_enabled{true};
 std::atomic<bool> g_installed{false};
@@ -336,7 +338,7 @@ bool DispatchServerMoveToCoord(uintptr_t game, uintptr_t unit, framevr::companio
 
 bool ShouldAllowNativeMoveStruct(uintptr_t game, uintptr_t moveStruct) noexcept {
     (void)game;
-    if (g_inCommandedMove || !g_enabled.load(std::memory_order_relaxed) ||
+    if (g_inCommandedMove || g_inCommandedAction || !g_enabled.load(std::memory_order_relaxed) ||
         !g_tacticalCommandsEnabled.load(std::memory_order_relaxed) ||
         g_inRetreatState.load(std::memory_order_relaxed) || !moveStruct) {
         return true;
@@ -535,7 +537,7 @@ int DetourServerStartRun(uintptr_t game, uintptr_t moveStruct) {
 }
 
 int DetourServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, int moveMode, int x, int y, uint8_t pathType, uint16_t flags) {
-    if (g_inCommandedMove || !g_enabled.load(std::memory_order_relaxed) ||
+    if (g_inCommandedMove || g_inCommandedAction || !g_enabled.load(std::memory_order_relaxed) ||
         !g_tacticalCommandsEnabled.load(std::memory_order_relaxed) ||
         g_inRetreatState.load(std::memory_order_relaxed)) {
         return originalServerMoveUnit(game, unit, targetUnit, moveMode, x, y, pathType, flags);
@@ -820,6 +822,221 @@ void EnsureServerMoveInstalled() noexcept {
                 reinterpret_cast<void**>(&originalServerStartRun))) {
             g_serverStartRunHooked.store(true, std::memory_order_relaxed);
             framevr::logging::Write("Frame companion AI: verified and hooked native server start-run gatekeeper (0x445db0)");
+        }
+    }
+}
+
+void ExecuteCompanionTacticalChargesInternal(
+    uintptr_t game,
+    uintptr_t hireling,
+    uint32_t classId,
+    float health,
+    float maxHealth,
+    framevr::companionai::Vec2 compPos,
+    framevr::companionai::Vec2 plyrPos,
+    uint64_t nowMs,
+    bool inRetreat,
+    bool isTacticalActive)
+{
+    if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    uint32_t compHeader[4]{};
+    if (!Read(hireling, compHeader) || compHeader[0] != 1 || health <= 0.0f) {
+        return;
+    }
+
+    const uint32_t hirelingMode = compHeader[3];
+    const bool inActiveAttack = (hirelingMode == 4 || hirelingMode == 5 || hirelingMode == 7 || (hirelingMode >= 8 && hirelingMode <= 11));
+    if (inActiveAttack || hirelingMode == 3 /* MONMODE_GETHIT */) {
+        return;
+    }
+
+    static uint64_t s_lastTacticalCastMs = 0;
+    if (nowMs - s_lastTacticalCastMs < 400) {
+        return;
+    }
+
+    static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
+    static uint64_t s_lastChargeScanMs = 0;
+    static uint32_t s_lastHirelingUnitId = 0;
+
+    const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
+    const auto eqFn = reinterpret_cast<EquippedFn>(d2rsig::Addr(abi::EquippedRva));
+    const auto statFn = reinterpret_cast<GetStatFn>(d2rsig::Addr(abi::GetStatRva));
+    if (!invFn || !eqFn || !statFn) {
+        return;
+    }
+
+    const uintptr_t inv = invFn(hireling, nullptr, 0);
+    if (!inv) {
+        return;
+    }
+
+    const auto vclass = framevr::companionai::GetVirtualPlayerClass(static_cast<uint16_t>(classId));
+    if (vclass == framevr::companionai::VirtualPlayerClass::None) {
+        return;
+    }
+
+    const uint32_t hirelingUnitId = compHeader[2];
+    if (nowMs - s_lastChargeScanMs >= 1000 || s_lastHirelingUnitId != hirelingUnitId) {
+        s_lastChargeScanMs = nowMs;
+        s_lastHirelingUnitId = hirelingUnitId;
+
+        std::array<framevr::companionai::EquippedItemSlot, 4> slots{};
+        size_t slotCount = 0;
+        for (int loc : {1, 3, 4, 5}) {
+            uintptr_t item = eqFn(inv, loc);
+            uint32_t ih[3]{};
+            if (item && Read(item, ih) && ih[0] == 4) {
+                slots[slotCount++] = { ih[2], loc, item };
+            }
+        }
+
+        auto prevCharges = std::move(s_cachedCharges);
+        s_cachedCharges.clear();
+
+        constexpr uint16_t CandidateSkills[] = {
+            54,  // Teleport
+            9, 7, 264, // Slow Missiles, Inner Sight, Cloak of Shadows
+            82, 87, 91, 66, 71, 76, 77, 86, 69, 72, // Curses
+            44, 55, 59, 78, 89, 240, // Crowd Control
+            246, 226, 227, 237, 247, 75, 85, 90, 94, 95, 221, 222, 232, 236, 242, // Summons
+            36, 38, 47, 48, 49, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
+            52, 68, 235 // Buffs
+        };
+
+        for (size_t sIdx = 0; sIdx < slotCount; ++sIdx) {
+            const auto& slot = slots[sIdx];
+            for (uint16_t cSkill : CandidateSkills) {
+                if (!framevr::companionai::IsSkillUsableByCompanion(vclass, cSkill)) continue;
+
+                for (uint8_t lvl : {1, 2, 3, 4, 5, 6, 10, 12, 33}) {
+                    const uint16_t param = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
+                    const int32_t statVal = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, param);
+                    if (statVal > 0) {
+                        auto cSkillObj = framevr::companionai::UnpackChargedSkill(slot.itemId, slot.bodyLocation, param, statVal);
+                        if (cSkillObj.skillId > 0 && cSkillObj.maxCharges > 0) {
+                            cSkillObj.kind = framevr::companionai::GetTacticalSkillKind(cSkillObj.skillId);
+                            for (const auto& prev : prevCharges) {
+                                if (prev.itemId == cSkillObj.itemId && prev.skillId == cSkillObj.skillId) {
+                                    cSkillObj.lastCastMs = prev.lastCastMs;
+                                    break;
+                                }
+                            }
+                            s_cachedCharges.push_back(cSkillObj);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (s_cachedCharges.empty()) {
+        return;
+    }
+
+    framevr::companionai::TacticalCombatSensors sensors{};
+    sensors.companionHealthPct = (maxHealth > 0.0f) ? (health / maxHealth) : 1.0f;
+    sensors.nowMs = nowMs;
+
+    melee::Hostile hostiles[16]{};
+    const int hCount = melee::HostilesAround(hostiles, 16, 24.0f, compPos.x, compPos.y, hireling);
+    float primaryTargetX = compPos.x;
+    float primaryTargetY = compPos.y;
+
+    if (hCount > 0) {
+        sensors.isCombatActive = true;
+        float closestDist = 9999.0f;
+        for (int i = 0; i < hCount; ++i) {
+            const float d = std::hypot(hostiles[i].x - compPos.x, hostiles[i].y - compPos.y);
+            if (d <= 2.5f) sensors.meleeAttackersCount++;
+            if (d <= 8.0f) sensors.nearbyHostilesCount++;
+            if (d > 12.0f) sensors.rangedShootersCount++;
+            if (hostiles[i].clear && d < closestDist) {
+                closestDist = d;
+                primaryTargetX = hostiles[i].x;
+                primaryTargetY = hostiles[i].y;
+            }
+        }
+    }
+
+    const uint32_t holdTargetId = g_activeHoldTargetId.load(std::memory_order_relaxed);
+    if (holdTargetId != 0) {
+        uintptr_t enemy = melee::ServerUnit(game, 1, holdTargetId);
+        float ex = 0.0f, ey = 0.0f;
+        if (enemy && ReadPosition(enemy, ex, ey)) {
+            primaryTargetX = ex;
+            primaryTargetY = ey;
+            sensors.isCombatActive = true;
+        }
+    }
+
+    if (inRetreat) {
+        sensors.isCombatActive = true;
+    }
+
+    const bool consumeCharges = g_companionConsumeItemCharges.load(std::memory_order_relaxed);
+    const auto decision = framevr::companionai::SelectBestTacticalCharge(
+        s_cachedCharges, sensors, true, consumeCharges);
+
+    if (!decision.shouldCast) {
+        return;
+    }
+
+    int destX = int(std::round(primaryTargetX));
+    int destY = int(std::round(primaryTargetY));
+
+    if (decision.kind == framevr::companionai::TacticalSkillKind::Teleport) {
+        destX = int(std::round(plyrPos.x));
+        destY = int(std::round(plyrPos.y));
+    } else if (decision.kind == framevr::companionai::TacticalSkillKind::Suppression ||
+               decision.kind == framevr::companionai::TacticalSkillKind::Summon ||
+               decision.kind == framevr::companionai::TacticalSkillKind::Buff) {
+        destX = int(std::round(compPos.x));
+        destY = int(std::round(compPos.y));
+    }
+
+    const auto startFn = reinterpret_cast<int(__fastcall*)(uintptr_t, uintptr_t, int, int, int)>(d2rsig::Addr(abi::StartRva));
+    const auto dispatchFn = reinterpret_cast<int(__fastcall*)(uintptr_t, uintptr_t, int, int, int, int, int)>(d2rsig::Addr(abi::DispatchRva));
+
+    if (startFn && dispatchFn) {
+        struct CommandedActionScope {
+            CommandedActionScope() noexcept { g_inCommandedAction = true; }
+            ~CommandedActionScope() noexcept { g_inCommandedAction = false; }
+        } actionScope;
+
+        (void)startFn(game, hireling, decision.skillId, decision.level, 0);
+        const int castRes = dispatchFn(game, hireling, decision.skillId, decision.level, 1, destX, destY);
+
+        if (castRes != 0) {
+            s_lastTacticalCastMs = nowMs;
+            for (auto& s : s_cachedCharges) {
+                if (s.itemId == decision.itemId && s.skillId == decision.skillId) {
+                    s.lastCastMs = nowMs;
+                    if (consumeCharges) {
+                        framevr::companionai::DecrementChargedSkill(s, true);
+                        const auto setStatFn = reinterpret_cast<void(__fastcall*)(uintptr_t, int, int, int)>(d2rsig::Addr(abi::SetStatRva));
+                        if (setStatFn) {
+                            const uint16_t param = framevr::companionai::PackChargedSkillParam(s.skillId, s.level);
+                            const int32_t val = framevr::companionai::PackChargedSkillValue(s.currentCharges, s.maxCharges);
+                            uintptr_t itmUnit = eqFn(inv, decision.bodyLocation);
+                            if (itmUnit) {
+                                setStatFn(itmUnit, framevr::companionai::ItemStat::ChargedSkill, val, param);
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            char logBuf[192];
+            std::snprintf(logBuf, sizeof logBuf,
+                "Frame companion AI: tactical cast skill %u (lvl %u, %s) -> dest (%d,%d) res=%d",
+                decision.skillId, decision.level, decision.reason, destX, destY, castRes);
+            framevr::logging::Write(logBuf);
         }
     }
 }
@@ -1503,6 +1720,11 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
     } else {
         g_activePeelTargetId.store(0, std::memory_order_relaxed);
     }
+
+    // 7. Tactical Charged Skills & Spells Casting (Phase 3)
+    ExecuteCompanionTacticalChargesInternal(
+        game, hireling, classId, health, maxHealth,
+        compPos, plyrPos, nowMs, inRetreat, isTacticalActive);
 }
 } // namespace
 
@@ -1995,6 +2217,23 @@ void ConfigureConsumeItemCharges(bool enabled) {
 
 bool IsConsumeItemChargesEnabled() {
     return g_companionConsumeItemCharges.load();
+}
+
+void ExecuteCompanionTacticalCharges(
+    uintptr_t game,
+    uintptr_t hireling,
+    uint32_t classId,
+    float health,
+    float maxHealth,
+    framevr::companionai::Vec2 compPos,
+    framevr::companionai::Vec2 plyrPos,
+    uint64_t nowMs,
+    bool inRetreat,
+    bool isTacticalActive)
+{
+    ExecuteCompanionTacticalChargesInternal(
+        game, hireling, classId, health, maxHealth,
+        compPos, plyrPos, nowMs, inRetreat, isTacticalActive);
 }
 
 } // namespace companionai

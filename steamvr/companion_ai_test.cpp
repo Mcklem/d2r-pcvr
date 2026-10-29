@@ -188,6 +188,42 @@ D2RL::ServiceQueryResult __cdecl FakeQueryService(const D2RL::PluginContext*, D2
 }
 } // namespace
 
+
+static int g_lastStartedSkill = 0;
+static int g_lastStartedLevel = 0;
+static int g_lastDispatchedSkill = 0;
+static int g_lastDispatchedLevel = 0;
+static int g_lastDispatchedDestX = 0;
+static int g_lastDispatchedDestY = 0;
+static int g_dispatchCount = 0;
+
+static int __fastcall FakeStartSkill(uintptr_t, uintptr_t, int skillId, int level, int) {
+    g_lastStartedSkill = skillId;
+    g_lastStartedLevel = level;
+    return 1;
+}
+
+static int __fastcall FakeDispatchSkill(uintptr_t, uintptr_t, int skillId, int level, int, int targetX, int targetY) {
+    g_lastDispatchedSkill = skillId;
+    g_lastDispatchedLevel = level;
+    g_lastDispatchedDestX = targetX;
+    g_lastDispatchedDestY = targetY;
+    g_dispatchCount++;
+    return 1;
+}
+
+static int g_lastSetStatId = 0;
+static int g_lastSetStatVal = 0;
+static int g_lastSetStatParam = 0;
+static int g_setStatCount = 0;
+
+static void __fastcall FakeSetStat(uintptr_t, int stat, int val, int param) {
+    g_lastSetStatId = stat;
+    g_lastSetStatVal = val;
+    g_lastSetStatParam = param;
+    g_setStatCount++;
+}
+
 namespace d2rsig {
 bool Check(uint64_t rva, const void*, uint32_t) {
     if (rva == companionai::abi::ModeRva ||
@@ -202,7 +238,10 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::SkillLevelRva ||
         rva == companionai::abi::InventoryRva ||
         rva == companionai::abi::EquippedRva ||
-        rva == companionai::abi::GetStatRva) {
+        rva == companionai::abi::GetStatRva ||
+        rva == companionai::abi::StartRva ||
+        rva == companionai::abi::DispatchRva ||
+        rva == companionai::abi::SetStatRva) {
         return signatures;
     }
     return false;
@@ -220,6 +259,9 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::InventoryRva) return reinterpret_cast<uintptr_t>(&FakeInventory);
     if (rva == companionai::abi::EquippedRva) return reinterpret_cast<uintptr_t>(&FakeEquipped);
     if (rva == companionai::abi::GetStatRva) return reinterpret_cast<uintptr_t>(&FakeGetStat);
+    if (rva == companionai::abi::StartRva) return reinterpret_cast<uintptr_t>(&FakeStartSkill);
+    if (rva == companionai::abi::DispatchRva) return reinterpret_cast<uintptr_t>(&FakeDispatchSkill);
+    if (rva == companionai::abi::SetStatRva) return reinterpret_cast<uintptr_t>(&FakeSetStat);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
@@ -1734,6 +1776,76 @@ int main() {
             alignas(8) uint8_t playerUnit[0x80]{};
             std::memcpy(playerUnit, playerUnitHeader, sizeof(playerUnitHeader));
             assert(companionai::DetourSkillLevel(reinterpret_cast<uintptr_t>(playerUnit), skillNodePtr, 1, 0) == 10);
+
+
+            // 9. Phase 3 & 4 Live Tactical Charged Cast & Accounting
+            {
+                // Equip Rogue with Teleport charges (skill 54, lvl 1, 20/20) on weapon slot 4
+                std::memcpy(mercUnit, rogueHeader, sizeof(rogueHeader));
+                g_testEquippedSlots.clear();
+                const uint16_t tpParam = framevr::companionai::PackChargedSkillParam(54, 1);
+                const int32_t tpVal = framevr::companionai::PackChargedSkillValue(20, 20);
+                g_testEquippedSlots[4].stats = { { ItemStat::ChargedSkill, tpParam, tpVal } };
+
+                companionai::ConfigureItemSkills(true);
+                companionai::ConfigureConsumeItemCharges(false); // Zero-Wear Dev mode
+                g_dispatchCount = 0;
+                g_setStatCount = 0;
+
+                const framevr::companionai::Vec2 compP{ 100.0f, 100.0f };
+                const framevr::companionai::Vec2 plyrP{ 95.0f, 95.0f };
+                uint64_t tickMs = 100000;
+
+                // Companion health 30% (< 40% threshold)
+                // When called, emergency retreat should select and cast Teleport to player pos
+                // Note: melee::HostilesAround is mocked or 0; we set health low
+                // Let's call ExecuteCompanionTacticalCharges:
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 30.0f, 100.0f,
+                    compP, plyrP, tickMs, true, false);
+
+                // Zero-Wear Dev mode: cast dispatched, but charges NOT decremented
+                assert(g_dispatchCount == 1);
+                assert(g_lastDispatchedSkill == 54);
+                assert(g_lastDispatchedLevel == 1);
+                assert(g_lastDispatchedDestX == 95);
+                assert(g_lastDispatchedDestY == 95);
+                assert(g_setStatCount == 0); // No wear in dev mode!
+
+                // Realistic consumption mode:
+                companionai::ConfigureConsumeItemCharges(true);
+                tickMs += 15000; // Past 12s Teleport cooldown
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 30.0f, 100.0f,
+                    compP, plyrP, tickMs, true, false);
+
+                assert(g_dispatchCount == 2);
+                assert(g_setStatCount == 1); // 1 charge consumed!
+                assert(g_lastSetStatId == ItemStat::ChargedSkill);
+                assert(g_lastSetStatParam == tpParam);
+                assert((g_lastSetStatVal & 0xFF) == 19); // 20 -> 19 charges!
+                assert(((g_lastSetStatVal >> 8) & 0xFF) == 20); // Max charges 20 preserved
+
+                // Cooldown enforcement: immediate second tick without waiting should NOT cast
+                tickMs += 100; // Only 100ms later
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 30.0f, 100.0f,
+                    compP, plyrP, tickMs, true, false);
+                assert(g_dispatchCount == 2); // Still 2!
+
+                // Master toggle disabled:
+                companionai::ConfigureItemSkills(false);
+                tickMs += 15000; // Cooldown expired
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 30.0f, 100.0f,
+                    compP, plyrP, tickMs, true, false);
+                assert(g_dispatchCount == 2); // No new dispatch when disabled!
+
+                // Re-enable for clean state
+                companionai::ConfigureItemSkills(true);
+                companionai::ConfigureConsumeItemCharges(false);
+                g_testEquippedSlots.clear();
+            }
 
             g_testEquippedSlots.clear();
         }

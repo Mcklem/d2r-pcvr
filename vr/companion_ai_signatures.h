@@ -99,4 +99,25 @@ inline constexpr uint64_t GetStatRva = 0x2f5020;
 inline constexpr uint8_t GetStatSig[] = {
     0xff, 0x25, 0xf2, 0x51, 0xb3, 0x03, 0x90, 0x90, 0x90, 0x90
 };
+
+// StartSkill RVA in D2R 3.3.93787 / 3.3.93847 (0x43b3e0):
+// int __fastcall StartSkill(uintptr_t game, uintptr_t unit, int skillId, int level, int arg5)
+inline constexpr uint64_t StartRva = 0x43b3e0;
+inline constexpr uint8_t StartSig[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x6c, 0x24, 0x18, 0x48, 0x89, 0x74, 0x24, 0x20, 0x57
+};
+
+// DispatchSkill RVA in D2R 3.3.93787 / 3.3.93847 (0x43acb0):
+// int __fastcall DispatchSkill(uintptr_t game, uintptr_t unit, int skillId, int level, int flag, int targetX, int targetY)
+inline constexpr uint64_t DispatchRva = 0x43acb0;
+inline constexpr uint8_t DispatchSig[] = {
+    0x48, 0x89, 0x5c, 0x24, 0x10, 0x44, 0x89, 0x4c, 0x24, 0x20, 0x44, 0x89, 0x44, 0x24, 0x18
+};
+
+// SetStat RVA in D2R 3.3.93787 / 3.3.93847 (0x2f7d10):
+// void __fastcall SetStat(uintptr_t unit, int stat, int value, int param)
+inline constexpr uint64_t SetStatRva = 0x2f7d10;
+inline constexpr uint8_t SetStatSig[] = {
+    0xff, 0x25, 0x32, 0x25, 0xb3, 0x03, 0x90, 0x90, 0x90, 0x90
+};
 } // namespace companionai::abi

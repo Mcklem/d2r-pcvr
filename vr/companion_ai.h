@@ -35,4 +35,15 @@ void ConfigureItemSkills(bool enabled);
 bool IsItemSkillsEnabled();
 void ConfigureConsumeItemCharges(bool enabled);
 bool IsConsumeItemChargesEnabled();
+void ExecuteCompanionTacticalCharges(
+    uintptr_t game,
+    uintptr_t hireling,
+    uint32_t classId,
+    float health,
+    float maxHealth,
+    framevr::companionai::Vec2 compPos,
+    framevr::companionai::Vec2 plyrPos,
+    uint64_t nowMs,
+    bool inRetreat,
+    bool isTacticalActive);
 } // namespace companionai
