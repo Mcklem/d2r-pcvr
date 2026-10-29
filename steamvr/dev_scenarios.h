@@ -249,9 +249,8 @@ inline constexpr int PreparationCount=5;
 inline std::array<const char*,10> Kit(int cls,int choice,int mercClassId=-1){
     if(ValidClass(cls)&&choice==MercChargesChoice) {
         constexpr const char* pool[] = {
-            "ci1", "dr8", "xpl", "gts", "xit",
-            "8cb", "6lb", "9pa", "9sr", "9b9",
-            "9cr", "92h", "7gs", "72h", "9cl"
+            "xhl", "xar", "xts", "amb", "7o7",
+            "9fb", "9ba", "6hx", "usk", "7sp"
         };
         static size_t rot = 0;
         const char* picked = pool[rot++ % std::size(pool)];
