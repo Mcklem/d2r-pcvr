@@ -51,6 +51,27 @@ public:
     }
 };
 
+// Keys the mod sends itself (SendInput: the menu's Escape, inventory I, the
+// laser's Ctrl / Shift, flat aiming's Shift) carry this in dwExtraInfo, so the
+// game window can tell them from the player's own keyboard.
+inline constexpr uintptr_t InjectedKeyTag=0x50435652'4b455953ull;   // "PCVRKEYS"
+// A key pressed on a real keyboard lets the game take its keyboard layout for a
+// moment although the laser holds the controller layout (InputModeLease):
+// text boxes - D2RLoader's Host Game and Browse Games, any name or password -
+// take typed letters only there (owner 2026-10-25: nothing could be typed into
+// the co-op boxes, "even using the keyboard"). Once the game has switched, the
+// laser no longer holds anything back; the thumbstick brings the controller back.
+class TypedKeys {
+    InputModeLease lease;
+public:
+    // A key-down from the game window, with its message's or raw input's extra information.
+    bool Key(uint64_t now,uintptr_t extra) {
+        if(extra==InjectedKeyTag)return false;
+        lease.Refresh(now);return true;
+    }
+    bool Active(uint64_t now) const { return lease.Active(now); }
+};
+
 // Item hover ends immediately on a ray miss, drag, or ownership change. It
 // must not inherit the longer protection kept for queued mouse releases.
 class ItemTooltipHover {

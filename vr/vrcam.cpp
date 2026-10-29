@@ -143,6 +143,7 @@ namespace gamestate {bool OpaqueMenuOpen();}
 #include "panel_input.h"
 #include "native_belt.h"
 #endif
+#include "../steamvr/panel_input_mode.h"
 #include "pad_mirror_shared.h"
 
 #pragma intrinsic(_ReturnAddress)
@@ -3202,6 +3203,7 @@ void SendShift(bool down) {
     in.ki.wVk = VK_LSHIFT;
     in.ki.wScan = 0x2A;
     in.ki.dwFlags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+    in.ki.dwExtraInfo = framevr::panels::InjectedKeyTag;   // never the player's typing (TypedKeys)
     SendInput(1, &in, sizeof in);
 }
 void SendLeftButton(bool down) {
@@ -5301,6 +5303,15 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     LRESULT resolutionResult=0;
     if(framevr::resolution::Handle(h,msg,w,l,g_gameWndProc,resolutionResult))return resolutionResult;
     if(framevr::HandleWindowFocusMessage(h,msg,w,l))return 0;
+    // A real key (not one the mod sent) lets the game take its keyboard layout, so
+    // text boxes take what is typed. Raw input may come before the key's message.
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) panelinput::Typed(uintptr_t(GetMessageExtraInfo()));
+    else if (msg == WM_INPUT) {
+        RAWINPUT raw{};UINT size = sizeof raw;
+        if (GetRawInputData((HRAWINPUT)l, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER)) != (UINT)-1 &&
+            raw.header.dwType == RIM_TYPEKEYBOARD && !(raw.data.keyboard.Flags & RI_KEY_BREAK))
+            panelinput::Typed(uintptr_t(raw.data.keyboard.ExtraInformation));
+    }
 #endif
     // F1..F3 (F4 in VR) pick the view: the game, which has skills on them, never sees them.
     if ((msg == WM_KEYDOWN || msg == WM_KEYUP) && w >= VK_F1 && (int)w < VK_F1 + ViewCount()) return 0;

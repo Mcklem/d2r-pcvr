@@ -55,7 +55,7 @@ Quest left X/Y correspond to Index left A/B; right A/B labels are the same.
 | Action | VR control |
 | --- | --- |
 | Walk / turn | Left stick / right stick sideways, including with a wheel open; snap by default, with optional smooth turning |
-| Open or close a hand wheel | Click that hand's thumbstick; it stays open without holding |
+| Open or close a hand wheel | Click that hand's thumbstick; it stays open without holding, and reopens on that hand's last page (Map or Equipment; **SPELLS** goes back), and its skill editor on the last tree you picked, until a new game |
 | Switch to the other wheel | Click the other thumbstick |
 | Assign a button | Opposite hand's laser + trigger: select a wedge, then a skill |
 | Use an inventory item | Either wheel > **QUICK USE**: point with the opposite hand and briefly click its trigger; use happens on release |
@@ -523,6 +523,8 @@ not convert it into a context-click.
 Native menu actions use the same buttons in the main menu, tabbed menu, stash,
 inventory and merchant panels. **Inside a native menu, left primary performs the displayed X action.**
 During motion gameplay, Inventory and VR Settings are available in either wheel.
+VR Settings reopens on the tab you closed it on, Right B included; a new game
+starts it over on Controls.
 Right-stick click toggles the right wheel during gameplay. Use the shoulder
 gesture or **EQUIPMENT / BELT** wheel for weapon configurations.
 

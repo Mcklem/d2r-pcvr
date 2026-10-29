@@ -68,6 +68,7 @@ void InstallCanvasSize() {
     }
 }
 framevr::panels::InputModeLease lease;
+framevr::panels::TypedKeys typed;   // the player's own keys let the keyboard layout in (Preserve)
 framevr::panels::ItemTooltipHover itemHover;
 framevr::panels::WorldInputMode worldInput;
 using Activity=bool(*)(void*);
@@ -212,7 +213,8 @@ void OnFocus(void* self,bool sound) {
 }
 
 bool Preserve() {
-    if(!ready.load(std::memory_order_acquire)||!lease.PreserveController(GetTickCount64(),true))return false;
+    const auto now=GetTickCount64();
+    if(!ready.load(std::memory_order_acquire)||typed.Active(now)||!lease.PreserveController(now,true))return false;
     return isController();
 }
 void Report() {
@@ -228,6 +230,11 @@ bool OnRequest(int method) {
 }
 }
 void OwnPointer(){pointerFocus=true;lease.Refresh(GetTickCount64());}
+void Typed(uintptr_t extra){
+    static std::atomic<bool> told{false};
+    if(typed.Key(GetTickCount64(),extra)&&lease.Active(GetTickCount64())&&!told.exchange(true))
+        framevr::logging::Write("Frame panels: a key typed - the game may take its keyboard layout for text boxes");
+}
 void UseController(){pointerFocus=false;ItemHover(false);}
 void ItemHover(bool active,bool hit,bool dragging){
     if(!active||!hit||dragging)++hoverGeneration;

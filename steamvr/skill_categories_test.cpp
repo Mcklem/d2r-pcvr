@@ -79,7 +79,7 @@ int main(){
         s.Click(SkillCategoryCell(2));Check(s.out.editCategory==categories::All&&s.out.feedback==3,"empty/passive-only tree is disabled");
         s.Click(SkillCategoryCell(3));Check(s.out.editCount==1&&s.out.editOptions[0].id==130,"nonempty neighboring tree still works");
         s.Click(11);Check(s.out.editor==0&&s.out.request.action==Action::None,"Back cancels without assigning");
-        s.Click(0);Check(s.out.editCategory==categories::All,"reopening picker starts with all choices");
+        s.Click(0);Check(s.out.editCategory==3&&s.out.editPage==0,"reopening picker keeps the tree picked in this game, on page 1 (menus remember)");
         s.in.snapshot.bindingBank=16;s.in.trigger=0;s.Step();Check(s.out.editor==0,"weapon swap closes frozen picker");
         s.Click(0);s.in.cancel=true;s.Step();Check(s.out.editor==0&&s.out.cancelPending,"menu cancellation drops category picker");
     }

@@ -117,6 +117,16 @@ is fully released, so choosing Fire Bolt never immediately fires it. Start with
 the existing stationary selection behavior; locomotion while selecting is a
 separate comfort option. Use a dead zone and hover hysteresis at wedge borders.
 
+The wheel and VR Settings reopen on the page they were closed on: the wheel's
+Spells, Equipment, Map or Developer page (and Developer's own page), and VR
+Settings' tab and Notes page, however they were closed (Right B too). Each
+wheel hand keeps its own page and its own skill tree filter: the skill editor
+reopens on the tree last picked on that hand (on its first page; All when that
+tree has no skills now). The wheel's SPELLS button leaves the Map or Developer
+page. Skill, slot and item editors are never reopened. All of it is kept in
+memory only, for the game: leaving to character select keeps it, a new game
+(a new player session) starts every menu over, and a game restart starts over.
+
 Casting uses one rule: **point and press right trigger**. A ready spell commits
 on trigger press; projectile casts do not wait for trigger release, a hand
 movement, a charge pose or the stock body's casting wind-up. Hold to repeat only

@@ -568,8 +568,11 @@ public:
     bool Dirty()const{return Changed(base,draft)!=0;}
     bool Busy()const{return pending!=0;}
     bool CanTestHaptics(int category)const{return open&&ready&&!Busy()&&page==Page::Haptics&&category>=0&&category<haptics::CategoryCount;}
-    void Open(const Snapshot& s){open=true;controllerMenu=false;page=Page::Controls;notesPage=0;base=draft=s.values;ready=s.ready;offlineDifficultyAvailable=s.offlineDifficultyAvailable;result=s.result;serial=std::max(serial,s.sequence);pending=s.result==Result::Saving?s.sequence:0;++revision;}
+    // The panel reopens on the tab (and Notes page) it was closed on, however it was closed (B too),
+    // in memory only. StartOver (a new game) goes back to Controls, page 1.
+    void Open(const Snapshot& s){open=true;controllerMenu=false;base=draft=s.values;ready=s.ready;offlineDifficultyAvailable=s.offlineDifficultyAvailable;result=s.result;serial=std::max(serial,s.sequence);pending=s.result==Result::Saving?s.sequence:0;++revision;}
     void Close(){open=false;controllerMenu=false;++revision;}
+    void StartOver(){page=Page::Controls;notesPage=0;++revision;}
     bool DismissControllerMenu(){if(!controllerMenu)return false;controllerMenu=false;++revision;return true;}
     void Observe(const Snapshot& s){
         if(!open)return;

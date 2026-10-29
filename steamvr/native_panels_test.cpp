@@ -207,6 +207,12 @@ int main(){
     Check(panels::FocusUsesPointer(mode.Active(800),true),"laser hover keeps exact widget focus");
     Check(!panels::FocusUsesPointer(mode.Active(800),false),"native navigation restores cursor snapping despite queued mouse-release lease");
     Check(mode.Active(800),"switching focus does not cancel protection for queued pointer events");
+    panels::TypedKeys typed;
+    Check(!typed.Active(100),"no keyboard: the laser keeps the controller layout");
+    Check(!typed.Key(100,panels::InjectedKeyTag)&&!typed.Active(100),"the mod's own Escape, I, Ctrl and Shift never count as typing");
+    Check(typed.Key(100,0)&&typed.Active(100)&&typed.Active(399),"a real key lets the keyboard layout in");
+    Check(!typed.Active(400),"for a moment only: the laser's next clicks keep the controller layout again");
+    Check(typed.Key(500,0x1234)&&typed.Active(799),"another program's extra information is still a real key");
     panels::ItemTooltipHover hover;
     Check(!hover.Active(100),"desktop starts without immediate tooltip or automatic comparison ownership");
     hover.Update(100,true,true,false);
