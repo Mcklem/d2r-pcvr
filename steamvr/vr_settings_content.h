@@ -430,6 +430,8 @@ inline constexpr Override Overrides[]={
     {.id="gameplay.throw_lift_deg",.page=View::Combat,.section="Skills and throws",.kind=RowKind::Stepper,.label="Thrown weapon lift",
      .help="Your hand dips as you let go. This lifts javelins, knives, axes and thrown potions above that path. Minus lowers them; Off follows your hand.",
      .format={.unit=Degrees,.sign=true},FRAMEVR_NAMES(OffAtZero),.classes=Amazon|Barbarian|Assassin|WithThrown},
+    {.id="gameplay.companion_item_skills",.page=View::Combat,.section="Skills and throws",.kind=RowKind::Toggle,.label="Mercenary item skills",
+     .help="Allow your mercenary to benefit from matching class skills on gear and cast skills from equipped items and charges."},
 
     // Aim: Spells and skills (Aim with your view sits here: it is not a ground skill)
     {.id="gameplay.spell_lock",.page=View::Aim,.section="Spells and skills",.kind=RowKind::Choice,.label="Skills go to the aimed monster",

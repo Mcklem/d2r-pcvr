@@ -84,6 +84,46 @@ int FakeAttack(uintptr_t game, uintptr_t unit, int skillId, int arg4) {
     return 1;
 }
 
+int fakeOriginalSkillLevelCalls = 0;
+int fakeBaseSkillLevel = 10;
+int FakeOriginalSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, int unk) {
+    (void)unit; (void)skillNode; (void)bIncludeBonuses; (void)unk;
+    ++fakeOriginalSkillLevelCalls;
+    return fakeBaseSkillLevel;
+}
+
+struct TestMockItem {
+    uint32_t header[3] = { 4, 0, 100 }; // dwType = 4 (UNIT_ITEM)
+    std::vector<std::tuple<int, int, int>> stats; // stat, param, value
+    int GetStat(int stat, int param) const {
+        for (const auto& [s, p, v] : stats) {
+            if (s == stat && p == param) return v;
+        }
+        return 0;
+    }
+};
+
+std::unordered_map<int, TestMockItem> g_testEquippedSlots;
+
+uintptr_t FakeInventory(uintptr_t unit, const char*, int) {
+    return unit ? 0x90000 : 0;
+}
+
+uintptr_t FakeEquipped(uintptr_t inv, int bodyLoc) {
+    if (!inv) return 0;
+    auto it = g_testEquippedSlots.find(bodyLoc);
+    if (it != g_testEquippedSlots.end()) {
+        return reinterpret_cast<uintptr_t>(&it->second);
+    }
+    return 0;
+}
+
+int FakeGetStat(uintptr_t item, int stat, int param) {
+    if (!item) return 0;
+    const auto* itm = reinterpret_cast<const TestMockItem*>(item);
+    return itm->GetStat(stat, param);
+}
+
 void PopulateCanonicalMonStats(std::vector<uint8_t>& buf, size_t rows = 600) {
     using namespace framevr::companionai;
     buf.assign(rows * RowSize, 0);
@@ -158,7 +198,11 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::ServerMoveUnitRva ||
         rva == companionai::abi::ServerStartWalkRva ||
         rva == companionai::abi::ServerStartRunRva ||
-        rva == companionai::abi::AttackRva) {
+        rva == companionai::abi::AttackRva ||
+        rva == companionai::abi::SkillLevelRva ||
+        rva == companionai::abi::InventoryRva ||
+        rva == companionai::abi::EquippedRva ||
+        rva == companionai::abi::GetStatRva) {
         return signatures;
     }
     return false;
@@ -172,6 +216,10 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::ServerStartWalkRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartWalk);
     if (rva == companionai::abi::ServerStartRunRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartRun);
     if (rva == companionai::abi::AttackRva) return reinterpret_cast<uintptr_t>(&FakeAttack);
+    if (rva == companionai::abi::SkillLevelRva) return reinterpret_cast<uintptr_t>(&FakeOriginalSkillLevel);
+    if (rva == companionai::abi::InventoryRva) return reinterpret_cast<uintptr_t>(&FakeInventory);
+    if (rva == companionai::abi::EquippedRva) return reinterpret_cast<uintptr_t>(&FakeEquipped);
+    if (rva == companionai::abi::GetStatRva) return reinterpret_cast<uintptr_t>(&FakeGetStat);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
@@ -186,6 +234,10 @@ bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
     }
     if (rva == companionai::abi::ServerStartRunRva) {
         if (original) *original = reinterpret_cast<void*>(&FakeOriginalServerStartRun);
+        return true;
+    }
+    if (rva == companionai::abi::SkillLevelRva) {
+        if (original) *original = reinterpret_cast<void*>(&FakeOriginalSkillLevel);
         return true;
     }
     return false;
@@ -1549,6 +1601,141 @@ int main() {
 
             companionai::CancelTacticalOrder();
             companionai::g_pendingRegroupMove.store(false);
+        }
+
+        // ====================================================================
+        // PHASE 1: COMPANION ITEM SKILLS & VIRTUAL CLASS INTERCEPTION TESTS
+        // ====================================================================
+        {
+            using namespace framevr::companionai;
+
+            // 1. Hook installation verification
+            signatures = true;
+            companionai::g_skillLevelHooked.store(false);
+            companionai::originalSkillLevel = nullptr;
+            companionai::ConfigureItemSkills(true);
+            companionai::EnsureSkillLevelInstalled();
+            assert(companionai::g_skillLevelHooked.load());
+            assert(companionai::originalSkillLevel != nullptr);
+
+            // Unit setups
+            alignas(8) uint8_t mercUnit[0x80]{};
+            const uintptr_t mercUnitPtr = reinterpret_cast<uintptr_t>(mercUnit);
+
+            alignas(8) int16_t skillsRow[16]{};
+            skillsRow[0] = 7;
+            uintptr_t rowPtr = reinterpret_cast<uintptr_t>(skillsRow);
+            alignas(8) uint8_t skillNode[0x60]{};
+            std::memcpy(skillNode, &rowPtr, sizeof(rowPtr));
+            const uintptr_t skillNodePtr = reinterpret_cast<uintptr_t>(skillNode);
+
+            // 2. Rogue Scout (Act 1, class 271) using Fire Arrow (skill 7)
+            const uint32_t rogueHeader[4] = { 1, 271, 10001, 1 }; // dwType=1, classId=271
+            std::memcpy(mercUnit, rogueHeader, sizeof(rogueHeader));
+            skillsRow[0] = 7; // skillId = 7
+            fakeBaseSkillLevel = 10;
+
+            // Gear: Helm (1) with +2 Amazon (stat 83, param 0), Bow (4) with +3 Bow (stat 188, param 0), Armor (3) with +1 Fire Arrow (stat 107, param 7)
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 0, 2 } };
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 0, 3 } };
+            g_testEquippedSlots[3].stats = { { ItemStat::SingleSkill, 7, 1 } };
+
+            // With bonuses included: 10 + 2 (class) + 3 (tab) + 1 (single) = 16!
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 16);
+
+            // Without bonuses (bIncludeBonuses = 0): returns base level 10 untouched
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 0, 0) == 10);
+
+            // 3. Iron Wolf (Act 3, class 359) using Glacial Spike (skill 55)
+            const uint32_t wolfHeader[4] = { 1, 359, 10002, 1 };
+            std::memcpy(mercUnit, wolfHeader, sizeof(wolfHeader));
+            skillsRow[0] = 55; // skillId = 55
+            fakeBaseSkillLevel = 12;
+
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 1, 2 } }; // +2 Sorceress
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 5, 3 } };   // +3 Cold (tab 5)
+
+            // 12 + 2 + 3 = 17!
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 17);
+
+            // 4. Cross-class rejection: Iron Wolf equips Barbarian helm (+2 Barbarian skills)
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 4, 2 } }; // +2 Barbarian on Sorc
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 12); // No bonus!
+
+            // 5. Desert Guard (Act 2, class 338) with Might (98) and Jab (10)
+            const uint32_t desertHeader[4] = { 1, 338, 10003, 1 };
+            std::memcpy(mercUnit, desertHeader, sizeof(desertHeader));
+
+            // Might (98, Paladin tab 10)
+            skillsRow[0] = 98;
+            fakeBaseSkillLevel = 8;
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 3, 2 } }; // +2 Paladin
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 10, 3 } };  // +3 Offensive Auras
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 13); // 8 + 2 + 3 = 13
+
+            // Jab (10): Desert Guard special case with Amazon spear gear
+            skillsRow[0] = 10;
+            fakeBaseSkillLevel = 6;
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[4].stats = { { ItemStat::ClassSkills, 0, 2 }, { ItemStat::SingleSkill, 10, 3 } }; // +2 Amazon, +3 Jab
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 11); // 6 + 2 (Ama class) + 3 (single) = 11
+
+            // 6. Barbarian (Act 5, class 560) using Bash (126)
+            const uint32_t barbHeader[4] = { 1, 560, 10004, 1 };
+            std::memcpy(mercUnit, barbHeader, sizeof(barbHeader));
+            skillsRow[0] = 126; // Bash
+            fakeBaseSkillLevel = 15;
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 4, 2 } }; // +2 Barbarian
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 12, 3 } };  // +3 Combat
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 20); // 15 + 2 + 3 = 20
+
+            // 7. Unlearned skills (baseLevel == 0):
+            // Rogue with +2 Amazon helm, querying Strafe (skill 26, baseLevel = 0)
+            std::memcpy(mercUnit, rogueHeader, sizeof(rogueHeader));
+            skillsRow[0] = 26; // Strafe
+            fakeBaseSkillLevel = 0;
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 0, 2 } }; // +2 Amazon
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 0); // Must NOT unlock unlearned skill!
+
+            // But if gear has +1 Strafe directly (staffmod Stat 107), then it unlocks AND class bonus applies:
+            g_testEquippedSlots[4].stats = { { ItemStat::SingleSkill, 26, 1 } }; // +1 Strafe bow
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 3); // 0 + 1 (single) + 2 (class) = 3!
+
+            // 8. Feature toggle: disabling companion item skills bypasses bonuses completely
+            companionai::ConfigureItemSkills(false);
+            assert(!companionai::IsItemSkillsEnabled());
+            skillsRow[0] = 7; // Fire Arrow
+            fakeBaseSkillLevel = 10;
+            g_testEquippedSlots.clear();
+            g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 0, 5 } };
+            // Returns baseLevel 10 directly
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 10);
+
+            // Re-enabling restores bonuses
+            companionai::ConfigureItemSkills(true);
+            assert(companionai::IsItemSkillsEnabled());
+            assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 15);
+
+            // Developer charges parameter
+            companionai::ConfigureConsumeItemCharges(false);
+            assert(!companionai::IsConsumeItemChargesEnabled());
+            companionai::ConfigureConsumeItemCharges(true);
+            assert(companionai::IsConsumeItemChargesEnabled());
+            companionai::ConfigureConsumeItemCharges(false);
+
+            // Non-hireling units (e.g. player dwType == 0) untouched
+            const uint32_t playerUnitHeader[4] = { 0, 0, 1, 0 };
+            alignas(8) uint8_t playerUnit[0x80]{};
+            std::memcpy(playerUnit, playerUnitHeader, sizeof(playerUnitHeader));
+            assert(companionai::DetourSkillLevel(reinterpret_cast<uintptr_t>(playerUnit), skillNodePtr, 1, 0) == 10);
+
+            g_testEquippedSlots.clear();
         }
     }
 

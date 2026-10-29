@@ -1051,6 +1051,9 @@ void LoadSettings() {
     companionai::ConfigurePeel(IniF(L"gameplay",L"companion_peel",1.0f)!=0.0f);
     companionai::ConfigureTacticalCommands(int(framevr::settings::Normalize(framevr::settings::CompanionTactical,
         IniF(L"gameplay",L"companion_tactical_commands",1.0f)))!=0&&g_set.platform.load()==1);
+    companionai::ConfigureItemSkills(int(framevr::settings::Normalize(framevr::settings::CompanionItemSkills,
+        IniF(L"gameplay",L"companion_item_skills",1.0f)))!=0&&g_set.platform.load()==1);
+    companionai::ConfigureConsumeItemCharges(IniF(L"dev",L"companion_consume_item_charges",0.0f)!=0.0f);
 #endif
 #if D2RVR_FIRST_PERSON
     g_set.flatView.store(std::clamp((int)IniF(L"mode", L"flat_view", 3.0f), 1, 3));

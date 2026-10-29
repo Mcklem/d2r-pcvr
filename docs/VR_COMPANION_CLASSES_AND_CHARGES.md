@@ -424,3 +424,4 @@ stateDiagram-v2
 2. **Thread Safety:** Inventory queries and skill dispatches execute strictly on the game thread (`runOnGameThread`), eliminating race conditions.
 3. **Visual & Skeletal Stability:** Skills conflicting with native hireling animation tokens are rejected, guaranteeing zero skeletal glitches.
 4. **Clean Baseline Fallback:** Setting `companion_item_skills = 0` immediately bypasses all level adjustments and charge evaluations, returning companion behavior 100% to Blizzard's vanilla AI.
+

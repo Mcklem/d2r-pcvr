@@ -7,6 +7,7 @@
 #include <vector>
 #include "companion_ai.h"
 #include "../steamvr/companion_ai.h"
+#include "../steamvr/companion_skills.h"
 #include "../steamvr/telegraph.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/logging.h"
@@ -26,6 +27,10 @@ using RoomPointFn = uintptr_t(*)(uintptr_t room, int x, int y);
 using ServerMoveToCoordFn = int(*)(uintptr_t game, uintptr_t unit, int x, int y);
 using ServerMoveUnitFn = int(*)(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, int moveMode, int x, int y, uint8_t pathType, uint16_t flags);
 using ServerStartMoveModeFn = int(*)(uintptr_t game, uintptr_t moveStruct);
+using SkillLevelFn = int(*)(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, int unk);
+using InventoryFn = uintptr_t(*)(uintptr_t unit, const char* file, int line);
+using EquippedFn = uintptr_t(*)(uintptr_t inventory, int bodyLocation);
+using GetStatFn = int(*)(uintptr_t unit, int stat, int param);
 
 struct BankState {
     const void* rows = nullptr;
@@ -47,6 +52,10 @@ ServerStartMoveModeFn originalServerStartRun = nullptr;
 std::atomic<bool> g_serverMoveHooked{false};
 std::atomic<bool> g_serverStartWalkHooked{false};
 std::atomic<bool> g_serverStartRunHooked{false};
+SkillLevelFn originalSkillLevel = nullptr;
+std::atomic<bool> g_skillLevelHooked{false};
+std::atomic<bool> g_companionItemSkillsEnabled{true};
+std::atomic<bool> g_companionConsumeItemCharges{false};
 std::atomic<bool> g_nativeMoveBlockedWhileMoving{false};
 std::atomic<bool> g_pendingRegroupMove{false};
 thread_local bool g_inCommandedMove = false;
@@ -686,6 +695,95 @@ int DetourServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, i
     return originalServerMoveUnit(game, unit, targetUnit, moveMode, x, y, pathType, flags);
 }
 
+int DetourSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, int unk) {
+    if (!originalSkillLevel) return 0;
+    const int baseLevel = originalSkillLevel(unit, skillNode, bIncludeBonuses, unk);
+
+    if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) {
+        return baseLevel;
+    }
+    if (!bIncludeBonuses || !unit || !skillNode) {
+        return baseLevel;
+    }
+    if (mode && mode() != 0) {
+        return baseLevel;
+    }
+
+    uint32_t header[3]{};
+    if (!Read(unit, header) || header[0] != 1) { // dwType == 1 (UNIT_MONSTER)
+        return baseLevel;
+    }
+
+    const uint16_t classId = static_cast<uint16_t>(header[1]);
+    const auto vclass = framevr::companionai::GetVirtualPlayerClass(classId);
+    if (vclass == framevr::companionai::VirtualPlayerClass::None) {
+        return baseLevel;
+    }
+
+    uintptr_t row = 0;
+    int16_t skillId = 0;
+    if (!Read(skillNode, row) || !Read(row, skillId) || skillId <= 0) {
+        return baseLevel;
+    }
+
+    const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
+    const auto eqFn = reinterpret_cast<EquippedFn>(d2rsig::Addr(abi::EquippedRva));
+    const auto statFn = reinterpret_cast<GetStatFn>(d2rsig::Addr(abi::GetStatRva));
+    if (!invFn || !eqFn || !statFn) {
+        return baseLevel;
+    }
+
+    const uintptr_t inv = invFn(unit, nullptr, 0);
+    if (!inv) {
+        return baseLevel;
+    }
+
+    std::array<uintptr_t, 4> items{};
+    size_t count = 0;
+    for (int loc : {1, 3, 4, 5}) {
+        uintptr_t item = eqFn(inv, loc);
+        uint32_t ih[3]{};
+        if (item && Read(item, ih) && ih[0] == 4) { // dwType == 4 (UNIT_ITEM)
+            items[count++] = item;
+        }
+    }
+
+    if (count == 0) {
+        return baseLevel;
+    }
+
+    const int bonus = framevr::companionai::ComputeCompanionEquipmentSkillBonus(
+        baseLevel,
+        vclass,
+        skillId,
+        std::span<const uintptr_t>(items.data(), count),
+        [&](uintptr_t itm, int st, int pr) {
+            return statFn(itm, st, pr);
+        });
+
+    return baseLevel + bonus;
+}
+
+void EnsureSkillLevelInstalled() noexcept {
+    if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) return;
+    if (g_skillLevelHooked.load(std::memory_order_relaxed)) return;
+
+    if (d2rsig::Check(abi::SkillLevelRva, abi::SkillLevelSig, sizeof(abi::SkillLevelSig)) &&
+        d2rsig::Check(abi::InventoryRva, abi::InventorySig, sizeof(abi::InventorySig)) &&
+        d2rsig::Check(abi::EquippedRva, abi::EquippedSig, sizeof(abi::EquippedSig)) &&
+        d2rsig::Check(abi::GetStatRva, abi::GetStatSig, sizeof(abi::GetStatSig))) {
+        if (d2rsig::Hook(
+                abi::SkillLevelRva,
+                abi::SkillLevelSig,
+                sizeof(abi::SkillLevelSig),
+                reinterpret_cast<void*>(&DetourSkillLevel),
+                reinterpret_cast<void**>(&originalSkillLevel))) {
+            g_skillLevelHooked.store(true, std::memory_order_relaxed);
+            framevr::logging::Write("Frame companion AI: verified and hooked native skill level (0x33d1e0) for companion class bonuses");
+        }
+    }
+}
+
 void EnsureServerMoveInstalled() noexcept {
     if (!serverMoveToCoordFn && d2rsig::Check(abi::ServerMoveToCoordRva, abi::ServerMoveToCoordSig, sizeof(abi::ServerMoveToCoordSig))) {
         serverMoveToCoordFn = reinterpret_cast<ServerMoveToCoordFn>(d2rsig::Addr(abi::ServerMoveToCoordRva));
@@ -735,6 +833,7 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
     }
 
     EnsureServerMoveInstalled();
+    EnsureSkillLevelInstalled();
     uintptr_t game = 0, player = 0;
     if (!melee::LocalServer(game, player)) {
         InvalidateTacticalContextOnMissingUnit(0);
@@ -1434,6 +1533,7 @@ void Install() {
         roomPointFn = reinterpret_cast<RoomPointFn>(d2rsig::Addr(abi::RoomPointRva));
     }
     EnsureServerMoveInstalled();
+    EnsureSkillLevelInstalled();
 
     if (mode && relocateFn && roomPointFn) {
         g_installed.store(true);
@@ -1881,6 +1981,22 @@ void OnPotionReceived() {
 
 bool IsInTacticalRetreat() {
     return g_inRetreatState.load(std::memory_order_relaxed);
+}
+
+void ConfigureItemSkills(bool enabled) {
+    g_companionItemSkillsEnabled.store(enabled);
+}
+
+bool IsItemSkillsEnabled() {
+    return g_companionItemSkillsEnabled.load();
+}
+
+void ConfigureConsumeItemCharges(bool enabled) {
+    g_companionConsumeItemCharges.store(enabled);
+}
+
+bool IsConsumeItemChargesEnabled() {
+    return g_companionConsumeItemCharges.load();
 }
 
 } // namespace companionai

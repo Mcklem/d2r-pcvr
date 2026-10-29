@@ -204,23 +204,42 @@ La invocación del conjuro se realiza en el hilo del juego (`runOnGameThread`) u
 
 Ambas funciones admiten a la unidad mercenaria como ejecutor válido, desencadenando los efectos visuales, los sonidos nativos y la creación de los misiles o áreas de efecto en el servidor local.
 
-### 4.5. Política de Consumo de Cargas (Gasto vs. No Gasto)
+### 4.5. Configuración de Usuario y Parámetros de Desarrollo
 
-Para brindar total flexibilidad durante el desarrollo, pruebas y personalización del juego, se introduce una directiva en `d2r_pcvr.ini`:
+La configuración se organiza en dos niveles limpios:
+
+#### 1. Conmutador Maestro en VR Settings (Gobernanza Global de la Característica):
+Permite a los jugadores desactivar toda la característica si prefieren el comportamiento clásico del mercenario:
+* **Sección INI:** `[gameplay]` en `d2r_pcvr.ini`
+* **Clave:** `companion_item_skills = 1` (por defecto `1` = Activado, `0` = Desactivado).
+* **Fila en VR Settings:** En el menú **Combate** (sección *"Habilidades y lanzamientos"*):
+  * **Etiqueta:** *"Mercenary item skills"*
+  * **Texto de Ayuda:** *"Permite al mercenario beneficiarse de habilidades de clase coincidentes en su equipo y lanzar habilidades tácticas con cargas. Desactivado: el mercenario opera solo con sus habilidades base."*
+  * **Comportamiento Desactivado (`0`):**
+    * La IA omite el escaneo y lanzamiento de habilidades con cargas.
+    * El hook de `SkillLevelRva` no añade bonificaciones de equipo.
+    * El mercenario se comporta de forma 100% idéntica a la versión original de Blizzard.
+
+#### 2. Parámetro Interno de Desarrollo (`[dev]`, Oculto de la UI de VR Settings):
+Controla si el lanzamiento descuenta cargas del objeto. **Nunca se muestra en la interfaz de VR Settings**:
+* **Sección INI:** `[dev]` en `d2r_pcvr.ini`
+* **Clave:** `companion_consume_item_charges = 0`
+* **Valor por Defecto:** **Siempre `0`** (Modo Sin Desgaste: el mercenario lanza el hechizo sin descontar cargas del ítem).
+* **Modo Consumo Realista (`1`):** Cuando el desarrollador lo activa manualmente a `1`, cada lanzamiento exitoso descuenta 1 carga en `Stat 204`. Al llegar a 0, la habilidad se desactiva hasta repararse en herrero o con fórmulas del Cubo Horádrico.
 
 ```ini
+; d2r_pcvr.ini
+
 [gameplay]
-; 0 = Modo Sin Desgaste: el mercenario lanza el hechizo pero no descuenta cargas del ítem (ideal para pruebas y juego relajado)
-; 1 = Modo Consumo Realista: descuenta 1 carga en cada lanzamiento. Al llegar a 0, requiere reparación en herrero.
+; Conmutador maestro visible en VR Settings (1 = Activado por defecto, 0 = Desactivado por completo)
+companion_item_skills = 1
+
+[dev]
+; Parámetro interno de desarrollo (oculto en VR Settings UI)
+; 0 = Modo Sin Desgaste (por defecto)
+; 1 = Modo Consumo Realista (descuenta cargas en Stat 204)
 companion_consume_item_charges = 0
 ```
-
-#### Manejo del Consumo Realista (`companion_consume_item_charges = 1`):
-1. Tras la confirmación de lanzamiento exitoso en `DispatchRva`, se localiza el nodo del `Stat 204` en el ítem correspondiente.
-2. Se extrae el valor actual de `CurrentCharges` y se decrementa en 1.
-3. Se actualiza el `Stat 204` utilizando el despachador de stats nativo.
-4. Si las cargas alcanzan `0`, la habilidad pasa a estado inactivo.
-5. El jugador puede retirar el ítem del mercenario y repararlo en cualquier herrero de la ciudad (Charsi, Fara, Hratli, Halbu, Larzuk) o mediante fórmulas del Cubo Horádrico (Runa Ort para armas, Runa Ral para armaduras), restaurando las cargas al 100%.
 
 ---
 

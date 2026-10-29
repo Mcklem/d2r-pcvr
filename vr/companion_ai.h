@@ -31,4 +31,8 @@ bool GetPlayerWorldSubtilePos(float& outX, float& outY);
 void OnPotionReceived();
 bool IsInTacticalRetreat();
 unsigned PeelCount();
+void ConfigureItemSkills(bool enabled);
+bool IsItemSkillsEnabled();
+void ConfigureConsumeItemCharges(bool enabled);
+bool IsConsumeItemChargesEnabled();
 } // namespace companionai
