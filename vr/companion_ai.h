@@ -27,7 +27,8 @@ uintptr_t GetTacticalCombatTarget(uintptr_t game, uintptr_t unit);
 bool TryOverrideCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t& outTarget);
 uintptr_t FilterNativeCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t candidateTarget);
 bool GetHirelingWorldSubtilePos(float& outX, float& outY);
+bool GetPlayerWorldSubtilePos(float& outX, float& outY);
 void OnPotionReceived();
 bool IsInTacticalRetreat();
 unsigned PeelCount();
-}
+} // namespace companionai

@@ -9451,9 +9451,9 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
                 char n[16];
                 snprintf(n, sizeof n, "RingPos%d", k); SetFloats(rt, n, ring, 4);
                 snprintf(n, sizeof n, "RingFill%d", k); SetFloat(rt, n, draw.fill);
-                // rgb its element's color (fire orange, cold blue, lightning yellow, other green), w its radius
-                static const float kElement[4][3] = {{1.0f, 0.45f, 0.05f}, {0.3f, 0.7f, 1.0f}, {1.0f, 0.92f, 0.35f}, {0.4f, 1.0f, 0.3f}};
-                const int el = mark.element >= 0 && mark.element < 4 ? mark.element : 0;
+                // rgb its element's color (fire orange, cold blue, lightning yellow, other green, warning red), w its radius
+                static const float kElement[5][3] = {{1.0f, 0.45f, 0.05f}, {0.3f, 0.7f, 1.0f}, {1.0f, 0.92f, 0.35f}, {0.25f, 1.0f, 0.4f}, {1.0f, 0.05f, 0.05f}};
+                const int el = mark.element >= 0 && mark.element < 5 ? mark.element : 0;
                 const float col[4] = {kElement[el][0], kElement[el][1], kElement[el][2], mark.radius * 2.0f};
                 snprintf(n, sizeof n, "RingCol%d", k); SetFloats(rt, n, col, 4);
                 // a strip: its direction (grid x/y are world x/z) and half-length in world units; 0 = a circle

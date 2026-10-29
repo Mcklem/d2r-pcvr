@@ -77,6 +77,13 @@ int FakeOriginalServerStartRun(uintptr_t game, uintptr_t moveStruct) {
     return 1;
 }
 
+int testAttackCalls = 0;
+int FakeAttack(uintptr_t game, uintptr_t unit, int skillId, int arg4) {
+    (void)game; (void)unit; (void)skillId; (void)arg4;
+    ++testAttackCalls;
+    return 1;
+}
+
 void PopulateCanonicalMonStats(std::vector<uint8_t>& buf, size_t rows = 600) {
     using namespace framevr::companionai;
     buf.assign(rows * RowSize, 0);
@@ -150,7 +157,8 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::ServerMoveToCoordRva ||
         rva == companionai::abi::ServerMoveUnitRva ||
         rva == companionai::abi::ServerStartWalkRva ||
-        rva == companionai::abi::ServerStartRunRva) {
+        rva == companionai::abi::ServerStartRunRva ||
+        rva == companionai::abi::AttackRva) {
         return signatures;
     }
     return false;
@@ -163,6 +171,7 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::ServerMoveUnitRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerMoveUnit);
     if (rva == companionai::abi::ServerStartWalkRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartWalk);
     if (rva == companionai::abi::ServerStartRunRva) return reinterpret_cast<uintptr_t>(&FakeOriginalServerStartRun);
+    if (rva == companionai::abi::AttackRva) return reinterpret_cast<uintptr_t>(&FakeAttack);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
@@ -196,6 +205,7 @@ int AppliedPercent() {
 } // namespace enemysight
 
 namespace melee {
+uintptr_t g_testServerUnit = 0;
 bool LocalServer(uintptr_t& game, uintptr_t& player) {
     game = 0x20000;
     player = 0x30000;
@@ -203,7 +213,7 @@ bool LocalServer(uintptr_t& game, uintptr_t& player) {
 }
 uintptr_t ServerUnit(uintptr_t game, int type, uint32_t id) {
     (void)game; (void)type; (void)id;
-    return 0x40000;
+    return g_testServerUnit ? g_testServerUnit : 0x40000;
 }
 bool HirelingVitals(uint32_t hint, float& health, float& maxHealth, uint32_t& classId, uint32_t& unitId) {
     (void)hint;
@@ -212,6 +222,10 @@ bool HirelingVitals(uint32_t hint, float& health, float& maxHealth, uint32_t& cl
     classId = 271;
     unitId = 12345;
     return true;
+}
+int HostilesAround(Hostile* out, int max, float range, float centerX, float centerY, uintptr_t viewerUnit) {
+    (void)out; (void)max; (void)range; (void)centerX; (void)centerY; (void)viewerUnit;
+    return 0;
 }
 int Hostiles(Hostile* out, int max, float range, float& heroX, float& heroY) {
     (void)out; (void)max; (void)range;
@@ -832,8 +846,15 @@ int main() {
         assert(rogueImp == 2937 + 16 || rogueImp == 2937 + 17);
         const int rogueHold = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::HoldConfirm);
         assert(rogueHold == 2937 + 6 || rogueHold == 2937 + 7);
-        const int rogueReg = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::RegroupLeash);
-        assert(rogueReg == 2937 + 2 || rogueReg == 2937 + 3);
+        // RegroupLeash: 90% follow (base + 2/3), 10% farewell / "hasta luego" (base + 10/11)
+        bool sawFollow = false;
+        bool sawFarewell = false;
+        for (int i = 0; i < 20; ++i) {
+            const int reg = GetArchetypeVoiceCue(MonStatsIndex::Rogue, TacticalVoiceCue::RegroupLeash);
+            if (reg == 2937 + 2 || reg == 2937 + 3) sawFollow = true;
+            if (reg == 2937 + 10 || reg == 2937 + 11) sawFarewell = true;
+        }
+        assert(sawFollow && sawFarewell);
 
         // Desert Guard (Paladin base: 3171, Dedicated move confirm: 3952 "Sí / Vale")
         const int palDist = GetArchetypeVoiceCue(MonStatsIndex::Desert, TacticalVoiceCue::Distress);
@@ -1087,20 +1108,28 @@ int main() {
         assert(!controller.Evaluate({ 100.0f, 85.0f }, playerPos, 2250, false, outTarget, cue));
 
         // 5. Arrival within ArrivalTolerance (<= 2.0 sub-tiles) -> transitions Moving -> Arrived
-        assert(!controller.Evaluate({ 100.0f, 81.5f }, playerPos, 2500, false, outTarget, cue));
+        assert(!controller.Evaluate({ 100.0f, 81.5f }, playerPos, 2500, false, outTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
         assert(controller.GetState() == TacticalCommandState::Arrived);
         assert(controller.IsActive());
 
-        // 6. Hysteresis deadband (HoldReleaseDeadband = 3.5f):
+        // 6. Hysteresis deadband (HoldReleaseDeadband = 3.5f for Ranged/Caster):
         //    Minor pushback to dist 3.0 (> 2.0, <= 3.5) MUST stay Arrived without oscillating to Moving!
-        assert(!controller.Evaluate({ 100.0f, 83.0f }, playerPos, 2750, false, outTarget, cue));
+        assert(!controller.Evaluate({ 100.0f, 83.0f }, playerPos, 2750, false, outTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
         assert(controller.GetState() == TacticalCommandState::Arrived);
 
         //    Large knockback beyond HoldReleaseDeadband (dist 5.0 > 3.5) transitions Arrived -> Moving once
-        assert(controller.Evaluate({ 100.0f, 85.0f }, playerPos, 3000, false, outTarget, cue));
+        assert(controller.Evaluate({ 100.0f, 85.0f }, playerPos, 3000, false, outTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
         assert(controller.GetState() == TacticalCommandState::Moving);
-        assert(!controller.Evaluate({ 100.0f, 81.0f }, playerPos, 3250, false, outTarget, cue));
+        assert(!controller.Evaluate({ 100.0f, 81.0f }, playerPos, 3250, false, outTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
         assert(controller.GetState() == TacticalCommandState::Arrived);
+
+        //    MeleeVanguard extended deadband (MeleeHoldEngageRadius + 1.5f = 7.5f):
+        //    Dist 5.0 <= 7.5 remains Arrived so melee can strike hostiles within engage radius
+        assert(!controller.Evaluate({ 100.0f, 85.0f }, playerPos, 3500, false, outTarget, cue, 100.0f, 100.0f, Archetype::MeleeVanguard));
+        assert(controller.GetState() == TacticalCommandState::Arrived);
+        //    Knockback beyond 7.5 (dist 8.0) transitions Arrived -> Moving
+        assert(controller.Evaluate({ 100.0f, 88.0f }, playerPos, 3750, false, outTarget, cue, 100.0f, 100.0f, Archetype::MeleeVanguard));
+        assert(controller.GetState() == TacticalCommandState::Moving);
     }
 
     // =========================================================================
@@ -1319,7 +1348,19 @@ int main() {
         assert(!companionai::g_tacticalOrderController.Evaluate({ 100.0f, 80.0f }, { 100.0f, 100.0f }, 4000, false, evalTarget, cue, 100.0f, 100.0f, Archetype::MeleeVanguard));
         assert(!companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, overriddenTarget));
 
+        // Test hold sentry target acquisition: when g_activeHoldTargetId is populated,
+        // TryOverrideCombatTarget overrides with that enemy!
         alignas(8) uint8_t enemyUnit[0x80]{};
+        const uint32_t liveEnemyHeader[4] = { 1, 1, 888, 1 };
+        std::memcpy(enemyUnit, liveEnemyHeader, sizeof(liveEnemyHeader));
+        melee::g_testServerUnit = reinterpret_cast<uintptr_t>(enemyUnit);
+        companionai::g_activeHoldTargetId.store(888);
+        assert(companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, overriddenTarget));
+        assert(overriddenTarget == reinterpret_cast<uintptr_t>(enemyUnit));
+        companionai::g_activeHoldTargetId.store(0);
+        melee::g_testServerUnit = 0;
+        assert(!companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, overriddenTarget));
+
         alignas(8) uint16_t enemyPath[32]{};
         const uintptr_t enemyPathPtr = reinterpret_cast<uintptr_t>(enemyPath);
         std::memcpy(enemyUnit + 0x38, &enemyPathPtr, sizeof(enemyPathPtr));
@@ -1329,6 +1370,23 @@ int main() {
         enemyPath[1] = 100;
         enemyPath[3] = 92; // 12 sub-tiles from anchor (> 6.0 MeleeHoldEngageRadius) -> rejected!
         assert(companionai::FilterNativeCombatTarget(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit)) == 0);
+
+        // 6b. Self-defense exception tests:
+        //     - In FilterNativeCombatTarget: enemy at (100, 92) is 12 sub-tiles from anchor (100, 80) (> 6.0 MeleeHoldEngageRadius).
+        //       If mercenary is at (100, 90), enemy is only 2 sub-tiles away (<= 3.5 self-defense radius) -> target allowed!
+        mercPath[1] = 100;
+        mercPath[3] = 90;
+        assert(companionai::FilterNativeCombatTarget(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit)) == reinterpret_cast<uintptr_t>(enemyUnit));
+
+        //     - In TryOverrideCombatTarget: when Moving (distToAnchor > ArrivalTolerance), combat target is normally suppressed (outTarget = 0).
+        //       If mercenary takes damage (animMode == 3 MONMODE_GETHIT), TryOverrideCombatTarget does NOT suppress (returns false), allowing self-defense!
+        mercPath[3] = 95; // dist 15 to anchor
+        uint32_t getHitMode = 3;
+        std::memcpy(mercUnit + 0xc, &getHitMode, sizeof(getHitMode));
+        uintptr_t hitTarget = 0x99999;
+        assert(!companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, hitTarget));
+        uint32_t walkMode = 1;
+        std::memcpy(mercUnit + 0xc, &walkMode, sizeof(walkMode));
 
         // 7. Archetype-aware PrioritizeEnemy for RangedOverwatch (Act 1 Rogue classId = 271):
         //    Engages from stand-off distance (10..14 sub-tiles) without closing into < 4 sub-tile panic-flee range
@@ -1345,6 +1403,32 @@ int main() {
         assert(std::fabs(evalTarget.x - 100.0f) < 1e-3f);
         assert(std::fabs(evalTarget.y - 90.0f) < 1e-3f);
 
+        // Rogue arrives at (100, 90) -> Arrived
+        assert(!companionai::g_tacticalOrderController.Evaluate({ 100.0f, 90.0f }, { 100.0f, 100.0f }, 6200, false, evalTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+
+        // While in optimal firing window, native AI walk/run towards the prioritized monster is suppressed
+        const uint32_t rogueHeader[4] = { 1, 271, 12345, 1 };
+        std::memcpy(mercUnit, rogueHeader, sizeof(rogueHeader));
+        mercPath[1] = 100;
+        mercPath[3] = 90;
+        const int preWalkCalls = origServerMoveUnitCalls;
+        assert(companionai::DetourServerMoveUnit(0x20000, reinterpret_cast<uintptr_t>(mercUnit), reinterpret_cast<uintptr_t>(enemyUnit), 2, 100, 80, 1, 0) == 1);
+        assert(origServerMoveUnitCalls == preWalkCalls); // Suppressed: archer does NOT close into melee contact!
+
+        // Kiting: Enemy moves into melee (dist < RangedMinStandOff = 5.0f, e.g. Rogue at (100, 83) is 3 sub-tiles from enemy at (100, 80))
+        // Evaluate must transition back to Moving and compute kite destination keeping 10 sub-tiles stand-off!
+        assert(companionai::g_tacticalOrderController.Evaluate({ 100.0f, 83.0f }, { 100.0f, 100.0f }, 6500, false, evalTarget, cue, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Moving);
+        assert(std::fabs(evalTarget.x - 100.0f) < 1e-3f);
+        assert(std::fabs(evalTarget.y - 90.0f) < 1e-3f);
+
+        // If issued when Rogue is already too close to a new target (e.g. at (100, 82), dist 2.0 < 5.0), must NOT mark Arrived!
+        TacticalOrder closeEnemyAtk = rangedAtk;
+        closeEnemyAtk.targetUnitId = 778;
+        assert(companionai::g_tacticalOrderController.IssueOrder(closeEnemyAtk, 6600, { 100.0f, 82.0f }, { 100.0f, 100.0f }, cue, false, 100.0f, 100.0f, Archetype::RangedOverwatch));
+        assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Requested);
+
         // 8. Near-obstacle arrival snap (<= 4.5 sub-tiles when A* stops at obstacle edge)
         TacticalOrder wallOrder{};
         wallOrder.type = TacticalOrderType::MoveAndHold;
@@ -1358,6 +1442,114 @@ int main() {
         companionai::CancelTacticalOrder();
         assert(companionai::g_pendingRegroupMove.load());
         companionai::g_pendingRegroupMove.store(false);
+
+        // 9. World Subtile Position Getters for VR raycasting and leash threshold
+        float hx = 0.0f, hy = 0.0f;
+        companionai::g_lastHirelingPosX.store(150.5f);
+        companionai::g_lastHirelingPosY.store(250.25f);
+        assert(companionai::GetHirelingWorldSubtilePos(hx, hy));
+        assert(std::fabs(hx - 150.5f) < 1e-3f && std::fabs(hy - 250.25f) < 1e-3f);
+
+        float px = 0.0f, py = 0.0f;
+        companionai::g_lastPlayerPosX.store(140.0f);
+        companionai::g_lastPlayerPosY.store(240.0f);
+        assert(companionai::GetPlayerWorldSubtilePos(px, py));
+        assert(std::fabs(px - 140.0f) < 1e-3f && std::fabs(py - 240.0f) < 1e-3f);
+
+        // 10. Regression Coverage: MoveAndHold & DefensiveHold combat deadlock prevention
+        //     Verifies enemy in/out of range before and after arrival, attack execution while holding,
+        //     and resuming hold afterward for both RangedOverwatch and MeleeVanguard.
+        {
+            // Reset state
+            companionai::CancelTacticalOrder();
+            companionai::g_pendingRegroupMove.store(false);
+
+            // A) RangedOverwatch (Act 1 Rogue, class 271) under MoveAndHold
+            const uint32_t rogueHdr[4] = { 1, 271, 12345, 1 };
+            std::memcpy(mercUnit, rogueHdr, sizeof(rogueHdr));
+            mercPath[1] = 100;
+            mercPath[3] = 100;
+
+            TacticalOrder holdOrder{};
+            holdOrder.type = TacticalOrderType::MoveAndHold;
+            holdOrder.targetPos = { 100.0f, 80.0f };
+
+            // Issue order: Requested -> Moving
+            assert(companionai::g_tacticalOrderController.IssueOrder(holdOrder, 8000, { 100.0f, 100.0f }, { 100.0f, 100.0f }, cue));
+            assert(companionai::g_tacticalOrderController.Evaluate({ 100.0f, 100.0f }, { 100.0f, 100.0f }, 8000, false, evalTarget, cue));
+            assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Moving);
+
+            // Before arrival (dist = 20.0 > ArrivalTolerance):
+            // Enemy in range (anchor distance 15.0 <= 24.0)
+            enemyPath[1] = 100;
+            enemyPath[3] = 65;
+            uintptr_t targetBefore = 0x99999;
+            assert(companionai::TryOverrideCombatTarget(0x20000, mercUnitPtr, targetBefore));
+            assert(targetBefore == 0); // Suppressed during transit so companion walks to destination uninterrupted
+
+            // Mercenary walks to anchor: arrives at (100.0, 80.5), dist = 0.5 <= ArrivalTolerance
+            mercPath[1] = 100;
+            mercPath[3] = 80;
+            assert(!companionai::g_tacticalOrderController.Evaluate({ 100.0f, 80.5f }, { 100.0f, 100.0f }, 8500, false, evalTarget, cue));
+            assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+
+            // After arrival:
+            // 1) Enemy in range: enemy at (100, 65), anchor distance = 15.0 <= 24.0 (RangedHoldEngageRadius)
+            int preCombatCalls = origServerMoveUnitCalls;
+            assert(companionai::DetourServerMoveUnit(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit), 4 /* MONMODE_ATTACK1 */, 100, 65, 1, 0) == 1);
+            assert(origServerMoveUnitCalls == preCombatCalls + 1); // Allowed! Bow attack dispatched!
+
+            // 2) Enemy out of range: enemy at (100, 50), anchor distance = 30.0 > 24.0 (RangedHoldEngageRadius)
+            enemyPath[3] = 50;
+            preCombatCalls = origServerMoveUnitCalls;
+            assert(companionai::DetourServerMoveUnit(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit), 4 /* MONMODE_ATTACK1 */, 100, 50, 1, 0) == 1);
+            assert(origServerMoveUnitCalls == preCombatCalls); // Suppressed! Distant enemy outside engagement radius rejected!
+
+            // 3) Companion remains in Arrived state after attack
+            assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+            assert(companionai::g_tacticalOrderController.IsActive());
+
+            // B) MeleeVanguard (Act 2 Desert Mercenary, class 338) under DefensiveHold
+            companionai::CancelTacticalOrder();
+            companionai::g_pendingRegroupMove.store(false);
+
+            const uint32_t meleeHdr[4] = { 1, 338, 12345, 1 };
+            std::memcpy(mercUnit, meleeHdr, sizeof(meleeHdr));
+            mercPath[1] = 100;
+            mercPath[3] = 100;
+
+            TacticalOrder defHold{};
+            defHold.type = TacticalOrderType::DefensiveHold;
+            defHold.targetPos = { 100.0f, 100.0f };
+
+            assert(companionai::g_tacticalOrderController.IssueOrder(defHold, 9000, { 100.0f, 100.0f }, { 100.0f, 100.0f }, cue));
+            assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+
+            // 1) Enemy in melee engagement range: enemy at (100, 104), distance = 4.0 <= 6.0 (MeleeHoldEngageRadius)
+            enemyPath[1] = 100;
+            enemyPath[3] = 104;
+            preCombatCalls = origServerMoveUnitCalls;
+            assert(companionai::DetourServerMoveUnit(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit), 4 /* MONMODE_ATTACK1 */, 100, 104, 1, 0) == 1);
+            assert(origServerMoveUnitCalls == preCombatCalls + 1); // Allowed melee attack!
+
+            // Stepping toward hostile in range is also allowed for MeleeVanguard
+            preCombatCalls = origServerMoveUnitCalls;
+            assert(companionai::DetourServerMoveUnit(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit), 15 /* step walk */, 100, 104, 1, 0) == 1);
+            assert(origServerMoveUnitCalls == preCombatCalls + 1); // Allowed step toward enemy!
+
+            // 2) Enemy outside melee engagement range: enemy at (100, 110), distance = 10.0 > 6.0
+            enemyPath[3] = 110;
+            preCombatCalls = origServerMoveUnitCalls;
+            assert(companionai::DetourServerMoveUnit(0x20000, mercUnitPtr, reinterpret_cast<uintptr_t>(enemyUnit), 4 /* MONMODE_ATTACK1 */, 100, 110, 1, 0) == 1);
+            assert(origServerMoveUnitCalls == preCombatCalls); // Suppressed! Outside melee radius!
+
+            // 3) Companion resumes holding at anchor afterward
+            assert(companionai::g_tacticalOrderController.GetState() == TacticalCommandState::Arrived);
+            assert(companionai::g_tacticalOrderController.IsActive());
+
+            companionai::CancelTacticalOrder();
+            companionai::g_pendingRegroupMove.store(false);
+        }
     }
 
     return 0;

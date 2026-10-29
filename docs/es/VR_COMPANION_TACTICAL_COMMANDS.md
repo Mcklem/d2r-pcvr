@@ -65,8 +65,11 @@ El análisis en vivo sobre `D2R.exe 3.3.93847` reveló que la rutina nativa `AIT
    - `TryOverrideCombatTarget` (`0x48fe20`) devuelve `outTarget = 0` (`true`), impidiendo que el mercenario se distraiga con monstruos intermedios antes de llegar a la posición ordenada.
    - `DetourServerStartWalk` (`0x445cc0`) y `DetourServerStartRun` (`0x445db0`) rechazan (`return 0`) cualquier intento de la IA nativa de caminar hacia otro punto y fuerzan el re-despacho inmediato en el siguiente fotograma si la marcha fue interrumpida.
 2. **Al llegar (`Arrived`) en `MoveAndHold` o `DefensiveHold`:**
-   - `DetourServerMoveUnit` (`0x4a8a10`), `DetourServerStartWalk` (`0x445cc0`) y `DetourServerStartRun` (`0x445db0`) bloquean todos los intentos nativos de volver hacia el jugador o huir (`return 0` en `0x445cc0`/`0x445db0`, lo que hace que `0x4475c0` limpie el camino mediante `0x34f430` y mantenga al mercenario en `MONMODE_NEUTRAL (1)`).
-   - `FilterNativeCombatTarget` (`0x48fe20`) filtra los candidatos de ataque nativos para que `MeleeVanguard` solo ataque monstruos a `<= 6.0` sub-casillas del punto de guardia (dentro del margen `HoldReleaseDeadband = 6.5`), y `RangedOverwatch` dispare sin moverse de su sitio a enemigos dentro de `24.0` sub-casillas.
+   - **Adquisición Activa de Objetivos de Guardia (`g_activeHoldTargetId`):** La IA nativa de Blizzard (`AITHINK_Fn061_Hireable`) solo escanea enemigos si se encuentra pegada al jugador; al estar lejos en un punto de anclaje, su prioridad nativa era regresar con el amo, ignorando a los monstruos cercanos. El sistema de centinela activo ahora escanea continuamente los monstruos hostiles con línea de visión directa dentro del radio de alcance (`melee::HostilesAround`), fijando el objetivo mediante `TryOverrideCombatTarget` (`0x48fe20`).
+   - **Enfoque Continuo Antioscilación (*Sticky Focus*):** El mercenario mantiene el fuego sobre el mismo objetivo hasta abatirlo antes de cambiar al siguiente más cercano, evitando que pare tras 1 o 2 ataques o cambie de objetivo espasmódicamente.
+   - **Ataque a Cualquier Distancia:** Se eliminó la restricción errónea de distancia mínima en `canEngageHostileWithinHold` y `ShouldAllowNativeMoveStruct`. Una arquera o mago puede disparar o lanzar proyectiles a cualquier enemigo dentro de sus 24 sub-casillas de guardia, incluso a quemarropa si un enemigo se le acerca.
+   - `DetourServerMoveUnit` (`0x4a8a10`), `DetourServerStartWalk` (`0x445cc0`) y `DetourServerStartRun` (`0x445db0`) bloquean todos los intentos nativos de abandonar el puesto para volver hacia el jugador (`return 0` en `0x445cc0`/`0x445db0`, manteniendo al mercenario en `MONMODE_NEUTRAL (1)` en su posición de guardia).
+   - `FilterNativeCombatTarget` (`0x48fe20`) arbitra los ataques nativos para que `MeleeVanguard` ataque a monstruos a `<= 6.0` sub-casillas del punto de guardia (dentro del margen `HoldReleaseDeadband = 6.5`), y `RangedOverwatch` dispare a cualquier enemigo dentro de `24.0` sub-casillas.
 
 ---
 
@@ -78,17 +81,21 @@ Para eliminar por completo los falsos positivos al usar el botón `Grip` en otra
   - Se evalúa mediante intersección 3D con el cilindro vertical del cuerpo del mercenario (`hitsUnitCylinder3D` en coordenadas `coordinates::RenderGround`, radio `0.95m`, altura `[-0.45m, 2.00m]`) o radio en el suelo junto a sus pies (`<= 3.5` sub-casillas).
   - Si pulsas `Grip` apuntando a cualquier otro lugar sin haber señalado antes al mercenario, el sistema táctico lo ignora por completo.
   - Al enganchar al mercenario se emite un pulso háptico corto (`0.30f`) y se muestra un anillo dorado/verde (`color = 2`) bajo sus pies.
-- **Paso 2 — Previsualización en Vivo (`Manteniendo Grip`):**
+- **Paso 2 — Previsualización en Vivo y Umbral de Correa (`Manteniendo Grip`):**
   - Mientras mantienes `Grip` apretado y mueves la mano hacia el objetivo:
-    - Si apuntas al cuerpo o pies de un **monstruo hostil** (cilindro 3D de `0.85m` o radio en suelo de `2.5` sub-casillas), se previsualiza un **anillo rojo** (`color = 1`) sobre el enemigo.
-    - Si apuntas a un punto del **suelo**, se previsualiza un **anillo cian** (`color = 3`) en `{ gx, gy }`.
-    - Si mantienes el puntero sobre el **mercenario**, permanece el **anillo dorado/verde** (`color = 2`) sobre él.
+    - **Umbral de Correa Reactivo:** Si el objetivo se encuentra dentro de la correa máxima (`dist <= 40.0` sub-casillas / ~16m del jugador):
+      - Si apuntas a un **monstruo hostil** (cilindro 3D `1.25m` o radio en suelo `4.0` sub-casillas), se previsualiza un **anillo azul gélido** (`color = 1`) sobre el enemigo.
+      - Si apuntas a un punto del **suelo**, se previsualiza un **anillo verde táctico** (`color = 3`, radio `1.8`) en `{ gx, gy }`.
+    - **Fuera de Rango de Correa (`dist > 40.0` sub-casillas / >16m):** El anillo transmuta instantáneamente y a 90 Hz a **rojo carmesí de advertencia** (`color = 4`, `{1.0f, 0.05f, 0.05f}`, radio `2.0`-`2.2`), avisando que la posición excede el radio de acción del mercenario.
+    - **Estilizado Visual Refinado:** El shader ReShade (`D2R_DepthFog.fx`) dibuja una silueta de anillo estrecha (`kCircleRim = 0.015`, resplandor `0.02`), limpia (sin relleno opaco en el disco interior) y con mayor transparencia (`kCircleOpacity = 0.32`), permitiendo ver el suelo del escenario con total claridad.
+    - **Paso de Frontera Háptico:** Al cruzar la frontera de los 16 metros en cualquier sentido, el mando emite un ligero pulso táctil advertidor (`0.20f` / `0.35f`).
+    - Si mantienes el puntero sobre el **mercenario**, permanece el **anillo dorado/amarillo** (`color = 2`) sobre él.
 - **Paso 3 — Ejecución al Soltar (`Soltar Grip`):**
-  1. **Enemigo Hostil (`PrioritizeEnemy`):** Soltar `Grip` sobre un monstruo ordena `PrioritizeEnemy` sobre esa unidad.
+  1. **Enemigo Hostil (`PrioritizeEnemy`):** Si está en rango, soltar `Grip` emite `PrioritizeEnemy`. Si excede los 16m, la orden se rechaza, suena la voz de *"Imposible"* (*"No puedo"*) y se emite un pulso háptico de error (`0.60f`).
   2. **Alternar sobre el Mercenario (`DefensiveHold` / `Regroup`):** Soltar `Grip` manteniendo el puntero sobre el propio mercenario (o tras un clic rápido `<= 300 ms`) alterna su estado:
      - Si tenía una orden activa (`Requested`, `Moving` o `Arrived`): ejecuta `CancelTacticalOrder()` (`Regroup`) y despacha inmediatamente una caminata de servidor (`DispatchServerMoveToCoord`) de regreso al flanco del jugador.
      - Si te estaba siguiendo normalmente (`Idle` / `Cancelled`): activa `DefensiveHold` clavándolo en su posición actual.
-  3. **Coordenada del Suelo (`MoveAndHold`):** Soltar `Grip` apuntando al suelo emite `MoveAndHold` hacia `{ gx, gy }`. Si el pathfinder A* se detiene junto a un muro u obstáculo dentro de `NearObstacleArrivalTolerance` (`4.5` sub-casillas), el mercenario adopta esa posición como `Arrived` en lugar de dar error por atasco.
+  3. **Coordenada del Suelo (`MoveAndHold`):** Soltar `Grip` dentro de rango emite `MoveAndHold` hacia `{ gx, gy }`. Si el pathfinder A* se detiene junto a un muro u obstáculo dentro de `NearObstacleArrivalTolerance` (`4.5` sub-casillas), adopta esa posición como `Arrived`. Si se suelta fuera de rango (>16m), se rechaza con doble pulso háptico de error y audio de *"Imposible"*.
 
 ### 4.2. Palma Abierta para Mantener Posición (`DefensiveHold` tras `400 ms`)
 - **Filtro Cinemático:** Mano abierta (`grip < 0.2f && trigger < 0.2f`), dedos apuntando hacia arriba (`handUp.y > 0.82f`) y normal de la palma alineada con la vista del jugador (`dot > 0.70f`) mantenida durante `400 ms`.
@@ -104,7 +111,7 @@ Para eliminar por completo los falsos positivos al usar el botón `Grip` en otra
 | **`PrioritizeEnemy` Aceptado** | `AttackConfirm` | `2949` / `2950` | `3183` / `3184` | `3105` / `3106` | `3027` / `3028` |
 | **`DefensiveHold` Aceptado** | `HoldConfirm` | `2943` / `2944` | `3177` / `3178` | `3099` / `3100` | `3021` / `3022` |
 | **Orden Rechazada / Fallida** | `Impossible` | `2953` / `2954` | `3187` / `3188` | `3109` / `3110` | `3031` / `3032` |
-| **Ruptura de Correa (40)** | `RegroupLeash` | `2939` / `2940` | `3173` / `3174` | `3095` / `3096` | `3017` / `3018` |
+| **Ruptura de Correa (40)** | `RegroupLeash` | `2939`/`2940` (90%) o `2947`/`2948` (10% despedida) | `3173`/`3174` (90%) o `3181`/`3182` (10% despedida) | `3095`/`3096` (90%) o `3103`/`3104` (10% despedida) | `3017`/`3018` (90%) o `3025`/`3026` (10% despedida) |
 | **Salud Crítica (`< 50%`)** | `Distress` | `2937` / `2938` | `3171` / `3172` | `3093` / `3094` | `3015` / `3016` |
 
 - **Ajuste en INI:** `[gameplay] companion_tactical_commands=1` en `d2r_pcvr.ini` (también configurable en vivo desde el menú VR en **Combat -> Tactical Commands**).

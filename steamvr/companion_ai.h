@@ -121,8 +121,13 @@ inline int GetArchetypeVoiceCue(uint16_t classId, TacticalVoiceCue cue) {
             return base + 12 + int(var); // chat_g_1 (ama_die) / chat_g_2 (ama_timetodie)
         case TacticalVoiceCue::HoldConfirm:
             return base + 6 + int(var);  // chat_d_1 (ama_thanks) / chat_d_2 (ama_thankyou)
-        case TacticalVoiceCue::RegroupLeash:
-            return base + 2 + int(var);  // chat_b_1 / chat_b_2
+        case TacticalVoiceCue::RegroupLeash: {
+            // ~10% probability of saying farewell / "hasta luego" (chat_f_1 / chat_f_2, base + 10)
+            // ~90% probability of follow / regroup call (chat_b_1 / chat_b_2, base + 2)
+            static std::atomic<unsigned> s_leashCallCount{0};
+            const bool isFarewell = ((s_leashCallCount.fetch_add(1, std::memory_order_relaxed) % 10) == 0);
+            return base + (isFarewell ? 10 : 2) + int(var);
+        }
         default:
             return 0;
     }
@@ -825,7 +830,7 @@ struct TacticalOrderController {
     static void GetOrderTolerances(TacticalOrderType type, Archetype arch, float& outArrivalTol, float& outReleaseDeadband) noexcept {
         if (type == TacticalOrderType::MoveAndHold || type == TacticalOrderType::DefensiveHold) {
             outArrivalTol = ArrivalTolerance;
-            outReleaseDeadband = (arch == Archetype::MeleeVanguard) ? HoldReleaseDeadband : HoldReleaseDeadband;
+            outReleaseDeadband = (arch == Archetype::MeleeVanguard) ? (MeleeHoldEngageRadius + 1.5f) : HoldReleaseDeadband;
             return;
         }
         if (type == TacticalOrderType::PrioritizeEnemy) {
@@ -843,19 +848,19 @@ struct TacticalOrderController {
     }
 
     // Computes the effective destination coordinate for a movement submission, respecting ranged stand-off
-    Vec2 ComputeEffectiveMoveTarget(Vec2 compPos, Archetype arch = Archetype::MeleeVanguard) const noexcept {
+    Vec2 ComputeEffectiveMoveTarget(Vec2 compPos, Archetype arch = Archetype::MeleeVanguard, Vec2 playerPos = {}) const noexcept {
         if (activeOrder.type == TacticalOrderType::PrioritizeEnemy && arch == Archetype::RangedOverwatch) {
-            const float dx = compPos.x - activeOrder.targetPos.x;
-            const float dy = compPos.y - activeOrder.targetPos.y;
-            const float dist = std::hypot(dx, dy);
-            if (dist > RangedEngagementTolerance && dist >= 1e-3f) {
-                // Walk to optimal stand-off firing distance (~10 sub-tiles) rather than melee contact
-                return {
-                    activeOrder.targetPos.x + (dx / dist) * RangedOptimalStandOff,
-                    activeOrder.targetPos.y + (dy / dist) * RangedOptimalStandOff
-                };
+            float dx = compPos.x - activeOrder.targetPos.x;
+            float dy = compPos.y - activeOrder.targetPos.y;
+            float dist = std::hypot(dx, dy);
+            if (dist < 1e-3f) {
+                dx = (playerPos.x != 0.0f || playerPos.y != 0.0f) ? (playerPos.x - activeOrder.targetPos.x) : 1.0f;
+                dy = (playerPos.x != 0.0f || playerPos.y != 0.0f) ? (playerPos.y - activeOrder.targetPos.y) : 0.0f;
+                dist = std::hypot(dx, dy);
+                if (dist < 1e-3f) { dx = 1.0f; dy = 0.0f; dist = 1.0f; }
             }
-            if (dist < RangedMinStandOff && dist >= 1e-3f) {
+            if (dist > RangedEngagementTolerance || dist < RangedMinStandOff) {
+                // Walk or kite to optimal stand-off firing distance (~10 sub-tiles)
                 return {
                     activeOrder.targetPos.x + (dx / dist) * RangedOptimalStandOff,
                     activeOrder.targetPos.y + (dy / dist) * RangedOptimalStandOff
@@ -970,7 +975,15 @@ struct TacticalOrderController {
             float arrivalTol = ArrivalTolerance;
             float releaseDeadband = HoldReleaseDeadband;
             GetOrderTolerances(order.type, arch, arrivalTol, releaseDeadband);
-            if (distToTarget <= arrivalTol) {
+            if (order.type == TacticalOrderType::PrioritizeEnemy && arch == Archetype::RangedOverwatch) {
+                if (distToTarget >= RangedMinStandOff && distToTarget <= RangedEngagementTolerance) {
+                    state = TacticalCommandState::Arrived;
+                    pendingMoveSubmission = false;
+                } else {
+                    state = TacticalCommandState::Requested;
+                    pendingMoveSubmission = true;
+                }
+            } else if (distToTarget <= arrivalTol) {
                 state = TacticalCommandState::Arrived;
                 pendingMoveSubmission = false;
             } else {
@@ -1062,18 +1075,28 @@ struct TacticalOrderController {
 
     // If MoveAndHold walked up to an obstacle edge within NearObstacleArrivalTolerance (4.5 sub-tiles)
     // and native A* cannot step any closer, snap anchor to compPos and mark Arrived rather than failing.
-    bool SnapArrivedIfNearObstacle(Vec2 compPos, uint64_t nowMs) noexcept {
-        if (!inTacticalOrder || activeOrder.type != TacticalOrderType::MoveAndHold || state != TacticalCommandState::Moving) {
+    bool SnapArrivedIfNearObstacle(Vec2 compPos, uint64_t nowMs, Archetype arch = Archetype::MeleeVanguard) noexcept {
+        if (!inTacticalOrder || state != TacticalCommandState::Moving) {
             return false;
         }
         const float dist = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
-        if (dist <= NearObstacleArrivalTolerance) {
-            activeOrder.targetPos = compPos;
-            state = TacticalCommandState::Arrived;
-            stateEnteredMs = nowMs;
-            retryCount = 0;
-            pendingMoveSubmission = false;
-            return true;
+        if (activeOrder.type == TacticalOrderType::MoveAndHold) {
+            if (dist <= NearObstacleArrivalTolerance) {
+                activeOrder.targetPos = compPos;
+                state = TacticalCommandState::Arrived;
+                stateEnteredMs = nowMs;
+                retryCount = 0;
+                pendingMoveSubmission = false;
+                return true;
+            }
+        } else if (activeOrder.type == TacticalOrderType::PrioritizeEnemy && arch == Archetype::RangedOverwatch) {
+            if (dist <= RangedEngagementTolerance && dist >= RangedMinStandOff) {
+                state = TacticalCommandState::Arrived;
+                stateEnteredMs = nowMs;
+                retryCount = 0;
+                pendingMoveSubmission = false;
+                return true;
+            }
         }
         return false;
     }
@@ -1136,9 +1159,24 @@ struct TacticalOrderController {
             float releaseDeadband = HoldReleaseDeadband;
             GetOrderTolerances(activeOrder.type, arch, arrivalTol, releaseDeadband);
             const float distToTarget = std::hypot(compPos.x - activeOrder.targetPos.x, compPos.y - activeOrder.targetPos.y);
-            const Vec2 effectiveMoveTarget = ComputeEffectiveMoveTarget(compPos, arch);
+            const Vec2 effectiveMoveTarget = ComputeEffectiveMoveTarget(compPos, arch, playerPos);
 
             if (state == TacticalCommandState::Arrived) {
+                // For RangedOverwatch under PrioritizeEnemy: if the enemy approaches closer than RangedMinStandOff (5.0 sub-tiles),
+                // the archer must kite away rather than letting the enemy get glued to her!
+                if (activeOrder.type == TacticalOrderType::PrioritizeEnemy &&
+                    arch == Archetype::RangedOverwatch &&
+                    distToTarget < RangedMinStandOff) {
+                    state = TacticalCommandState::Moving;
+                    stateEnteredMs = nowMs;
+                    lastProgressMs = nowMs;
+                    bestDistToTarget = distToTarget;
+                    retryCount = 0;
+                    pendingMoveSubmission = false;
+                    outTarget = effectiveMoveTarget;
+                    return true;
+                }
+
                 // Hysteresis deadband prevents oscillation between Arrived and Moving on minor collision pushback
                 if (distToTarget <= releaseDeadband) {
                     pendingMoveSubmission = false;
