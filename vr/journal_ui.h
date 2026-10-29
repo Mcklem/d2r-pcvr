@@ -4,6 +4,9 @@ namespace gamestate {
 bool JournalOnly();
 bool OpaqueMenuOpen();
 bool UpperBandMenuOpen();
+bool LeatherMenuOpen();   // the tabbed menu (or a cube from it) with no world-opened panel: leather_menu.h
+uint32_t PanelChanges();  // counts every panel opened or closed (leather::Back)
+bool CloseLeatherMenu();  // queue: close the tabbed menu if only it and its pages are open, the cursor empty
 bool NpcChoicesOnly();
 bool NpcChoicesRect(int32_t out[4]);
 void ReadNpcChoicesRect(); // UI thread only

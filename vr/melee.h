@@ -22,6 +22,13 @@ void ConfigureAttackRating(bool native); // Classic rules (unused: melee is Unle
 // hero's hit recovery (GetHit) and block animation when struck, so no hit locks
 // out casting, skills or movement; true (and Classic) keeps native flinching. Any thread.
 void ConfigurePlayerFlinch(bool native);
+// Zeal's light: a short Den of Evil light beam over the enemy on each Zeal hit
+// (steamvr/zeal_light.h); [gameplay] zeal_light (default on), zeal_light_frames,
+// zeal_light_pool (beams kept lit in advance while Zeal is armed), zeal_light_exit
+// (0 off, 1 rise, 2 sink, 3 shrink), zeal_light_exit_ms (the way out) and
+// zeal_light_turn (degrees trimming the turn that keeps its light beyond the creature),
+// zeal_light_behind (cells behind the creature) and zeal_light_spread (degrees either side).
+void ConfigureZealLight(bool on,float frames,float pool,float exit,float exitMs,float turn,float behind,float spread);
 // Unleashed: a stroke's damage scales with how much of the native attack cycle
 // passed since the previous landed stroke; every creature one stroke reaches
 // shares that factor. Contacts are never refused. [gameplay] swing_recovery_damage;

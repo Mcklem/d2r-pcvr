@@ -285,6 +285,15 @@ void Release(uintptr_t assets,uintptr_t definition,uint32_t entity,uintptr_t uni
             if(releasePoint){reinterpret_cast<void(*)(uintptr_t,uint32_t)>(d2rsig::Addr(RemoveReleaseRva))(registry,entity);++released;return;}
         }
     }
+    // A staged visual (Zeal's light, bowvr::StageVisual): its entities, the root marked.
+    if(bowvr::StagingWanted(unit)) {
+        const auto registry=d2rsig::Addr(RegistryRva);
+        if(EntityAlive(registry,entity)) {
+            const auto transforms=reinterpret_cast<uintptr_t(*)(uintptr_t)>(d2rsig::Addr(TransformStorageRva))(registry);
+            const bool root=VisualRoot(definition,transforms,entity,[](uintptr_t p,auto& value){return Read(p,value);});
+            bowvr::BindStaged(entity,unit,root);
+        }
+    }
     if(enabled.load()&&Read(unit,type)&&type==3&&Read(unit+4,missile)&&
        (framevr::bowflight::BasicMissile(missile)||framevr::bowflight::ThrownMissile(missile)||missile==31||bowvr::OwnsVisual(unit))) {
         const auto owner=reinterpret_cast<uintptr_t(*)(uintptr_t)>(d2rsig::Addr(OwnerRva))(unit);

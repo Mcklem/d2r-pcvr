@@ -19,9 +19,9 @@ struct Input {
     bool legsUnder = false;     // with lockUpper: pelvis and legs kept under that body - no lunge ahead, no hip turn
     bool wrist = false;         // mode 2: the hands turn with the controllers, not only follow the forearm
     bool forearmTwist = false;  // the forearm takes a share of the wrist's twist about its own axis (sleeves, bracers)
-    float shieldGripCm = 0.0f;  // VR Settings > Shield: the shield moved up the forearm toward the elbow, so the hand reaches its grip
+    float shieldGripCm = 0.0f;  // VR Settings > Shield > Shield along forearm: the shield moved up the forearm toward the elbow, so the hand reaches its grip
     float shieldOutCm = 0.0f, shieldUpCm = 0.0f;  // and out from the arm, and toward the thumb (cm, scaled by the model's forearm)
-    float shieldFollowPct = 100.0f;  // VR Settings > Shield > Shield follows: 0 strapped to the forearm, 100 turns with the wrist
+    float shieldFollowPct = 100.0f;  // VR Settings > Shield > Shield wrist turn: 0 strapped to the forearm, 100 turns with the wrist
     float shieldRollDeg = 0.0f;      // VR Settings > Shield > Shield roll: the shield turned about the forearm, + toward the little finger
     bool shieldTrace = false;   // [debug] shield_trace: log the held shield's pose chain (5 Hz, and at once on a jump)
     float wristDeg[3] = {};     // pitch, yaw, roll on top, in the controller's own axes (mirrored for the left)
@@ -135,6 +135,10 @@ void Set(const Input& in);
 void SetMotionBow(bool active, bool drawing, float draw, const float* stringHand=nullptr, const float* bowHand=nullptr,uint32_t stamp=0);
 bool MotionBowPosed();
 bool MotionBowAnchored();
+// Bodies that give way (steamvr/limb_rig.h, [interactions] body_physics): while
+// on, each pose of a monster or townsperson within reach of centre (the hero,
+// render units) is posted for the physics and bent by its answer.
+void SetLimbs(bool on, const float centre[3], float unitsPerMetre);
 #endif
 #if D2RVR_FIRST_PERSON
 // Forget the weapon grip: the next calm pose takes it again (F11).
@@ -144,6 +148,11 @@ void ResetGrip();
 // hand frame - metres from the head, x right, y up, z back, head yaw only.
 // False when the arms have not been posed for a quarter of a second.
 bool HeroForearm(int side, float elbow[3], float wrist[3], float across[3]);
+// The same forearm, as drawn (hands' offset included), in the frame of the
+// controller it was posed from: metres, so a caller with that controller's
+// current pose can place things on the drawn arm without the pose's lag.
+// palm: the way the palm faces, square to the forearm. False when stale.
+bool ForearmOnController(int side, float wrist[3], float elbow[3], float palm[3]);
 #endif
 // Called by the hook on every pose, before it is used: the camera's yaw and eye
 // point in model space from the hero's model matrix as it is NOW. The 10 ms

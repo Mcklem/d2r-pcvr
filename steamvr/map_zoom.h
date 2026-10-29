@@ -6,11 +6,11 @@
 #include <cstdint>
 
 // Minimap zoom. The wrist / palm map and the wheel's MAP tab are one 512x512
-// image of the game's corner map, centered on the hero, so they share one zoom
-// (it is changed at the wrist or palm; the wheel's MAP tab only shows it).
-// While you look at the wrist or palm map, a mostly vertical push of the right
-// stick is the map's: up zooms in, down zooms out. Left / right still turns,
-// but not during a zoom push, until the stick comes back to the center.
+// image of the game's corner map, centered on the hero, so they share one zoom.
+// While you look at the wrist or palm map, or the wheel's MAP tab, a mostly
+// vertical push of the right stick is the map's: up zooms in, down zooms out.
+// Left / right still turns, but not during a zoom push, until the stick comes
+// back to the center.
 // Jeff, 2026-10-21: "the map zoom in and out should not be buttons. When
 // looking at the map, the right stick up and down zooms in and out."
 // The zoom is not saved, and each new game starts at 1x: "Restarting should
@@ -38,6 +38,12 @@ constexpr float LookIn=22,LookOut=30;
 // back to the center before it counts in the world again. A push already held
 // when the look starts zooms straight away.
 inline bool WorldGestures(bool world,bool mapLooked){return world&&!mapLooked;}
+// The shown map the stick zooms, as the look test aims at it. The wheel hides the
+// wrist / palm map, so while its MAP tab is up that is the one; otherwise the
+// wrist / palm map when it is shown; else none (the stick stays the game's).
+enum class View{None,Wrist,Tab};
+inline View Target(bool wristShown,bool tabShown){return tabShown?View::Tab:wristShown?View::Wrist:View::None;}
+inline const char* Name(View v){return v==View::Tab?"MAP tab":v==View::Wrist?"wrist / palm map":"none";}
 // A new game (a new local player) starts back at 1x. session: the local player
 // handle, 0 between games; seen: the last nonzero one.
 inline bool NewGame(uint64_t& seen,uint64_t session) {
@@ -58,6 +64,14 @@ inline bool Looking(math::Vec headP,math::Quat headQ,math::Vec panel,bool was) {
     if(!std::isfinite(distance2)||distance2<1e-4f)return false;
     const float cosine=math::Dot(math::Rotate(headQ,{0,0,-1}),toward*(1/std::sqrt(distance2)));
     return std::isfinite(cosine)&&cosine>std::cos((was?LookOut:LookIn)*.0174532925f);
+}
+// Is the shown map `v` looked at this frame? The look test aims at that map's own
+// center (wrist: the wrist / palm map's; tab: the wheel's MAP tab's). `was` is last
+// frame's answer for `last`: it holds the look out to LookOut only on the same map,
+// so a switch between the two maps starts afresh at LookIn. No map: never.
+inline bool LookedAt(View v,View last,bool was,math::Vec headP,math::Quat headQ,math::Vec wrist,math::Vec tab){
+    if(v==View::None)return false;
+    return Looking(headP,headQ,v==View::Tab?tab:wrist,was&&v==last);
 }
 struct Input {
     double time=0;

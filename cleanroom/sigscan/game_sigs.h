@@ -70,6 +70,8 @@ inline constexpr Sig kSigs[] = {
     {"ModelRecalcCheck", 0x6AF5B1, Kind::Code, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00 0F 29 BC 24 20 02 00 00 74 09", 0x6AF5B1, 0, 0, 0, 0, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00", nullptr, "models re-sorted at once", "Rooms and models"},
     // u8 'Recalculate Every Frame'
     {"ModelRecalcEveryFrame", 0x34B6C74, Kind::Ref, "80 3D ?? ?? ?? ?? 00 0F 29 B4 24 30 02 00 00 0F 29 BC 24 20 02 00 00 74 09", 0x6AF5B1, 0, 2, 7, 0, nullptr, nullptr, "models re-sorted at once", "Rooms and models"},
+    // AssetStandbySystem's model distance test, hooked
+    {"ModelInRange", 0x15723B0, Kind::Code, "0F 10 49 10 0F 57 C0 0F 10 21 0F 28 EA 0F 10 12 0F C6 E4 E1 F3 0F 10 E0 0F C6 C9 E1 F3 0F 10 C8", 0x15723B0, 0, 0, 0, 0, "0F 10 49 10 0F 57 C0 0F 10 21 0F 28 EA 0F 10 12", nullptr, "big objects drawn farther", "Rooms and models"},
     // controller attack target search, hooked
     {"AttackTarget", 0x143960, Kind::Code, "48 8B C4 48 89 58 10 48 89 70 18 4C 89 70 20 41 57 48 81 EC B0 00 00 00", 0x143960, 0, 0, 0, 0, "48 8B C4 48 89 58 10 48 89 70 18 4C 89 70 20 41 57", nullptr, "aim at what the hand points at", "Aim and attack"},
     // UnitFacingVector(unit, float[2]), hooked

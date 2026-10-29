@@ -30,9 +30,8 @@ int main(){
     Check(vrsettings::Read().values[MapTopDown]==1&&vrsettings::Read().values[MapRotate]==1,"HUD uses the existing wrist-map saved keys");
     // Map view cycles Isometric, Top-down, Full map, Full top-down; Rotate map toggles.
     for(int choice:{2,3,0,1}){
-        const auto current=vrsettings::Read();Model map;map.Open(current);map.Click({Kind::Tab,int(Page::HUD)});
-        auto click=[&](Rect box){return HitTest(Page::HUD,(box.x+box.w*.5f)/Width,(box.y+box.h*.5f)/Height);};
-        map.Click(click(HudMapViewBox));map.Click(click(HudMapRotateBox));
+        const auto current=vrsettings::Read();Model map;map.Open(current);
+        map.Click({Kind::Change,MapTopDown,1});map.Click({Kind::Change,MapRotate,1});   // Map view one step on, Rotate map flipped
         const auto request=map.Click({Kind::Apply});
         Check(vrsettings::Submit(request)&&vrsettings::Poll(name),"save HUD map choices through the normal transaction");
         const auto saved=vrsettings::Read();const int rotate=choice%2;
@@ -217,7 +216,7 @@ int main(){
     Check(before.ready&&before.values[DrawDistance]==6&&before.values[Foveation]==1&&before.values[ObjectDistance]==210,"explicit distance retained; missing object distance uses shipped default");
     Check(WritePrivateProfileStringW(L"render",L"rings",nullptr,name),"remove terrain distance in isolated legacy profile");
     vrsettings::Poll(name);before=vrsettings::Read();
-    Check(before.values[DrawDistance]==2&&before.values[ObjectDistance]==210,"missing draw distances do not silently select 4 rings and radius 1000");
+    Check(before.values[DrawDistance]==6&&before.values[ObjectDistance]==210,"missing draw distances take the shipped defaults: 6 rings, objects 210");
     Check(WritePrivateProfileStringW(L"render",L"rings",L"6",name),"restore explicit terrain distance");
     vrsettings::Poll(name);before=vrsettings::Read();
     // Old separate switches migrate only until an explicit combined choice exists.
@@ -301,8 +300,8 @@ int main(){
     saved=vrsettings::Read();
     Check(saved.values[PlanarSpellAim]==0&&Int(path,L"gameplay",L"planar_spell_aim")==0,"free aim restore survives INI reload");
     Check(saved.values[ControllerLabels]==0,"existing INI defaults to automatic labels");
-    model.Open(saved);model.Click({Kind::Tab,int(Page::VR)});model.Click({Kind::ControllerMenu});
-    model.Click({Kind::ControllerChoice,int(framevr::controllers::Choice::Index)});request=model.Click({Kind::Apply});
+    model.Open(saved);model.Set(ControllerLabels,float(int(framevr::controllers::Choice::Index)));   // Button names: Index
+    request=model.Click({Kind::Apply});
     Check(vrsettings::Submit(request)&&vrsettings::Poll(name),"controller override saves through INI transaction");
     saved=vrsettings::Read();
     Check(saved.values[ControllerLabels]==2&&Int(path,L"interactions",L"controller_labels")==2,"controller selection survives reload");

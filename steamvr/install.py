@@ -17,8 +17,10 @@ import urllib.request
 import zipfile
 from prepare_icons import prepare as prepare_icons
 from prepare_potions import prepare as prepare_potions, CODES as POTION_CODES, FILES as POTION_FILES
+from bone_pieces import CODES as BONE_CODES
 from prepare_spell_sprites import prepare as prepare_spell_sprites, FILE as SPELL_SPRITES
 from prepare_props import prepare as prepare_props, FILES as PROP_FILES
+from prepare_leather import prepare as prepare_leather, FILES as LEATHER_FILES
 import prepare_arcane_sky
 import prepare_sewer_backdrop
 import prepare_kurast_dock
@@ -41,7 +43,7 @@ SDK_VERSION = '10.0.26100.9169'
 SDK_HASH = '475269434dcd808a67853773272f972c3229c0e10c3ddc821290e70cc0f6904d'
 COMPILER_HASH = '3bd6d7acfe8a0a84acd166fba1a537ce68bd21c8edce2bd9bb863cfa034136d4'
 # OFXR Bridge by tig3rmast3r (LGPL-3.0-or-later), the experimental frame
-# generation layer behind VR Settings > Perf > Frame generation. Fetched like
+# generation layer behind VR Settings > Performance > Frame generation. Fetched like
 # D2RLoader and ReShade, never attached to our releases, and optional: without
 # it the rest installs. Only its layer and licenses are installed, with a
 # manifest and settings written here: no tray app and no registry entry, as
@@ -472,7 +474,7 @@ def main():
     frame_generation = frame_generation_files(ofxr)
     if frame_generation:
         payload.update(frame_generation)
-        print('Prepared OFXR Bridge 0.2.1 for VR Settings > Perf > Frame generation (experimental, off by default).')
+        print('Prepared OFXR Bridge 0.2.1 for VR Settings > Performance > Frame generation (experimental, off by default).')
     # The launcher's descriptor of this mod (the D2R VR Launcher lists mods\*\vrmod-manifest.json). It is journaled like
     # every other file, so a restore or removal takes it away with the mod.
     payload[mod_identity.MOD_DIR / 'vrmod-manifest.json'] = (ROOT / 'vrmod-manifest.json').read_bytes()
@@ -494,9 +496,20 @@ def main():
         except (OSError, ValueError, KeyError, IndexError) as error:
             print(f'Native potion models unavailable; retaining icon fallback: {error}')
         else:
-            for name in list(POTION_FILES) + ['cache.json']:
+            # Bone Armor's pieces are optional (bone_pieces.py): copied when the cache made them.
+            bone_files = [code + '.pvr' for code in BONE_CODES if (Path(temporary) / (code + '.pvr')).is_file()]
+            for name in list(POTION_FILES) + bone_files + ['cache.json']:
                 payload[mod_identity.PLUGIN.parent / 'd2r_vr_potions' / safe_relative(name)] = (Path(temporary) / name).read_bytes()
             print(f"Prepared {result['models']} original 3D potion models from your installed game.")
+    with tempfile.TemporaryDirectory(prefix='d2r-vr-leather-') as temporary:
+        try:
+            result = prepare_leather(game, temporary, casclib=args.casclib)
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            print(f'Menu leather unavailable; the tabbed menu keeps a painted stand-in hide: {error}')
+        else:
+            for name in list(LEATHER_FILES) + ['cache.json']:
+                payload[mod_identity.PLUGIN.parent / 'd2r_vr_leather' / safe_relative(name)] = (Path(temporary) / name).read_bytes()
+            print("Prepared the menu's leather (the Rogue Encampment hide) from your installed game.")
     with tempfile.TemporaryDirectory(prefix='d2r-vr-props-') as temporary:
         try:
             result = prepare_props(game, temporary, casclib=args.casclib)

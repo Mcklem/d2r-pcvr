@@ -33,7 +33,11 @@ public:
     // zoom (square map only, >= 1): the map that much bigger about the hero; 1 fits it whole
     // mapSpan (square map only, > 0; Map view = Full map): a square of that many source pixels across the whole square around the hero's X, the arrow sized from the X; 0: the fit, zoomed
     // xReach (square map only, > 0; the full map): the X searched only that many source pixels each way from the source's center moved by xShiftRight, xShiftDown (wrist_full_map.h XSearchAt); 0: the corner map's wide search
+    // undimBand (x, y, w, h source pixels; menus only, null for none): the translucent backdrop
+    // the game spreads under a menu is taken out. Its most see-through sample at that band's
+    // corners and side middles is the backdrop alone; every pixel loses that one layer, so
+    // only what the game drew over it is left (the leather: the hide shows round the menu).
     bool Render(ID3D12Device*,ID3D12GraphicsCommandList*,ID3D12Resource* source,ID3D12Resource* target,bool blackBackground=false,bool squareMap=false,uint32_t mapFlags=0,float bearing=0,float wallAlpha=1.f,float zoom=1.f,float mapSpan=0.f,
-                float xReach=0.f,float xShiftRight=0.f,float xShiftDown=0.f);
+                float xReach=0.f,float xShiftRight=0.f,float xShiftDown=0.f,const int32_t* undimBand=nullptr);
 };
 }

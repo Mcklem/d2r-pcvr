@@ -59,10 +59,10 @@ When iterating on a focused C++ module or unit test after `build-frame/windows-n
 
 4. **Render off-screen UI previews (when modifying VR Settings or wheel UI layout):**
    ```powershell
-   .\build-frame\windows-native\vr-settings-preview.exe build-frame/combat.bmp 4
+   .\build-frame\windows-native\vr-settings-preview.exe --pages build-frame/vr-settings-pages
    .\build-frame\windows-native\interaction-preview.exe build-frame/dev.png --developer-check
    ```
-   Inspect the generated image for text clipping or overlap; a passing paint return code alone does not prove visual layout quality.
+   Inspect the generated images for text clipping or overlap; a passing paint return code alone does not prove visual layout quality.
 
 ---
 

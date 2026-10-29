@@ -17,7 +17,8 @@ FILES = (PLUGIN, Path('d2rloader/plugins/d2r_pcvr.ini'),
 TREES = ('d2rloader/plugins/d2r_vr_icons', 'd2rloader/plugins/d2r_vr_potions',
          'reshade/reshade-shaders', 'reshade/D2R_Sky_ours')
 # Copied when present; the installer may be unable to prepare them.
-OPTIONAL_TREES = ('d2rloader/plugins/d2r_vr_spell_sprites', 'd2rloader/plugins/d2r_vr_props')
+OPTIONAL_TREES = ('d2rloader/plugins/d2r_vr_spell_sprites', 'd2rloader/plugins/d2r_vr_props',
+                  'd2rloader/plugins/d2r_vr_leather')
 
 
 def checked(path):
@@ -159,7 +160,7 @@ def main():
         parser.exit(1, f'{error}\n')
     print(f'Prepared {root}')
     print('Launch with --frame-vr --frame-dev; create a NEW offline expansion character.')
-    print('Wheel DEV: Character / Equipment / Act I - III / Act IV - V. VR Settings > DEV: release reference.')
+    print("Wheel DEV: Character / Equipment / Act I - III / Act IV - V. VR Settings > What's new: release reference.")
 
 
 if __name__ == '__main__':

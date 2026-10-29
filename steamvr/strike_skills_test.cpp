@@ -9,7 +9,7 @@ int main() {
     for(int s:{Maul,FeralRage,Rabies,FireClaws,Hunger,Fury})Check(Known(s),"the Druid's form skills strike");
     for(int s:{PowerStrike,Impale,ChargedStrike,LightningStrike,PoisonDagger,Sacrifice,Vengeance,Conversion,Bash,Stun,Concentrate,Berserk})
         Check(Known(s)&&!MultiHit(s),"the single-hit weapon skills strike");
-    Check(Known(Zeal)&&MultiHit(Zeal)&&Matches(Zeal,37,13)&&!Matches(Zeal,37,2),"Zeal strikes as a flurry, on Fury's functions");
+    Check(Known(Zeal)&&MultiHit(Zeal)&&Matches(Zeal,37,13)&&!Matches(Zeal,37,2),"Zeal strikes as a multi-hit skill, on Fury's functions");
     for(int s:{0,10,97,107,133,147,151,254})Check(!Known(s),"Attack, Jab, Smite, Charge, Double Swing, Frenzy, Whirlwind and Tiger Strike do not (yet)");
     Check(Matches(Maul,56,120)&&Matches(FeralRage,56,120)&&Matches(Rabies,57,121)&&Matches(FireClaws,58,2)&&Matches(Hunger,0,122)&&Matches(Fury,37,13),
           "each skill's compiled start/do functions");
@@ -20,12 +20,6 @@ int main() {
           "each weapon skill's compiled start/do functions (Skills.txt)");
     Check(!Matches(Bash,1,2)&&!Matches(ChargedStrike,6,2)&&!Matches(PowerStrike,6,11),"a weapon skill's row that differs is refused");
     Check(MultiHit(Fury)&&MultiHit(Zeal)&&!MultiHit(Maul)&&!MultiHit(Hunger)&&!MultiHit(-1),"only Fury and Zeal are multi-hit");
-    {   // Zeal: a weapon's flurry (form 0); Classic paces it at its Param2, a whole cycle.
-        using F=Flurry::Feed;Flurry z;z.Begin(3,Zeal,0,5,100,1000);
-        Check(z.Open(3,Zeal,0)&&z.Left()==4&&z.Floor(480,true)==480&&z.Floor(480,false)==FlurryStrokeGapMs,"Zeal's flurry and its pace");
-        Check(z.Feeds(3,Zeal,0,1479,480,true)==F::TooSoon&&z.Feeds(3,Zeal,0,1480,480,true)==F::Hit&&z.Feeds(3,Zeal,0,1100,480,false)==F::Hit&&
-              z.Feeds(3,Fury,0,1480,480,true)==F::None,"Classic: a full cycle; Unleashed: any later swing; another skill is not its flurry");
-    }
     Check(!Matches(Hunger,56,122)&&!Matches(FireClaws,58,120),"a start or do that differs is refused");
     Check(!Matches(Maul,56,2)&&!Matches(Maul,0,120)&&!Matches(97,0,150),"a changed row or another skill is refused");
     Check(Armed(true,true,true,true,true,Maul)==Maul,"a confirmed trigger skill arms the hand");
@@ -55,69 +49,26 @@ int main() {
     Check(FormVoice(1,false,false,-1,0)==0&&FormVoice(2,false,false,Rabies,0)==0,"flailing and cleave follow-ups stay silent (Unleashed)");
     Check(FormVoice(1,true,false,-1,0)==WolfGrowl,"Classic: every paced strike");
     Check(FormVoice(0,true,true,-1,0)==0&&FormVoice(3,true,true,-1,0)==0,"no voice outside the forms");
-    // Fury flurry: 5 hits, a 480 ms cycle, a 960 ms window. Classic paces each
-    // follow-up at 70 % of the cycle (336 ms); Unleashed only keeps one swipe's
-    // follow-through (100 ms) from taking a second hit.
+    // Fury and Zeal: the native rhythm (rev4, measured from rev1's native casts).
+    Check(SequenceGap(360,Fury)==160&&SequenceGap(560,Zeal)==280,"Fury 4/9 and Zeal 1/2 of the cycle: 160 ms and 280 ms as measured");
+    Check(SequenceGap(0,Fury)==222&&SequenceGap(0,Zeal)==250&&SequenceGap(90,Fury)==SequenceMinGapMs,"an unknown cycle, and a floor");
     {
-        using F=Flurry::Feed;Flurry f;const uint64_t s=7;const int wolf=1;const bool classic=true,unleashed=false;
-        Check(f.Feeds(s,Fury,wolf,1000,480,unleashed)==F::None&&f.Lapse(s,1000,480,wolf)==0,"no flurry before a cast");
-        f.Begin(s,Fury,wolf,5,70,1000);
-        Check(f.Open(s,Fury,wolf)&&f.Left()==4&&f.Total()==5,"the cast lands hit 1 of 5");
-        Check(f.Floor(480,classic)==336&&f.Floor(480,unleashed)==FlurryStrokeGapMs&&f.Floor(0,unleashed)==FlurryStrokeGapMs&&
-              Flurry::Window(480)==960&&Flurry::Window(0)==FlurryUnknownCycleMs,"pace floors and window");
-        // Unleashed: every landed stroke takes the next hit, except one swipe's follow-through.
-        Check(f.Feeds(s,Fury,wolf,1015,480,unleashed)==F::TooSoon&&f.Feeds(s,Fury,wolf,1099,480,unleashed)==F::TooSoon&&
-              f.Feeds(s,Fury,wolf,1100,480,unleashed)==F::Hit,"Unleashed: a stroke 100 ms after the last hit takes the next");
-        Check(f.Feeds(s,Fury,wolf,1250,480,unleashed)==F::Hit,"Unleashed: a 250 ms alternating swipe is never lost");
-        // Classic: Fury's own pace.
-        Check(f.Feeds(s,Fury,wolf,1335,480,classic)==F::TooSoon&&f.Feeds(s,Fury,wolf,1336,480,classic)==F::Hit,"Classic: a follow-up after 70 % of the cycle");
-        Check(f.Feeds(s,Fury,wolf,999,480,unleashed)==F::TooSoon&&f.Feeds(s,Fury,wolf,999,480,classic)==F::TooSoon,"a contact timed before the last hit is too soon");
-        Check(f.Feeds(s,Maul,wolf,1400,480,unleashed)==F::None&&f.Feeds(s,Fury,2,1400,480,unleashed)==F::None&&f.Feeds(8,Fury,wolf,1400,480,unleashed)==F::None,
-              "another skill, form or game is not this flurry");
-        // An early swipe (basic) does not move the floor: it runs from the last Fury hit.
-        Check(f.Feeds(s,Fury,wolf,1200,480,classic)==F::TooSoon&&f.Feeds(s,Fury,wolf,1340,480,classic)==F::Hit,"Classic: early swipes never delay the next hit");
-        Check(f.SinceHit(1340)==340&&f.SinceHit(900)==0,"time since the last hit");
-        Check(f.Hit(1340)==2&&f.Left()==3,"hit 2");
-        Check(f.Feeds(s,Fury,wolf,1600,480,classic)==F::TooSoon&&f.Feeds(s,Fury,wolf,1676,480,classic)==F::Hit,"Classic: the floor runs from hit 2");
-        Check(f.Feeds(s,Fury,wolf,1439,480,unleashed)==F::TooSoon&&f.Feeds(s,Fury,wolf,1440,480,unleashed)==F::Hit,"Unleashed: the guard runs from hit 2");
-        // Unleashed at ~250 ms alternation: hits 3-5 on the next three swipes.
-        Check(f.Hit(1590)==3&&f.Feeds(s,Fury,wolf,1840,480,unleashed)==F::Hit&&f.Hit(1840)==4&&
-              f.Feeds(s,Fury,wolf,2090,480,unleashed)==F::Hit&&f.Hit(2090)==5&&!f.Open(s,Fury,wolf),"Unleashed: five swipes, five hits, then spent");
-        Check(f.Feeds(s,Fury,wolf,3000,480,unleashed)==F::None&&f.Lapse(s,9000,480,wolf)==0,"a spent flurry forfeits nothing");
-        f.Begin(s,Fury,wolf,5,70,10000);f.Hit(10400);
-        Check(f.Lapse(s,11360,480,wolf)==0&&f.Open(s,Fury,wolf),"still open two cycles after the last hit");
-        Check(f.Lapse(s,11361,480,wolf)==3&&!f.Open(s,Fury,wolf),"lapses past the window, forfeiting 3");
-        f.Begin(s,Fury,wolf,5,70,20000);
-        Check(f.Lapse(9,20001,480,wolf)==4&&!f.Open(s,Fury,wolf),"a new game closes it");
-        f.Begin(s,Fury,wolf,5,70,25000);
-        Check(f.Lapse(s,25100,480,2)==4&&!f.Open(s,Fury,wolf),"a stroke in another form ends it");
-        f.Begin(s,Fury,wolf,2,70,30000);
-        Check(f.Left()==1&&f.Hit(30400)==2&&!f.Open(s,Fury,wolf),"a 2-hit Fury (level 1)");
-        f.Begin(s,Fury,wolf,1,70,40000);
-        Check(!f.Open(s,Fury,wolf),"a single-hit count opens nothing");
-        f.Begin(s,Fury,wolf,5,0,50000);
-        Check(f.Floor(480,classic)==480&&FlurryPace(70)==70&&FlurryPace(9)==100&&FlurryPace(101)==100,"Classic: an unread pace is one full cycle");
-        f.Begin(s,Fury,wolf,5,70,60000);
-        Check(f.Feeds(s,Fury,wolf,60001,0,classic)==F::Hit,"Classic: an unknown cycle never holds a follow-up back");
-        f.End();
-        Check(!f.Open(s,Fury,wolf)&&f.Lapse(s,99999,480,wolf)==0,"ended by another skill's cast");
-    }
-    // Spread: a later stroke lands Fury on its first two creatures; the casting stroke on one.
-    {
-        using F=Flurry::Feed;Flurry f;const uint64_t s=7;const int wolf=1;const bool unleashed=false;
-        const uint64_t cast=Flurry::StrokeKey(0,10),next=Flurry::StrokeKey(1,4),again=Flurry::StrokeKey(0,11);
-        Check(cast!=next&&Flurry::StrokeKey(0,4)!=next&&cast!=0,"each hand's strokes have their own keys");
-        f.Begin(s,Fury,wolf,5,70,1000,cast);
-        Check(f.SameStroke(cast)&&f.Feeds(s,Fury,wolf,1000,480,unleashed,cast)==F::TooSoon,"the casting stroke's other creatures stay basic");
-        Check(f.Feeds(s,Fury,wolf,1250,480,unleashed,next)==F::Hit&&f.Hit(1250,next)==2,"the next stroke's first creature: hit 2");
-        Check(f.SameStroke(next)&&f.Feeds(s,Fury,wolf,1250,480,unleashed,next)==F::Hit&&f.Hit(1250,next)==3,"its second creature: hit 3, at once");
-        Check(f.Feeds(s,Fury,wolf,1251,480,unleashed,next)==F::TooSoon,"its third creature stays a cleave basic");
-        Check(f.Feeds(s,Fury,wolf,1300,480,unleashed,again)==F::TooSoon&&f.Feeds(s,Fury,wolf,1350,480,unleashed,again)==F::Hit,
-              "a new stroke keeps the follow-through guard from the last hit");
-        Check(f.Hit(1350,again)==4&&f.Feeds(s,Fury,wolf,1350,480,unleashed,again)==F::Hit&&f.Hit(1350,again)==5&&!f.Open(s,Fury,wolf),
-              "two more creatures: hits 4 and 5, then spent");
-        f.Begin(s,Fury,wolf,5,70,2000,cast);
-        Check(f.Feeds(s,Fury,wolf,2200,480,unleashed)==F::Hit,"without a stroke key: the pace rule only");
+        Sequence q;const uint64_t s=7;const int wolf=1;
+        Check(!q.Open(s)&&q.DueAt()==0,"nothing before a cast");
+        q.Begin(s,Fury,0,wolf,5,360,1000,42);
+        Check(q.Open(s)&&q.Left()==4&&q.Total()==5&&q.Last()==42&&q.DueAt()==1160,"the cast lands hit 1 of 5; hit 2 one gap later");
+        Check(!q.Due(s,1139)&&q.Due(s,1140)&&!q.Due(8,1160),"due up to 20 ms early (the next game update), in its game");
+        Check(q.Hit(1190,43)==2&&q.Last()==43&&q.DueAt()==1320,"hit 2 run a tick late: hit 3 still on the rhythm");
+        Check(q.Hit(1500,44)==3&&q.DueAt()==1580,"a long stall: never sooner than half a gap");
+        Check(!q.Lapse(s,wolf)&&q.Lapse(s,2)&&!q.Open(s),"leaving the form ends it");
+        q.Begin(s,Zeal,0,0,3,560,5000,9);
+        Check(q.DueAt()==5280&&q.Hit(5280,9)==2&&q.Hit(5560,9)==3&&!q.Open(s)&&q.DueAt()==0,"a 3-hit Zeal every 280 ms, then spent");
+        q.Begin(s,Fury,0,wolf,1,360,9000,9);
+        Check(!q.Open(s),"a single-hit count opens nothing");
+        q.Begin(s,Fury,0,wolf,5,360,9000,9);q.End();
+        Check(!q.Open(s)&&!q.Lapse(s,2),"ended: nothing left to lapse");
+        q.Begin(s,Fury,0,wolf,5,360,9000,9);
+        Check(q.Lapse(9,wolf)&&!q.Open(s),"a new game ends it");
     }
     if(failures)return EXIT_FAILURE;
     std::printf("strike skills ok\n");return EXIT_SUCCESS;

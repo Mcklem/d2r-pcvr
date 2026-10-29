@@ -18,6 +18,7 @@ namespace framevr {void SetTurnsSharp(bool);bool TurnsSharp();}     // and turns
 namespace framevr {void SetTurnsFill(bool);bool TurnsFill();}       // and turns_fill
 namespace framevr {void SetTurnsRims(bool);bool TurnsRims();}       // and turns_rims
 namespace d2rcam {void SetSkyOverRims(bool);bool SkyOverRims();}    // vrcam: [sky] cover_rims
+namespace d2rcam {bool SaveBodyTuning(int knob,float value);}          // vrcam: [bodies] (limb_tuning.h)
 
 namespace devscenarios {
 namespace {
@@ -148,6 +149,23 @@ void __cdecl Commands(const PluginContext*,void* token) noexcept {
         d2rcam::SetSkyOverRims(rims);
         framevr::logging::Write(rims?"Frame development: the sky goes over the dark rim round things against it":"Frame development: the dark rim round things against the sky stays");
         Finish(r,Result::SkyRimsUpdated,claim);return;
+    }
+    // Bodies: a value's next step, saved to [bodies]; or all of them back to their defaults.
+    if(const int knob=framevr::dev::BodyKnob(r.index);knob>=0||r.index==framevr::dev::BodyResetChoice) {
+        {std::lock_guard lock(mutex);if(claim!=ticket)return;}
+        char line[200];
+        if(knob>=0) {
+            const auto k=framevr::limbs::Knob(knob);const auto& info=framevr::limbs::KnobTable[size_t(knob)];
+            const float value=framevr::limbs::NextStep(k,framevr::limbs::Tuned().Get(k));
+            const bool saved=d2rcam::SaveBodyTuning(knob,value);
+            std::snprintf(line,sizeof line,"Frame development: bodies %s = %g %s%s",info.name,value,info.unit,saved?"":" (not saved to the INI)");
+        } else {
+            bool saved=true;
+            for(int k=0;k<framevr::limbs::Knobs;++k)saved=d2rcam::SaveBodyTuning(k,framevr::limbs::KnobTable[size_t(k)].standard)&&saved;
+            std::snprintf(line,sizeof line,"Frame development: bodies back to their defaults%s",saved?"":" (not saved to the INI)");
+        }
+        framevr::logging::Write(line);
+        Finish(r,Result::BodiesUpdated,claim);return;
     }
     if(!execute){
         framevr::logging::Write("Frame development: console command export unavailable");
@@ -305,7 +323,7 @@ void Init(const D2RL::PluginContext* ctx) {
     framevr::logging::Write("Frame development: isolated pcvr-dev environment enabled; class presets require disposable offline expansion characters");
 }
 bool DebugDraws(){return enabled&&debugDraws.load();}
-void Capture(framevr::interaction::Snapshot& s){s.developer=enabled;s.devDebugDraws=DebugDraws();s.devTurnsKeepOwn=enabled?framevr::TurnsKeepOwn():0;s.devTurnsSharp=enabled&&framevr::TurnsSharp();s.devTurnsFill=enabled&&framevr::TurnsFill();s.devTurnsRims=enabled&&framevr::TurnsRims();s.devSkyRims=enabled&&d2rcam::SkyOverRims();}
+void Capture(framevr::interaction::Snapshot& s){s.developer=enabled;s.devDebugDraws=DebugDraws();s.devTurnsKeepOwn=enabled?framevr::TurnsKeepOwn():0;s.devTurnsSharp=enabled&&framevr::TurnsSharp();s.devTurnsFill=enabled&&framevr::TurnsFill();s.devTurnsRims=enabled&&framevr::TurnsRims();s.devSkyRims=enabled&&d2rcam::SkyOverRims();if(enabled)s.devBodies=framevr::limbs::Tuned().Get().value;}
 void Request(const framevr::interaction::Request& r) {
     const bool valid=Valid(r);
     const auto run=threads?(framevr::dev::IsKit(r.index)?threads->runOnGameThread:threads->runOnUiThread):nullptr;

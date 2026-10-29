@@ -25,7 +25,7 @@ BEGIN
             VALUE "FileDescription", "D2R PCVR - the VR layer (a D2RLoader plugin)"
             VALUE "FileVersion", D2RPCVR_VERSION
             VALUE "InternalName", D2RPCVR_MOD_ID
-            VALUE "LegalCopyright", "MIT licence. D2R PCVR contributors; based on D2R VR, copyright (c) 2026 BodyWalkVR."
+            VALUE "LegalCopyright", "MPL-2.0 licence. D2R PCVR contributors; based on D2R VR, copyright (c) 2026 BodyWalkVR, MIT."
             VALUE "OriginalFilename", D2RPCVR_PLUGIN_FILE
             VALUE "ProductName", D2RPCVR_NAME
             VALUE "ProductVersion", D2RPCVR_VERSION

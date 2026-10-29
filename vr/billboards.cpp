@@ -93,24 +93,47 @@ bool BoneArmorDefinition(uint64_t definition) {
     }
     return e.bone;
 }
+// With the forearm grafts on ([render] bone_armor_graft), the hero's own orbit
+// is never shown, in any view or menu (Cal 2026-10-26): it goes under the floor
+// by its centre (mask 19), so the bones, their wisps and anything else the
+// effect hangs on that centre go with it. (Moving the bones alone after the
+// native call, mask 17, left the orbit showing; headset test 2026-10-26.)
+// Its own by the hero's point (vrcam's camera target, the feet; kept in menus
+// too), not the head: third person, overhead views and menus have no head here.
+std::atomic<bool> hideOwnOrbit{true},boneHiddenReported{false};
+SRWLOCK heroLock=SRWLOCK_INIT;portal::Vec heroPoint{};ULONGLONG heroAt=0;
+bool HeroPoint(portal::Vec& hero) {
+    ULONGLONG at;
+    AcquireSRWLockShared(&heroLock);hero=heroPoint;at=heroAt;ReleaseSRWLockShared(&heroLock);
+    return at&&GetTickCount64()-at<=500&&portal::Finite(hero);
+}
 bool BoneArmorWanted() {return std::fabs(boneArmorHeight.load(std::memory_order_relaxed)-bone_armor::Native)>=1e-4f;}
 // Per lane, as CorrectCenters: mixed batches never lend one effect's
 // classification to another's lane.
-bool LowerBoneArmor(portal::Vec* points,uint32_t count,const portal::Context& c) {
+// hide: the hero's own instances (origin by hero) go HiddenDepth under the
+// floor instead; lower: everyone else's go to [render] bone_armor_height.
+bool LowerBoneArmor(portal::Vec* points,uint32_t count,const portal::Context& c,portal::Vec hero,bool hide,bool lower) {
     const float height=boneArmorHeight.load(std::memory_order_relaxed);
-    struct Entry {int32_t id=-1;bool bone=false;};Entry cache[8];bool changed=false;
+    struct Entry {int32_t id=-1;bool bone=false,own=false;};Entry cache[8];bool changed=false,hid=false;
     for(uint32_t i=0;i<count;++i) {
-        portal::Vec lowered;if(!bone_armor::Lowered(points[i],height,lowered))continue;
+        portal::Vec probe;   // only the captured native centre, (0,3,0), is a candidate
+        if(!bone_armor::Lowered(points[i],-bone_armor::HiddenDepth,probe))continue;
         int32_t id=c.instance;
         if(id<0&&(i>=c.count||!ReadAt(&id,c.indices+4ull*i,4)))continue;
         if(id<0)continue;
         auto& entry=cache[uint32_t(id)%8];
         if(entry.id!=id) {
-            portal::Instance instance{};entry.id=id;
+            portal::Instance instance{};portal::Vec origin{};entry={id,false,false};
             entry.bone=portal::Resolve(ReadAt,c,i,gameBase,instance)&&BoneArmorDefinition(instance.definition);
+            entry.own=entry.bone&&hide&&portal::Origin(ReadAt,instance,origin)&&bone_armor::Own(origin,hero);
         }
-        if(entry.bone){points[i]=lowered;changed=true;}
+        if(!entry.bone||(!entry.own&&!lower))continue;
+        portal::Vec placed;   // native height (3) without hiding: nothing to change for this lane
+        if(!bone_armor::Lowered(points[i],entry.own?-bone_armor::HiddenDepth:height,placed))continue;
+        points[i]=placed;changed=true;hid=hid||entry.own;
     }
+    if(hid&&!boneHiddenReported.exchange(true)&&logger)
+        logger("VR overlays: the hero's Bone Armor orbit hidden under the floor (by its centre) in every view and menu while the forearm grafts are on; other units keep theirs");
     return changed;
 }
 // Paladin aura overlays (overlay_view.h). The game camera's direction is
@@ -226,13 +249,18 @@ void CenterPosition(void* output,const void* input,uint32_t mask,const void* wor
     portal::Vec head;
     // 19 is the observed native local-point -> world-point path. Keep all
     // other conversions and non-center particle positions exactly native.
+    // Portal centres and others' Bone Armor height need the VR view; hiding the
+    // hero's own orbit does not (third person, overhead views, menus).
+    const bool view=mask==19&&wanted&&wanted()&&Head(head);
 #ifdef D2RVR_NATIVE_OPENXR
-    const bool bones=BoneArmorWanted();
+    portal::Vec hero{};
+    const bool hideOrbit=mask==19&&hideOwnOrbit.load(std::memory_order_relaxed)&&HeroPoint(hero);
+    const bool lowerOthers=view&&BoneArmorWanted(),bones=lowerOthers||hideOrbit;
 #else
     const bool bones=false;
 #endif
-    const bool centers=centerEnabled.load();
-    if(mask!=19||!portalReady.load()||(!centers&&!bones)||!wanted||!wanted()||!Head(head)) {
+    const bool centers=view&&centerEnabled.load();
+    if(mask!=19||!portalReady.load()||(!centers&&!bones)) {
         originalLocalPosition(output,input,mask,worker);return;
     }
     struct Stream {uint64_t data;uint32_t count,stride;};
@@ -256,7 +284,7 @@ void CenterPosition(void* output,const void* input,uint32_t mask,const void* wor
         [](uint64_t definition){return PortalDefinition(definition,true);});
     bool lowered=false;
 #ifdef D2RVR_NATIVE_OPENXR
-    lowered=bones&&LowerBoneArmor(points,out.count,c);
+    lowered=bones&&LowerBoneArmor(points,out.count,c,hero,hideOrbit,lowerOthers);
 #endif
     if(!portals&&!lowered){originalLocalPosition(output,input,mask,worker);return;}
     // A private input stream keeps the native transform/interpolation path and
@@ -412,6 +440,22 @@ void SetCenter(const float position[3]) {
     ReleaseSRWLockExclusive(&centerLock);
 }
 void ConfigurePortalCenters(bool enabled) {centerEnabled.store(enabled);}
+void ConfigureBoneArmorHidden(bool hidden) {
+#ifdef D2RVR_NATIVE_OPENXR
+    hideOwnOrbit.store(hidden);
+#else
+    (void)hidden;
+#endif
+}
+void SetHero(const float position[3]) {
+#ifdef D2RVR_NATIVE_OPENXR
+    AcquireSRWLockExclusive(&heroLock);
+    heroPoint={position[0],position[1],position[2]};heroAt=GetTickCount64();
+    ReleaseSRWLockExclusive(&heroLock);
+#else
+    (void)position;
+#endif
+}
 void ConfigureBoneArmorHeight(float units) {
 #ifdef D2RVR_NATIVE_OPENXR
     boneArmorHeight.store(bone_armor::Height(units));

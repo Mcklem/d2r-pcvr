@@ -16,9 +16,10 @@ constexpr const char* Codes[]={"hp1","hp2","hp3","hp4","hp5","mp1","mp2","mp3","
 constexpr unsigned Count=15;   // the potions, all required; then the extras, each optional
 // The arrow (the bow's), then the traps and bombs thrown by hand (#224, toss::Model),
 // then the gas and oil potions, which fly as their own bottles when thrown (#292).
-constexpr const char* Extras[]={"arw","tfb","tsw","tbs","tst","twk","gps","gpm","gpl","ops","opm","opl"};
-constexpr float ExtraExtent[]={.45f,.1f,.1f,.1f,.1f,.1f,.2f,.2f,.2f,.2f,.2f,.2f};
-constexpr unsigned ExtraCount=12,TossExtras=5;
+// Last, Bone Armor's three pieces (bn1..bn3, 1 m long, scaled when drawn; bone_graft.h).
+constexpr const char* Extras[]={"arw","tfb","tsw","tbs","tst","twk","gps","gpm","gpl","ops","opm","opl","bn1","bn2","bn3"};
+constexpr float ExtraExtent[]={.45f,.1f,.1f,.1f,.1f,.1f,.2f,.2f,.2f,.2f,.2f,.2f,.75f,.75f,.75f};
+constexpr unsigned ExtraCount=15,TossExtras=5,FirstBone=12;
 struct Vertex {float p[3],n[3],uv[2],glass;};
 struct Asset {std::vector<Vertex> vertices;std::vector<uint32_t> indices;unsigned w,h,format;std::vector<std::vector<uint8_t>> mips;};
 void Require(bool condition,const char* error){if(!condition)throw std::runtime_error(error);}
@@ -73,7 +74,7 @@ struct Models::Impl {
     ComPtr<ID3D12Resource> depth[2];
     struct Mesh {ComPtr<ID3D12Resource> vertices,indices,texture;D3D12_VERTEX_BUFFER_VIEW vb{};D3D12_INDEX_BUFFER_VIEW ib{};uint32_t code=0,count=0;float radius=0;};
     Mesh meshes[Count+ExtraCount];unsigned meshCount=Count;   // the extras loaded follow the potions
-    bool arrow=false;unsigned tosses=0;
+    bool arrow=false;unsigned tosses=0,bones=0;
     uint32_t width=0,height=0,srvStride=0,rtvStride=0,dsvStride=0;
     DXGI_FORMAT format=DXGI_FORMAT_UNKNOWN;bool encode=false;
 };
@@ -82,6 +83,7 @@ void Models::Reset(){impl.reset();}
 bool Models::Ready() const {return impl!=nullptr;}
 bool Models::HasArrow() const {return impl&&impl->arrow;}
 unsigned Models::Tosses() const {return impl?impl->tosses:0;}
+unsigned Models::Bones() const {return impl?impl->bones:0;}
 float Models::Radius(uint32_t code) const {
     if(!impl)return 0;
     code=(code&0xffffff)|(uint32_t(' ')<<24);
@@ -102,7 +104,7 @@ bool Models::Initialize(ID3D12Device* device,ID3D12CommandQueue* queue,DXGI_FORM
         // bow's draw guide and throws traps with nothing in the hand.
         std::string arrowNote;
         for(unsigned i=0;i<ExtraCount;++i) {
-            try{assets.push_back(Load(folder/(std::string(Extras[i])+".pvr"),ExtraExtent[i]));codes.push_back(code(Extras[i]));if(!i)p->arrow=true;else if(i<=TossExtras)++p->tosses;}
+            try{assets.push_back(Load(folder/(std::string(Extras[i])+".pvr"),ExtraExtent[i]));codes.push_back(code(Extras[i]));if(!i)p->arrow=true;else if(i<=TossExtras)++p->tosses;else if(i>=FirstBone)++p->bones;}
             catch(const std::exception& e){if(!i)arrowNote=e.what();}
         }
         p->meshCount=unsigned(assets.size());
@@ -112,13 +114,23 @@ bool Models::Initialize(ID3D12Device* device,ID3D12CommandQueue* queue,DXGI_FORM
         auto serialize=d12?reinterpret_cast<decltype(&D3D12SerializeRootSignature)>(GetProcAddress(d12,"D3D12SerializeRootSignature")):nullptr;
         Require(compile&&serialize,"potion shader compiler unavailable");
         constexpr char source[]=R"(
-cbuffer Scene:register(b0) {row_major float4x4 projection;float4 rotation;float4 translation;float4 light;float4 options;};
+cbuffer Scene:register(b0) {row_major float4x4 projection;float4 rotation;float4 translation;float4 light;float4 options;float4 occA;float4 occB;};
 Texture2D<float4> albedo:register(t0);SamplerState texSampler:register(s0);
 float3 Rotate(float3 v){return v+2*cross(rotation.xyz,cross(rotation.xyz,v)+rotation.w*v);}
 struct In {float3 p:POSITION;float3 n:NORMAL;float2 uv:TEXCOORD0;float glass:TEXCOORD1;};
 struct Out {float4 p:SV_Position;float3 view:TEXCOORD0;float3 n:TEXCOORD1;float2 uv:TEXCOORD2;float glass:TEXCOORD3;};
-Out VS(In v){Out o;o.view=Rotate(v.p)+translation.xyz;o.p=mul(float4(o.view,1),projection);o.n=Rotate(v.n);o.uv=v.uv;o.glass=v.glass;return o;}
+Out VS(In v){Out o;float s=translation.w>0?translation.w:1,w=occB.w>0?occB.w:s;o.view=Rotate(v.p*float3(w,s,w))+translation.xyz;float3 m=v.n/float3(w,s,w);v.n=m*rsqrt(max(dot(m,m),1e-12));o.p=mul(float4(o.view,1),projection);o.n=Rotate(v.n);o.uv=v.uv;o.glass=v.glass;return o;}
+// The first hit of a ray from the eye (view space origin) with a capsule, -1 for none.
+float Capsule(float3 rd,float3 pa,float3 pb,float r){
+    float3 ba=pb-pa,oa=-pa;float baba=dot(ba,ba),bard=dot(ba,rd),baoa=dot(ba,oa),rdoa=dot(rd,oa),oaoa=dot(oa,oa);
+    float a=baba-bard*bard,b=baba*rdoa-baoa*bard,c=baba*oaoa-baoa*baoa-r*r*baba,h=b*b-a*c;
+    if(h>=0&&a>1e-8){float t=(-b-sqrt(h))/a,y=baoa+t*bard;if(y>0&&y<baba)return t;
+        float3 oc=y<=0?oa:-pb;b=dot(rd,oc);c=dot(oc,oc)-r*r;h=b*b-c;if(h>0)return -b-sqrt(h);}
+    return -1;
+}
 float4 PS(Out v):SV_Target {
+    // A piece behind its forearm (occA/occB: wrist, elbow; occA.w the radius) is not drawn there.
+    if(occA.w>0){float d=length(v.view);float t=Capsule(v.view/d,occA.xyz,occB.xyz,occA.w);if(t>0&&t<d-.002)discard;}
     float3 n=normalize(v.n),eye=normalize(-v.view);
     float3 base=albedo.Sample(texSampler,v.uv).rgb;
     if(options.x>0)base=lerp(base,dot(base,float3(.2126,.7152,.0722))*.28,v.glass>.5?.85:.2);
@@ -132,7 +144,7 @@ float4 PS(Out v):SV_Target {
         Check(compile(source,sizeof(source)-1,"potion-models",nullptr,nullptr,"VS","vs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&vs,&errors),"potion vertex shader failed");
         Check(compile(source,sizeof(source)-1,"potion-models",nullptr,nullptr,"PS","ps_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&ps,&errors),"potion pixel shader failed");
         D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,0,0,0};
-        D3D12_ROOT_PARAMETER params[2]{};params[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;params[0].Constants={0,0,32};params[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+        D3D12_ROOT_PARAMETER params[2]{};params[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;params[0].Constants={0,0,40};params[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
         params[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;params[1].DescriptorTable={1,&range};params[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_ANISOTROPIC;sampler.MaxAnisotropy=4;sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
         sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
@@ -203,6 +215,7 @@ float4 PS(Out v):SV_Target {
             std::string text="Frame potions: 15 original 3D potion models ready; stereo belt and grip rendering active";
             text+=HasArrow()?"; the game's arrow model ready for the bow":"; arrow model unavailable ("+arrowNote+"), the bow keeps its draw guide";
             text+="; "+std::to_string(Tosses())+" of 5 thrown trap models";
+            text+="; "+std::to_string(Bones())+" of 3 Bone Armor pieces";
             log(text.c_str());
         }
         return true;
@@ -222,13 +235,21 @@ bool Models::Render(ID3D12GraphicsCommandList* list,ID3D12Resource* target,unsig
     for(unsigned i=0;i<scene.count;++i) {
         const auto& item=scene.items[i];if(!interaction::Valid(item.pose))continue;
         const auto code=(item.code&0xffffff)|(uint32_t(' ')<<24);unsigned mesh=0;while(mesh<p.meshCount&&p.meshes[mesh].code!=code)++mesh;if(mesh==p.meshCount)continue;
-        auto& m=p.meshes[mesh];float constants[32]{};math::Projection(f.left,f.right,f.down,f.up,.02f,constants);
+        auto& m=p.meshes[mesh];float constants[40]{};math::Projection(f.left,f.right,f.down,f.up,.02f,constants);
         const auto inverse=math::Conjugate(view.q),rotation=math::Multiply(inverse,item.pose.q);
         const auto translation=math::Rotate(inverse,item.pose.p-view.p),light=math::Rotate(inverse,math::Normalized({-.4f,.8f,.3f}));
         constants[16]=rotation.x;constants[17]=rotation.y;constants[18]=rotation.z;constants[19]=rotation.w;
-        constants[20]=translation.x;constants[21]=translation.y;constants[22]=translation.z;constants[24]=light.x;constants[25]=light.y;constants[26]=light.z;
+        constants[20]=translation.x;constants[21]=translation.y;constants[22]=translation.z;
+        constants[23]=item.scale>0&&item.scale<=4?item.scale:0;   // the shader's size multiplier (0 = 1)
+        constants[24]=light.x;constants[25]=light.y;constants[26]=light.z;
         constants[28]=item.empty?1:0;constants[29]=item.highlight?1:0;constants[30]=p.encode?1:0;
-        list->SetGraphicsRoot32BitConstants(0,32,constants,0);auto srv=p.srv->GetGPUDescriptorHandleForHeapStart();srv.ptr+=mesh*p.srvStride;list->SetGraphicsRootDescriptorTable(1,srv);
+        if(item.occR>0) {   // the forearm capsule in view space (the shader hides pixels behind it)
+            const auto a=math::Rotate(inverse,item.occA-view.p),b=math::Rotate(inverse,item.occB-view.p);
+            constants[32]=a.x;constants[33]=a.y;constants[34]=a.z;constants[35]=item.occR;
+            constants[36]=b.x;constants[37]=b.y;constants[38]=b.z;
+        }
+        constants[39]=item.width>0&&item.width<=4?item.width:0;   // the size across X and Z (0 = the scale)
+        list->SetGraphicsRoot32BitConstants(0,40,constants,0);auto srv=p.srv->GetGPUDescriptorHandleForHeapStart();srv.ptr+=mesh*p.srvStride;list->SetGraphicsRootDescriptorTable(1,srv);
         list->IASetVertexBuffers(0,1,&m.vb);list->IASetIndexBuffer(&m.ib);list->DrawIndexedInstanced(m.count,1,0,0,0);
     }
     return true;

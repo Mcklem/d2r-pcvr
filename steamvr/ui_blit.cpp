@@ -19,7 +19,7 @@ bool UiBlit::Initialize(ID3D12Device* device,void (*log)(const char*)) {
     constexpr char shader[]=R"(
 Texture2D<float4> nativeUi : register(t0);
 SamplerState mapSampler : register(s0);
-cbuffer Options : register(b0) {uint blackBackground;uint mapSide;uint mapFlags;float bearing;float wallAlpha;float zoom;float mapSpan;float xReach;float2 xShift;};
+cbuffer Options : register(b0) {uint blackBackground;uint mapSide;uint mapFlags;float bearing;float wallAlpha;float zoom;float mapSpan;float xReach;float2 xShift;int4 undim;};
 // xReach, xShift (the full map, xReach > 0; wrist_full_map.h XSearchAt): the X's search square,
 // xReach source pixels each way from the source's center moved by xShift, where the game draws
 // the hero's X on its full map at the game zoom the share was drawn at; sized to that X, so other
@@ -138,6 +138,38 @@ bool IsXPixel(float4 c) {
     float3 e=max(c.rgb,0)/opacity;
     return IsMarker(c)||(e.b>.2&&e.b>1.5*e.r&&e.b>1.15*e.g);
 }
+// undim (x, y, w, h; w 0 for none; menus only): the game's translucent backdrop under a
+// menu taken out of a source pixel. The game blends sRGB-encoded colour over the cleared
+// layer (alpha 1, the world fully through), the backdrop first: a pixel is what it drew
+// over the backdrop, colour C + B*T, transmittance T*Tb, where B and Tb are the backdrop's
+// alone. That is the most see-through of the band's corners and side middles that is
+// backdrop at all: near black, neither clear nor solid. The menu covers some of them, and
+// the game's dim may not reach all of them: on Cal's 3072-wide canvas it covers only the
+// band's left 1920 pixels (2026-10-28 capture), so the right edge is clear and must not
+// count (it did: the dim stayed, a ghost square on the hide). Without it: C and T. No
+// backdrop found leaves the pixel as it is.
+float4 Undim(float4 c) {
+    const int2 lo=undim.xy,hi=undim.xy+undim.zw-1;
+    const int mid=undim.y+undim.w/2;
+    const int2 at[6]={lo,int2(hi.x,lo.y),int2(lo.x,hi.y),hi,int2(lo.x,mid),int2(hi.x,mid)};
+    float4 back=0;
+    [unroll] for(int i=0;i<6;++i) {
+        const float4 s=nativeUi.Load(int3(at[i],0));
+        const float through=saturate(s.a);
+        const bool backdrop=through>.05&&through<.98&&max(max(s.r,s.g),s.b)<.02;
+        if(backdrop&&through>back.a)back=float4(max(s.rgb,0),through);
+    }
+    if(back.a<.05)return c;
+    const float t=saturate(saturate(c.a)/back.a);
+    if(t>1-1.0/512)return float4(0,0,0,1);   // only the backdrop here: nothing
+    float3 rgb=min(max(c.rgb-back.rgb*t,0),1-t);   // colour within its own coverage
+    // The panel's soft drop shadow (owner, 2026-10-28: a ghost square offset from the menu
+    // on the leather): black at most 60% covering is shadow, not art. Opaque black art and
+    // anything with colour keep their coverage.
+    const float opacity=1-t,encoded=max(max(rgb.r,rgb.g),rgb.b)/max(opacity,1e-6);
+    const float keep=max(smoothstep(.5,.6,opacity),smoothstep(.04,.08,encoded));
+    return float4(rgb*keep,1-opacity*keep);
+}
 // The colour out, from the source's (sRGB-encoded, alpha = 1 - coverage) colour.
 float4 Finish(float4 c,bool clearBack) {
     float opacity=1-saturate(c.a);
@@ -231,6 +263,7 @@ float4 PS(float4 position:SV_Position):SV_Target {
         if(any(pixel<0)||pixel.x>=w||pixel.y>=h)return clearBack?0:float4(.006,.006,.006,1);
     }
     float4 c=mapSide?nativeUi.SampleLevel(mapSampler,pixel/mapSize,0):nativeUi.Load(int3(uint2(pixel),0));
+    if(!mapSide&&undim.z>0&&undim.w>0)c=Undim(c);
     // with the arrow, the game's X itself painted over (the backing shows)
     if(markerReach>0&&distance(pixel,heroAt)<markerReach&&IsMarker(c))return float4(.006,.006,.006,wallAlpha);
     return Finish(c,clearBack);
@@ -249,7 +282,8 @@ float4 PS(float4 position:SV_Position):SV_Target {
     D3D12_ROOT_PARAMETER parameters[2]{};auto& parameter=parameters[0];parameter.ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameter.DescriptorTable={1,&range};parameter.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     parameters[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[1].Constants={0,0,10};parameters[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+    // Options: its 10 values, 2 of padding (undim starts a register), undim's 4
+    parameters[1].Constants={0,0,16};parameters[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC desc{};desc.NumParameters=2;desc.pParameters=parameters;
     D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
     sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -280,7 +314,7 @@ float4 PS(float4 position:SV_Position):SV_Target {
     if(log)log("Frame panels: GPU native UI alpha conversion ready; original artwork retained");
     return true;
 }
-bool UiBlit::Render(ID3D12Device* device,ID3D12GraphicsCommandList* list,ID3D12Resource* source,ID3D12Resource* target,bool blackBackground,bool squareMap,uint32_t mapFlags,float bearing,float wallAlpha,float zoom,float mapSpan,float xReach,float xShiftRight,float xShiftDown) {
+bool UiBlit::Render(ID3D12Device* device,ID3D12GraphicsCommandList* list,ID3D12Resource* source,ID3D12Resource* target,bool blackBackground,bool squareMap,uint32_t mapFlags,float bearing,float wallAlpha,float zoom,float mapSpan,float xReach,float xShiftRight,float xShiftDown,const int32_t* undimBand) {
     if(!pipeline||!source||!target)return false;
     const auto s=source->GetDesc(),t=target->GetDesc();
     if(!RenderTargetCompatible(s.Format,DXGI_FORMAT_R16G16B16A16_FLOAT)||
@@ -319,6 +353,11 @@ bool UiBlit::Render(ID3D12Device* device,ID3D12GraphicsCommandList* list,ID3D12R
     if(!squareMap||!(xReach>0.f)||!std::isfinite(xReach)||!std::isfinite(xShiftRight)||!std::isfinite(xShiftDown))xReach=xShiftRight=xShiftDown=0.f;
     const float search[3]={xReach,xShiftRight,xShiftDown};
     list->SetGraphicsRoot32BitConstants(1,3,search,7);
+    // undim (cbuffer offset 12, after xShift's register): only a menu's band inside the source
+    int32_t band[4]{};
+    if(!squareMap&&undimBand&&undimBand[0]>=0&&undimBand[1]>=0&&undimBand[2]>0&&undimBand[3]>0&&
+       int64_t(undimBand[0])+undimBand[2]<=int64_t(s.Width)&&int64_t(undimBand[1])+undimBand[3]<=int64_t(s.Height))std::memcpy(band,undimBand,sizeof band);
+    list->SetGraphicsRoot32BitConstants(1,4,band,12);
     auto barrier=[&](ID3D12Resource* r,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
         D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=r;
         b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;b.Transition.StateBefore=from;b.Transition.StateAfter=to;

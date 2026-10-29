@@ -2,11 +2,11 @@
   "schema": "vrmod-manifest/1",
   "id": "d2r-pcvr",
   "name": "D2R VR Unleashed",
-  "version": "0.3.28",
+  "version": "0.3.29",
   "publisher": "bearstonem",
   "homepage": "https://github.com/bearstonem/d2r-pcvr",
   "support": "https://discord.gg/DmbFfJAnnm",
-  "license": "MIT",
+  "license": "MPL-2.0",
   "description": "Diablo II reimagined for physical, immersive VR.",
   "icon": "launcher_icon.png",
   "d2rloader_mod": {
@@ -143,7 +143,7 @@
   "x-source": {
     "repo": "https://github.com/bearstonem/d2r-pcvr",
     "commit": "a0a4f5fade27c18b3e82e64f02832ba6888a05a6",
-    "release_tag": "v0.3.28-windows-preview",
+    "release_tag": "v0.3.29-windows-preview",
     "installer_app_id": "D2R-PCVR-Native-Windows",
     "read_with": "git show <commit>:<path> only, none of his code was run",
     "files": [
@@ -171,7 +171,7 @@
     "launch.options[0].runtimes": "steamvr: the launcher finds SteamVR's steamxr_win64.json through Steam's libraries (his Battle.net shortcut gets the folder from setup). vdxr and system are as in his wrapper. Nothing was started with a headset.",
     "logs": "d2r-pcvr-vrcam.log is D2RLoader's startup log of the plugin. Whether a mod's plugin writes it to mods\\D2R-PCVR\\d2rloader\\logs or to the global d2rloader\\logs is not stated in his files, so both are listed. The same goes for ReShade.log: his docs say 'game root' for the old layout, with RESHADE_BASE_PATH_OVERRIDE it should be mods\\D2R-PCVR\\reshade. pcvr-launch.log is written only by his Explorer hand-off, not when the launcher starts the game. A file that does not exist should just be skipped.",
     "uninstall": "Inno's default unins000.exe in {app} = {localappdata}\\Programs\\D2R PCVR (his smoke test uses that name). Only the EXE installer has it, not the ZIP / portable setup. /SILENT is left out on purpose: his uninstaller asks (ConfirmUninstall) and removes the mod from every Steam and Battle.net copy it manages. PrivilegesRequired=lowest, so no admin rights.",
-    "publisher": "bearstonem is the plugin's author (D2RPCVR_AUTHOR), his installer script says 'D2R PCVR contributors'. The license is his LICENSE: MIT, with BodyWalkVR's copyright line.",
+    "publisher": "bearstonem is the plugin's author (D2RPCVR_AUTHOR), his installer script says 'D2R PCVR contributors'. The license is his LICENSE: MPL-2.0. NOTICE keeps the MIT notice, with BodyWalkVR's copyright line, for the code released under it before.",
     "update": "tag pattern from his tags and installer/README.md. Whether GitHub marks his releases as pre-releases (this decides whether releases/latest finds them) is not in the repository.",
     "settings_app": "none, docs/MOD_COEXISTENCE.md says the legacy settings editor is not part of the native Windows package. Settings are mods\\D2R-PCVR\\d2rloader\\plugins\\d2r_pcvr.ini.",
     "requires[0].files": "the three hashes are the ones in his steamvr/evidence/2026-10-13-loader-archive-repack.json (identical_payloads), not recomputed from the ZIP here. His install.py checks only the archive hashes.",

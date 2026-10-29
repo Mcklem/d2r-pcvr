@@ -268,6 +268,8 @@ void Capture(framevr::interaction::Snapshot& s) {
     s.vitalsKnown=s.health>=0&&s.maxHealth>0&&s.health<=s.maxHealth*2&&s.maxHealth<1000000&&
         s.mana>=0&&s.maxMana>=0&&s.mana<=std::max(1.f,s.maxMana)*2&&s.maxMana<1000000;
     reason=s.vitalsKnown?0:6;
+    // Bone Armor's pool (132) and maximum (133): the forearm grafts (steamvr/bone_graft.h).
+    s.boneArmor=stat(player,132,0);s.boneArmorMax=stat(player,133,0);
     // ItemStatCost IDs verified against this game's own table: level=12,
     // experience=13. Experience rows contain one unsigned threshold per class
     // followed by ExpRatio; row 0 is MaxLvl, row 1 starts character level 1.

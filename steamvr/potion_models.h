@@ -16,6 +16,7 @@ public:
     bool HasArrow() const;   // the cache's arrow loaded: Scene items with ArrowCode draw it
     float Radius(uint32_t code) const; // widest horizontal extent of that model, metres; 0 unknown
     unsigned Tosses() const; // thrown trap models loaded (toss::Model codes; #224)
+    unsigned Bones() const;  // Bone Armor pieces loaded (bn1..bn3; bone_graft.h)
     void Reset();
     // Caller waited the eye's copy fence before reusing its RTV/depth resource.
     bool Render(ID3D12GraphicsCommandList*,ID3D12Resource*,unsigned eye,

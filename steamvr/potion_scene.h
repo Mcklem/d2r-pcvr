@@ -3,10 +3,27 @@
 #include "interactions.h"
 #include "dropped_bottles.h"
 namespace framevr::potions {
-struct Instance {interaction::Pose pose;uint32_t code=0;bool empty=false,highlight=false;};
+// scale: the model's size multiplier (0 = as cached, 1). occA/occB/occR: a
+// capsule (room space) that hides the model's pixels behind it (occR 0: none).
+// width: the size across the model's X and Z (0 = scale).
+struct Instance {interaction::Pose pose;uint32_t code=0;bool empty=false,highlight=false;float scale=0;
+    math::Vec occA{},occB{};float occR=0;float width=0;};
 // Four belt bottles, one held, one thrown, the arrow, a trap, a throwing potion
-// in flight, the emptied ones let go of.
-struct Scene {std::array<Instance,9+bottles::MaxBottles> items{};unsigned count=0;};
+// in flight, the emptied ones let go of; Bone Armor's forearm grafts (three per
+// arm) and up to six knocked off and falling (bone_graft.h).
+inline constexpr unsigned BoneItems=12;
+struct Scene {std::array<Instance,9+bottles::MaxBottles+BoneItems> items{};unsigned count=0;};
+// The cached Bone Armor pieces (prepare_potions.py): bn1..bn3, each 1 m long
+// along +Y, +Z out of the arm; drawn at length metres.
+inline uint32_t BoneCode(int piece){return interaction::Code('b','n',char('1'+(piece<0?0:piece>2?2:piece)));}
+// width: its thickness (metres; 0 = as long as it is thick, the model's own
+// proportions). arm: the forearm capsule the piece hides behind (radius 0: never).
+inline bool AddBone(Scene& s,interaction::Pose pose,int piece,float length,float width=0,math::Vec armA={},math::Vec armB={},float armR=0) {
+    if(s.count>=s.items.size()||!interaction::Valid(pose)||!(length>.005f&&length<1.f))return false;
+    const bool arm=std::isfinite(armA.x+armA.y+armA.z+armB.x+armB.y+armB.z+armR)&&armR>0&&armR<.2f;
+    if(!(std::isfinite(width)&&width>0&&width<1.f))width=0;
+    s.items[s.count++]={pose,BoneCode(piece),false,false,length,armA,armB,arm?armR:0,width};return true;
+}
 // The game's arrow (the cache's arw.pvr), along its pose's +Y, placed by its middle.
 inline constexpr uint32_t ArrowCode=interaction::Code('a','r','w');
 inline bool AddArrow(Scene& s,interaction::Pose middle) {

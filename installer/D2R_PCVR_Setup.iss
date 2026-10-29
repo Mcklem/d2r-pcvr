@@ -3,7 +3,7 @@
   #error PayloadDir must point to a verified native Windows package with its private Python runtime.
 #endif
 #ifndef ModVersion
-  #define ModVersion "0.3.28"
+  #define ModVersion "0.3.29"
 #endif
 #ifndef InstallerOutput
   #define InstallerOutput "Output"
@@ -53,7 +53,7 @@ VersionInfoProductName=D2R VR Unleashed
 VersionInfoProductVersion={#ModVersion}
 VersionInfoCompany=D2R PCVR contributors
 VersionInfoDescription=D2R VR Unleashed setup (Diablo II reimagined for physical, immersive VR; D2R PCVR, based on D2R VR by BodyWalkVR, MIT)
-VersionInfoCopyright=MIT licence. D2R PCVR contributors; D2R VR (c) 2026 BodyWalkVR
+VersionInfoCopyright=MPL-2.0 licence. D2R PCVR contributors; D2R VR (c) 2026 BodyWalkVR, MIT
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

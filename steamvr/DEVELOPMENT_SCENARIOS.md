@@ -55,7 +55,7 @@ choose local offline Play. Create a new character in the separate character list
 
 Normal native builds include the dormant backend. It only activates when the
 loader's active mod and exact metadata both identify the isolated environment.
-The hand-wheel DEV tab is hidden in ordinary play. VR Settings > Notes (Release Notes)
+The hand-wheel DEV tab is hidden in ordinary play. VR Settings > What's new
 is available in both regular and developer builds.
 
 ```powershell
@@ -140,7 +140,7 @@ Double Throw.
 
 ## Shield debug draws
 
-Select **DEV > Equipment > Render debug draws** to toggle the shield guard
+Select **DEV > Gear > Render debug draws** to toggle the shield guard
 overlay. It starts Off each launch and does not change combat rules or saved
 settings. Equip a shield (melee is Unleashed), close the menu, and
 compare the outline with the visible shield while moving and rotating it.
@@ -173,7 +173,7 @@ every stage. `mesh=1` confirms the current check actually uses measured bounds.
 
 ## By turns own picture
 
-Select **DEV > Equipment > By turns own picture** to step, for the session,
+Select **DEV > Gear > By turns own picture** to step, for the session,
 where the eye not drawn takes its picture with Stereo rendering: By turns.
 **FX** (the default, `[stereo] turns_keep_own=3`): where the game's effects
 layer has something - spells, flames, Tyrael's wings - it keeps its own
@@ -193,7 +193,7 @@ the same view in each state.
 
 ## By turns filter
 
-Select **DEV > Equipment > By turns filter** to switch, for the session, how
+Select **DEV > Gear > By turns filter** to switch, for the session, how
 the eye not drawn reads the pictures it is made from with Stereo rendering:
 By turns. **SHARP** (the default, `[stereo] turns_sharp=1`): Catmull-Rom,
 kept within the nearest texels. **SOFT** (0): bilinear, as before. The
@@ -203,7 +203,7 @@ ground textures and fine edges, looking with one eye then the other.
 
 ## By turns ghosts
 
-Select **DEV > Equipment > By turns ghosts** to switch, for the session, the
+Select **DEV > Gear > By turns ghosts** to switch, for the session, the
 strips beside near things that only the eye not drawn sees. **FIXED** (the
 default, `[stereo] turns_fill=1`): where its frame-old picture there shows
 something nearer since gone, what is behind beside the strip instead. **OLD**
@@ -215,7 +215,7 @@ switch. It changes no saved setting.
 
 ## By turns rims
 
-Select **DEV > Character > By turns rims** to switch, for the session, the
+Select **DEV > Hero > By turns rims** to switch, for the session, the
 dark rim the game draws round anything against the sky: **MOVED** with it
 (the default, `[stereo] turns_rims=1`) or **OLD** (0), left with the sky.
 In By turns, look at hut roofs, treetops and far buildings against the sky,
@@ -226,13 +226,37 @@ each switch. It changes no saved setting.
 
 ## Sky over rims
 
-Select **DEV > Character > Sky over rims** to switch, for the session,
+Select **DEV > Hero > Sky over rims** to switch, for the session,
 whether the sky is painted over that rim itself (`[sky] cover_rims`, **ON**
 by default) or the rim stays (**OFF**). It works in both stereo modes: with
 ON roofs, treetops and far buildings meet the sky without the thin dark
 outline (a pixel thinner), and By turns has no rim left to move. The button
 shows the current state, and the frame log records each switch. It changes
 no saved setting.
+
+## Pushable bodies
+
+**DEV > Bodies** tunes how monsters and townsfolk react to your weapon
+(VR Settings > World > Pushable bodies). Each button shows a value; each
+press steps it to the next and saves it as `[bodies] <key>` in the dev
+INI, so it stays across restarts. Bodies being pushed let go when a value
+changes; push one again to feel it. **Bodies: defaults** puts every value
+back. The INI takes any value in range, read live (the steps are only the
+buttons' stops), and the frame log records each press. The defaults are the
+owner's, tuned in the headset.
+
+| Button | Key | Default | Steps | What it changes |
+| --- | --- | --- | --- | --- |
+| Limb spring back | `limb_hertz` | 6 Hz | 1, 1.5, 2.5, 4, 6 | How fast a bent limb swings back to the animation |
+| Body spring back | `body_hertz` | 4 Hz | 1, 1.5, 2, 3, 4 | How fast a shoved body returns to its place and lean |
+| Bounce | `damping` | 0.4 | 0.15, 0.25, 0.4, 0.7, 1 | Damping of both springs: low wobbles past the pose, 1 settles without overshoot (the body's is 0.3 more) |
+| Push strength | `push_newtons` | 300 N | 300, 600, 1200, 2400 | The most a weapon or fist pushes with; a fifth of it in N m turns |
+| Joint strength | `joint_torque` | 40 N m/kg | 5, 10, 20, 40, 80 | How hard each joint holds the animated pose, per kg it holds up |
+| Body steadiness | `body_force` | 40 N/kg | 10, 20, 40, 80, 160 | How hard the hips hold their place, per kg of the body |
+| Hit kick | `hit_kick` | 1.5 N s | 0, 1.5, 3, 6, 10 | A landed hit's push on the struck limb, per square root of its kg (0 = none) |
+| Most bend | `max_bend` | 30 deg | 30, 45, 69, 90, 120 | How far a limb may swing off the animation |
+| Most shove | `max_shove` | 10 cm | 10, 20, 30, 50 | How far the whole body may be pushed |
+| Ease back | `ease_ms` | 100 ms | 100, 300, 600, 1000 | When the physics lets a body go (a menu, a reset, off), how long its pose eases back |
 
 ## Locations
 
@@ -259,7 +283,7 @@ It does not expand targeting, choose an exit or teleport on an interaction.
 
 ## Release reference in VR
 
-**VR Settings > Release Notes** is available to all players and shows one line
+**VR Settings > What's new** is available to all players and shows one line
 per feature from the last published
 release, currently [v0.3.17](https://github.com/bearstonem/d2r-pcvr/releases/tag/v0.3.17-windows-preview).
 The reference is built in and works offline. It does not list unreleased PRs

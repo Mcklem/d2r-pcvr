@@ -5,6 +5,7 @@
 #include "stick_gestures.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 using namespace framevr;
 static void Check(bool b,const char* label){if(!b){std::fprintf(stderr,"FAIL: %s\n",label);std::exit(1);}}
 struct Sim {
@@ -103,6 +104,29 @@ int main(){
         for(int i=0;i<5;++i)Frame(false,-1);
         Check(loot,"held down away from the map shows the loot labels");
         Frame(true,-1);Check(!loot,"looking at the map drops the loot labels");
+    }
+    {
+        // Which shown map the stick zooms: the wheel's MAP tab while it is up, else the wrist / palm map.
+        using mapzoom::View;
+        Check(mapzoom::Target(false,false)==View::None,"no map shown: the stick stays the game's");
+        Check(mapzoom::Target(true,false)==View::Wrist,"the wrist / palm map alone");
+        Check(mapzoom::Target(false,true)==View::Tab,"the wheel's MAP tab zooms too");
+        Check(mapzoom::Target(true,true)==View::Tab,"the MAP tab wins if both report shown in one frame");
+        Check(std::strcmp(mapzoom::Name(View::Tab),"MAP tab")==0&&std::strcmp(mapzoom::Name(View::Wrist),"wrist / palm map")==0&&
+              std::strcmp(mapzoom::Name(View::None),"none")==0,"the log names the map");
+    }
+    {
+        // The look aims at the shown map's own center, and a switch between maps starts afresh.
+        using mapzoom::View;
+        const math::Vec head{0,1.6f,0};const math::Quat q{0,0,0,1};
+        const auto ahead=At(0),behind=At(180),edge=At(25);   // edge: past LookIn, within LookOut
+        Check(mapzoom::LookedAt(View::Tab,View::Tab,false,head,q,behind,ahead)&&!mapzoom::LookedAt(View::Wrist,View::Wrist,false,head,q,behind,ahead),
+              "each map is looked at by its own center");
+        Check(!mapzoom::LookedAt(View::Tab,View::Wrist,true,head,q,ahead,edge),
+              "wrist to tab with the tab 25 degrees off: the wrist's hold does not carry over");
+        Check(mapzoom::LookedAt(View::Tab,View::Tab,true,head,q,behind,edge),"staying on the tab at 25 degrees holds the look");
+        Check(!mapzoom::LookedAt(View::None,View::None,true,head,q,ahead,ahead)&&!mapzoom::LookedAt(View::None,View::Tab,true,head,q,ahead,ahead),
+              "no map shown: never looked at");
     }
     {
         mapzoom::Gesture g;Check(g.Zoom()==1,"the first game starts at the whole map");

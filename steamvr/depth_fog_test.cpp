@@ -144,6 +144,9 @@ int main(int argc,char** argv) {try {
     }
     s={};s.scene[0]=s.scene[1]=.2f/150;s.edges={0,0,0,0};
     add("partly fogged silhouette retains its distance",s,{.5f,.5f,.5f});
+    // 10 past the start: a tenth of the way, eased in (smoothstep 0.25 = 0.15625), not the full 10% - no hard ring
+    s={};s.scene[0]=s.scene[1]=.2f/110;
+    add("the fog eases in past its start",s,{.984375f,.984375f,.984375f});
     for(unsigned backdrop=0;backdrop<2;++backdrop) {
         s={};s.flags[backdrop]=1;s.scene[0]=s.scene[1]=.01f;s.edges={0,0,0,0};
         add("sky or ceiling does not reintroduce near silhouette rim",s,{1,1,1});

@@ -384,7 +384,8 @@ std::atomic<bool> enemiesAlwaysHit{false};std::atomic<unsigned> forcedHits{0};
 // thread, so the landed hit waits here for its life write, consumed once.
 // IncomingWindowMs only bounds a hit whose damage never arrived (blocked).
 constexpr uint64_t IncomingWindowMs=50;
-struct IncomingHit {uintptr_t attacker=0,defender=0;int chance=-1;uint64_t at=0;};
+// missile: the forced check was a missile's, so its damage may arrive from the missile unit (type 3).
+struct IncomingHit {uintptr_t attacker=0,defender=0;int chance=-1;uint64_t at=0;bool missile=false;};
 thread_local IncomingHit incomingHit;thread_local bool incomingCheck=false;thread_local int incomingChance=-1;
 thread_local uintptr_t damageAttacker=0;
 std::atomic<unsigned> defenseScaled{0},defenseUnseen{0};std::atomic<int> lastDefenseChance{-1};
@@ -497,9 +498,9 @@ double SwingLifeFactor(uint32_t monster) {
 double ContactFactor(uintptr_t attacker,uintptr_t defender) {
     const auto now=GetTickCount64();
     uint32_t type=~0u;
-    const auto striker=[&](uintptr_t expected){return attacker==expected||(Read(attacker,type)&&type==3);};
+    const auto striker=[&](uintptr_t expected,bool missile=true){return attacker==expected||(missile&&Read(attacker,type)&&type==3);};
     if(incomingHit.attacker&&defender==incomingHit.defender&&now-incomingHit.at<=IncomingWindowMs&&incomingHit.chance>=0&&
-       striker(incomingHit.attacker))return DefenseFactor(incomingHit.chance);
+       striker(incomingHit.attacker,incomingHit.missile))return DefenseFactor(incomingHit.chance);
     if(shotHit.attacker&&defender==shotHit.defender&&now-shotHit.at<=IncomingWindowMs&&shotHit.chance>=0&&
        arDamage.load(std::memory_order_relaxed)&&striker(shotHit.attacker))return ArFactor(shotHit.chance,arFloor.load(std::memory_order_relaxed));
     if(buttonHit.attacker&&attacker==buttonHit.attacker&&defender==buttonHit.defender&&now-buttonHit.at<=IncomingWindowMs)return ButtonFactor(buttonHit);
@@ -597,10 +598,12 @@ void SetStat(uintptr_t unit,int stat,int value,int layer) {
         uint32_t source=~0u;Read(damageAttacker,source);
         const auto now=GetTickCount64();
         // The striking monster, or its missile (type 3) when the record names it.
-        const auto mine=[&](uintptr_t attacker,uint64_t at){return attacker&&now-at<=IncomingWindowMs&&(damageAttacker==attacker||source==3);};
+        // The striking monster, or its missile (type 3) when the record names it and the hit check was a missile's:
+        // a melee hit's record never claims a spell that lands in its window (audit 2026-10-24).
+        const auto mine=[&](uintptr_t attacker,uint64_t at,bool missile=true){return attacker&&now-at<=IncomingWindowMs&&(damageAttacker==attacker||(missile&&source==3));};
         int damage=0;double factor=1;
         if(Read(damageRecord+0x134,damage)&&damage>0) {
-            if(mine(hit.attacker,hit.at)) {
+            if(mine(hit.attacker,hit.at,hit.missile)) {
                 if(hit.chance<0)++defenseUnseen;
                 else {factor*=DefenseFactor(hit.chance);++defenseScaled;lastDefenseChance=hit.chance;}
             }
@@ -812,7 +815,7 @@ int Hit(uintptr_t attacker,uintptr_t defender,int accuracy,int missile) {
     }
     if(forcedIncoming) {   // landed: its damage is scaled at the life write
         incomingCheck=false;
-        incomingHit=result?IncomingHit{attacker,defender,incomingChance,GetTickCount64()}:IncomingHit{};
+        incomingHit=result?IncomingHit{attacker,defender,incomingChance,GetTickCount64(),missile!=0}:IncomingHit{};
     }
     roll=saved;meleeHit=savedMelee;
     if(!local&&!missile)IncomingRoll(attacker,defender,result!=0);
@@ -983,7 +986,7 @@ void ItemWear(uintptr_t game,uintptr_t owner,uintptr_t item) {
 }
 std::atomic<int> shieldWearShare{22};std::atomic<unsigned> shieldWearRolls{0},shieldWorn{0},chipWearRedirects{0};std::atomic<int> shieldDurability{-1};
 // A chip's pending struck wear on this thread: the block decided it, 4526C0 follows.
-struct ChipWear {uintptr_t defender=0;uint64_t at=0;};
+struct ChipWear {uintptr_t attacker=0,defender=0;uint64_t at=0;};   // attacker: only this hit's own wear call is redirected (audit 2026-10-24)
 thread_local ChipWear chipWear;
 // Game thread: the native wear roll on the defender's left-hand item (the shield).
 void WearShield(uintptr_t game,uintptr_t player) {
@@ -1004,8 +1007,24 @@ void WearShield(uintptr_t game,uintptr_t player) {
     if(after<before)++shieldWorn;
     shieldDurability=after;
 }
+// The equipped shield's durability on the server unit (stat 72), -1 when there is no shield,
+// it is indestructible or the accessors are unavailable. The UI poll (gamestate::LeftDurability)
+// is up to 200 ms old: two blocks inside one poll would refund a worn point twice (audit 2026-10-24).
+int32_t ServerShieldDurability(uintptr_t player) {
+    if(!struckWearIn)return -1;   // the inventory accessors are verified with the wear hook (Install)
+    const auto invFn=reinterpret_cast<InventoryFn>(d2rsig::Addr(InventoryRva));
+    const auto eqFn=reinterpret_cast<EquippedFn>(d2rsig::Addr(EquippedRva));
+    const auto stat=reinterpret_cast<GetStatFn>(d2rsig::Addr(GetStatRva));
+    if(!player||!invFn||!eqFn||!stat||!d2rsig::Addr(InventoryFileRva))return -1;
+    const uintptr_t inventory=invFn(player,reinterpret_cast<const char*>(d2rsig::Addr(InventoryFileRva)),0xb9e);
+    if(!inventory)return -1;
+    const uintptr_t shield=eqFn(inventory,5);
+    uint32_t h[3]{};
+    if(!shield||!Read(shield,h)||h[0]!=4)return -1;
+    return stat(shield,73,0)>0?stat(shield,72,0):-1;
+}
 void StruckWear(uintptr_t game,uintptr_t attacker,uintptr_t defender) {
-    if(chipWear.defender&&defender==chipWear.defender&&GetTickCount64()-chipWear.at<=IncomingWindowMs) {
+    if(chipWear.defender&&defender==chipWear.defender&&attacker==chipWear.attacker&&GetTickCount64()-chipWear.at<=IncomingWindowMs) {
         chipWear={};++chipWearRedirects;WearShield(game,defender);   // a chip is a use of the shield
         return;
     }
@@ -1024,7 +1043,8 @@ uint64_t NativeCallerRva(uintptr_t caller) {
     return base&&caller>=base&&caller-base<0x4000000?caller-base:0;
 }
 int GuardedBlock(uintptr_t game,uintptr_t attacker,uintptr_t defender,int avoid,int block,Guard g,uint32_t monster,bool inReach,uint64_t parryAt,framevr::strain::Rank rank,uintptr_t caller) {
-    const int32_t durability=gamestate::LeftDurability();   // before this block wears the shield
+    int32_t durability=ServerShieldDurability(defender);   // before this block wears the shield
+    if(durability<0)durability=gamestate::LeftDurability();
     // A broken guard leaks: the block becomes a chip (see chipEnabled).
     ChipHit chip{};
     if(g==Guard::Block&&chipEnabled.load(std::memory_order_relaxed)&&damageScaleReady.load(std::memory_order_relaxed)&&framevr::GuardBroken()) {
@@ -1059,11 +1079,17 @@ int GuardedBlock(uintptr_t game,uintptr_t attacker,uintptr_t defender,int avoid,
         chipHit=chip;++chipHits;
         framevr::ShieldGuardImpact(false,framevr::strain::RankWeight(rank));
         melee::QueueBlockSound();
-        if(shieldWearShare.load(std::memory_order_relaxed)>0)chipWear={defender,GetTickCount64()};   // its struck wear goes to the shield
+        if(shieldWearShare.load(std::memory_order_relaxed)>0)chipWear={attacker,defender,GetTickCount64()};   // its struck wear goes to the shield
     }
     else if(g==Guard::Open)++guardOpen;
     else {
         ++guardBlocks;
+        // Blocked (result 1): no damage follows, so the hit's records would otherwise outlive it
+        // for IncomingWindowMs and claim the next missile's life write or effects (audit 2026-10-24).
+        if(result==1) {
+            if(incomingHit.attacker==attacker&&incomingHit.defender==defender)incomingHit={};
+            if(missScope.attacker==attacker&&missScope.defender==defender)missScope={};
+        }
         // Unblockable damage can visit this adapter too. Do not consume the
         // pending parry unless the native shield roll actually took place.
         if(g==Guard::Parry){std::lock_guard lock(guardMutex);framevr::guard::SpendParry(guard.state,parryAt);}

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #include <algorithm>
 #include "native_skill_dispatch.h"
@@ -23,6 +24,8 @@
 #include "../steamvr/melee_hand_state.h"
 #include "../steamvr/target_cone.h"
 #include "bow.h"
+#include "projectiles.h"
+#include "../steamvr/zeal_light.h"
 #include "combat.h"
 #include "combat_rules.h"
 #include "sigscan.h"
@@ -84,7 +87,7 @@ std::atomic<DWORD> gameThread{0};
 std::atomic<unsigned> triggerPenalised{0},triggerOtherThread{0};
 thread_local int smiteDepth=0;   // inside the native Smite (the Smite hook)
 // Unleashed on-hit gate, per resolved contact (developer builds report it).
-enum OnHitReason {OnHitAllowed,OnHitUnknownCycle,OnHitRiposte,OnHitNotFull,OnHitCleave,OnHitFlurry,OnHitReasons};
+enum OnHitReason {OnHitAllowed,OnHitUnknownCycle,OnHitRiposte,OnHitNotFull,OnHitCleave,OnHitReasons};
 std::array<std::atomic<unsigned>,OnHitReasons> onHitWhy{};
 std::array<HandCombat,2> hands;
 std::mutex queueMutex;std::array<Engine,3> engines;HitSet shieldHits;
@@ -382,15 +385,15 @@ constexpr uint8_t Do14Sig[EntrySig]={0x40,0x53,0x55,0x56,0x57,0x41,0x54,0x41,0x5
 constexpr uint8_t Do32Sig[EntrySig]={0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x30};
 constexpr uint8_t Do64Sig[EntrySig]={0x40,0x55,0x53,0x41,0x54,0x41,0x55,0x41,0x56,0x41};
 constexpr uint8_t Do79Sig[EntrySig]={0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18};   // Conversion's, read the same way later that day
-// Fury (multi-hit, strike_skills.h Flurry). Start 37 writes the used skill node:
+// Fury and Zeal (multi-hit, strike_skills.h Sequence). Start 37 writes the used skill node:
 // hit count +0x24, target type +0x2c, target id +0x30. Do 13 (one call per hit)
 // reads the target from +0x2c/+0x30 (556965), lands the hit, then counts +0x24
 // down (556B56) and, only while hits remain, picks the next creature and rewinds
 // the hero's animation (4914E0) by the row's Param2 (+0x1BC, read at 556BF5).
 // With no attack animation that rewind would re-time the hero's walk/neutral
 // events, so each call is given a count of 1: one hit, and the jle skips the
-// next-target search and the rewind. These three sites are checked for Fury
-// and Zeal, the same functions.
+// next-target search and the rewind; the mod picks each next creature itself
+// (SequenceTarget). These three sites are checked for Fury and Zeal, the same functions.
 constexpr uint64_t Do13TargetRva=0x556965,Do13CountRva=0x556b56,Do13PaceRva=0x556bf5;
 constexpr uint8_t Do13TargetSig[]={0x41,0x8b,0x56,0x2c,0x48,0x8b,0xce,0x89,0x44,0x24,0x44,0x41,0x8b,0x46,0x30};   // mov edx,[r14+2Ch] .. mov eax,[r14+30h]
 constexpr uint8_t Do13CountSig[]={0x41,0xff,0x4e,0x24,0x41,0x83,0x7e,0x24,0x00,0x0f,0x8e,0xc3,0x00,0x00,0x00};    // dec [r14+24h]; cmp; jle 556C28 (the exit)
@@ -424,9 +427,162 @@ using framevr::strikeskills::Refusal;
 std::array<std::atomic<unsigned>,size_t(Refusal::Count)> strikeRefused{};
 std::atomic<unsigned> strikeArmed{0},strikeCast{0},strikeBasic{0},strikeStartRefused{0},strikeFallback{0};
 std::atomic<int> strikeSound{0};
-// Fury's or Zeal's flurry (game thread): the open cast whose hits later strokes deliver.
-framevr::strikeskills::Flurry flurry;
-std::atomic<unsigned> flurryCasts{0},flurryHits{0},flurryEarly{0},flurryForfeit{0},flurrySpent{0},flurryRefused{0},flurrySpread{0};
+// Fury's or Zeal's cast (game thread): its later hits, landed by the mod at the
+// native pace (SequenceHit), the hero free to move. Due time and the posted
+// flag cross to the input thread (Submit), nothing else.
+framevr::strikeskills::Sequence sequence;
+std::atomic<uint64_t> sequenceDueAt{0};std::atomic<bool> sequencePosted{false};
+std::atomic<unsigned> sequenceCasts{0},sequenceHits{0},sequenceRefused{0},sequenceNoTarget{0},sequenceLapsed{0},sequenceBusy{0};
+// Game thread, inside SequenceStrike: the hit is a cast's own (rev3), so ButtonHit
+// leaves it whole - no recovery factor, its on-hit effects. rev5: it is still the
+// latest attack swings are measured from, so swings during the cast stay scaled.
+bool sequenceScope=false;std::atomic<unsigned> sequenceWhole{0},skillWhole{0};
+// Zeal's light (zeal_light.h, Cal 2026-10-26, route A): the Den of Evil's light
+// missile where each enemy a Zeal hit lands on stands, as a client-only visual,
+// a short beam on every hit (rev2). The game thread decides (capped) and hands
+// only the cell over; the UI thread creates it (projectiles::CreateVisual, the
+// bow preview's path).
+std::atomic<bool> zealLight{true};std::atomic<int> zealFrames{framevr::zeallight::DefaultFrames};
+framevr::zeallight::Board zealBoard;   // game thread
+struct ZealCell {int x=0,y=0,frames=0;uint32_t monster=0;};
+std::mutex zealMutex;std::array<ZealCell,8> zealQueue{};size_t zealQueued=0;bool zealPosted=false;
+std::atomic<unsigned> zealLit{0},zealSame{0},zealFull{0},zealCreated{0},zealFailed{0},zealDropped{0},zealUntimed{0};
+// A client visual only (as bowvr::VisualParams): owner and origin the local hero,
+// the missile at a cell (flag 0x01), facing +y (0x20), range set (0x8000: +0x5c,
+// read at 1B7F6F). No server missile, attack, damage or packet.
+uintptr_t CreateBeam(uintptr_t hero,int x,int y,int frames) {
+    std::array<uint8_t,0x98> params{};
+    const auto put=[&](size_t at,auto value){std::memcpy(params.data()+at,&value,sizeof value);};
+    put(0,uint32_t(0x8021));put(8,hero);put(0x10,hero);put(0x20,framevr::zeallight::DenOfEvilLight);
+    put(0x24,x);put(0x28,y);put(0x2c,x);put(0x30,y+1);
+    put(0x3c,0);put(0x40,1);put(0x5c,frames);
+    return projectiles::CreateVisual(reinterpret_cast<uintptr_t>(params.data()));
+}
+bool HeroCell(uintptr_t hero,int& x,int& y) {
+    uintptr_t path=0;uint16_t p[4]{};
+    if(!Read(hero+0x38,path)||!Read(path,p))return false;
+    x=p[1];y=p[3];return true;
+}
+// rev4 (Cal: "the light appears too late. Needs to be immediately at the moment of
+// cast"): the effect takes about a second to appear, so while Zeal is armed a few
+// beams are kept lit, hidden below the world (bowvr::StageVisual); a hit shows the
+// longest-lit one on the struck creature. UI thread, posted from Submit.
+std::atomic<uint64_t> zealArmedAt{0},zealPoolPostedAt{0};std::atomic<int> zealPool{framevr::zeallight::DefaultPool};
+std::atomic<int> zealExit{framevr::zeallight::DefaultExit},zealExitMs{framevr::zeallight::DefaultExitMs};   // rev5
+std::atomic<float> zealTurn{0};   // rev7: [gameplay] zeal_light_turn, degrees added to the away-from-hero turn
+std::atomic<float> zealBehind{framevr::zeallight::DefaultBehindCells},zealSpread{framevr::zeallight::DefaultSpreadDeg};   // rev8
+uint32_t zealSeed=0x2545f491u;   // UI thread
+float ZealRandom(){zealSeed=zealSeed*1664525u+1013904223u+uint32_t(GetTickCount64());return float(zealSeed>>8)/16777216.f;}
+std::atomic<unsigned> zealWarm{0},zealCold{0},zealStaged{0},zealStageFailed{0},zealNoSlot{0},zealLevelDrops{0};std::atomic<uint64_t> zealWarmAge{0};
+bool zealPoolDropped=true;   // UI thread
+void __cdecl ZealPoolTick(const D2RL::PluginContext*,void*) noexcept {
+    const uint64_t now=GetTickCount64(),armedAt=zealArmedAt.load();
+    const int pool=zealPool.load();
+    const bool armed=zealLight.load()&&pool>0&&armedAt&&now-armedAt<framevr::zeallight::ArmedMs;
+    if(!armed) {
+        if(!zealPoolDropped&&(!zealLight.load()||pool<=0||now-armedAt>=framevr::zeallight::DisarmMs)) {
+            bowvr::DropStaged(framevr::zeallight::DenOfEvilLight);zealPoolDropped=true;
+        }
+        return;
+    }
+    uintptr_t hero=0;int x=0,y=0;
+    if(!combat::LocalPlayerUnit(hero)||!HeroCell(hero,x,y))return;
+    // rev11: a new level: the lit ones belong to the old one (its tick may never end them).
+    static int zealLevel=0;
+    if(const int level=interactionstate::CurrentLevel(gamestate::LocalPlayer(),now);level&&level!=zealLevel) {
+        if(zealLevel)zealLevelDrops+=bowvr::AbandonStaged(framevr::zeallight::DenOfEvilLight);
+        zealLevel=level;
+    }
+    // rev6: none reaches its native end (~12 s), which un-hid it for a frame at the
+    // hero's old cell; the oldest are retired, still hidden, and lit anew.
+    bowvr::RecycleStaged(framevr::zeallight::DenOfEvilLight,framevr::zeallight::RecycleMs);
+    bowvr::RecycleStagedFar(framevr::zeallight::DenOfEvilLight,x,y,framevr::zeallight::FarCells);   // rev11
+    const int hidden=int(bowvr::StagedHidden(framevr::zeallight::DenOfEvilLight));
+    for(int i=0;i<std::min(pool-hidden,2);++i) {   // at most two a tick: their lighting starts spread out
+        // rev11: no slot, no beam. A beam made without one was retired at once and
+        // its visual outlived it: a stray light at the hero's cell a second later.
+        if(!bowvr::StagedFree()) {
+            ++zealNoSlot;
+#ifdef D2RVR_DEVELOPER
+            static uint64_t censusAt=0;
+            if(trace.load()&&now>=censusAt) {
+                censusAt=now+3000;char census[200];bowvr::StagedCensus(census,sizeof census,x,y);
+                char line[300];snprintf(line,sizeof line,"Frame zeal light: pool has no free slot: %s",census);framevr::logging::Write(line);
+            }
+#endif
+            break;
+        }
+        bowvr::BeginStaging(framevr::zeallight::DenOfEvilLight);
+        const auto client=CreateBeam(hero,x,y,framevr::zeallight::NativeFrames);
+        bowvr::EndStaging();
+        if(client&&bowvr::StageVisual(client,x,y)){++zealStaged;zealPoolDropped=false;}
+        else {++zealStageFailed;if(client)bowvr::RetireVisualAt(client,0);break;}
+    }
+}
+void __cdecl ZealLightCreate(const D2RL::PluginContext*,void*) noexcept {
+    std::array<ZealCell,8> cells{};size_t queued=0;
+    {std::lock_guard lock(zealMutex);cells=zealQueue;queued=zealQueued;zealQueued=0;zealPosted=false;}
+    uintptr_t hero=0;
+    if(!combat::LocalPlayerUnit(hero)){zealDropped+=unsigned(queued);return;}
+    for(size_t i=0;i<queued;++i) {
+        const uint64_t until=GetTickCount64()+uint64_t(cells[i].frames)*framevr::zeallight::FrameMs;
+        // A lit beam from the pool, moved onto the creature; none left: a new one (late).
+        uint64_t age=0;bool bound=false;
+        // rev7 (Cal: "I just dont want it ever generating from behind my player. It just ends
+        // up looking like a flash of light in my visor"): the beam is turned so its light
+        // comes from beyond the creature, the hero -> creature direction (render x,z).
+        // rev8 (Cal: "I want it behind the enemy at different angles"): the beam stands
+        // behind the creature, seen from the hero, at a random angle within the back arc,
+        // its light coming from that same side (zeal_light.h Behind).
+        int hx=0,hy=0;const bool heroAt=HeroCell(hero,hx,hy);
+        const auto place=framevr::zeallight::Behind(heroAt?float(cells[i].x-hx):0.f,heroAt?float(cells[i].y-hy):0.f,
+            zealBehind.load(),zealSpread.load(),ZealRandom());
+        if(bowvr::ShowStaged(framevr::zeallight::DenOfEvilLight,cells[i].x,cells[i].y,until,zealExit.load(),uint64_t(zealExitMs.load()),
+                             place.awayX,place.awayZ,zealTurn.load(),place.offX,place.offZ,age,bound)) {
+            ++zealCreated;++zealWarm;zealWarmAge+=age;
+            if(trace.load()) {
+                char line[200];snprintf(line,sizeof line,"Frame zeal light: beam at %d,%d over monster %u for %d frames: a lit one (%llu ms lit%s)",
+                    cells[i].x,cells[i].y,cells[i].monster,cells[i].frames,(unsigned long long)age,bound?"":", visual not bound yet");
+                framevr::logging::Write(line);
+            }
+            continue;
+        }
+        const auto client=CreateBeam(hero,cells[i].x,cells[i].y,cells[i].frames);
+        // A client-made missile is not removed when its range runs out (rev2 test: the
+        // beams stayed): the bow's client tick retires it at its time (rev3).
+        const bool timed=client&&bowvr::RetireVisualAt(client,until);
+        if(client){++zealCreated;++zealCold;}else ++zealFailed;
+        if(client&&!timed)++zealUntimed;
+        if(trace.load()) {
+            char line[200];snprintf(line,sizeof line,"Frame zeal light: beam at %d,%d over monster %u for %d frames %s",
+                cells[i].x,cells[i].y,cells[i].monster,cells[i].frames,!client?"not created (client missile refused)":
+                timed?"created new (none lit), retired on time":"created new, NOT timed (stays)");
+            framevr::logging::Write(line);
+        }
+    }
+}
+// Game thread: a Zeal hit landed on this creature.
+void ZealStruck(uintptr_t monster,uint32_t id) {
+    if(!zealLight.load()||!monster||!id||!context||!threads||!threads->runOnUiThread)return;
+    using V=framevr::zeallight::Board::Verdict;
+    const int frames=zealFrames.load();
+    switch(zealBoard.Struck(id,GetTickCount64(),frames)) {
+        case V::SameHit:++zealSame;return;
+        case V::Full:++zealFull;return;
+        case V::Lit:break;
+    }
+    uintptr_t path=0;uint16_t p[4]{};
+    if(!Read(monster+0x38,path)||!Read(path,p)){++zealDropped;return;}
+    bool post=false;
+    {
+        std::lock_guard lock(zealMutex);
+        if(zealQueued<zealQueue.size()){zealQueue[zealQueued++]={int(p[1]),int(p[3]),frames,id};post=!zealPosted;zealPosted=true;++zealLit;}
+        else ++zealDropped;
+    }
+    if(post&&threads->runOnUiThread(context,&ZealLightCreate,nullptr)!=D2RL::Threads::Result::Success) {
+        std::lock_guard lock(zealMutex);zealDropped+=unsigned(zealQueued);zealQueued=0;zealPosted=false;
+    }
+}
 bool StrikeSkillVerified(int skill) {
     for(size_t i=0;i<std::size(StrikeNatives);++i)if(StrikeNatives[i].skill==skill)return strikeVerified[i];
     return false;
@@ -484,11 +640,11 @@ void QueueHeroSound(int sound) {
 std::atomic<unsigned> formVoices{0};
 uint32_t voiceSeed=0x9e3779b9u;   // game thread: the growl chance roll
 int VoiceRoll(){voiceSeed=voiceSeed*1664525u+1013904223u+uint32_t(GetTickCount64());return int((voiceSeed>>16)%100);}
-enum class StrikeOutcome {Basic,Cast,StartRefused,FollowUp};
+enum class StrikeOutcome {Basic,Cast,StartRefused};
 // Game thread, inside the stroke's contact scope (contact.defender = the struck
 // creature). Basic: refused before the start (the caller lands a basic attack).
 // A multi-hit skill's cast lands its first hit only; hits/pace receive its whole
-// hit count and its Param2 for the flurry.
+// hit count and its Param2 for the rest (Sequence).
 StrikeOutcome CastStrike(uintptr_t game,uintptr_t player,uint64_t session,int skill,int owner,int* hits=nullptr,int* pace=nullptr) {
     if(!strikeReady.load()||!StrikeSkillVerified(skill))return StrikeOutcome::Basic;
     using namespace spellvr::native;
@@ -526,12 +682,14 @@ StrikeOutcome CastStrike(uintptr_t game,uintptr_t player,uint64_t session,int sk
     if(Read(row+0x152,sound)&&sound>0)QueueHeroSound(sound);
     return StrikeOutcome::Cast;
 }
-// The next hit of the open flurry (strike_skills.h Flurry) on the creature this
-// stroke struck: game thread, inside the stroke's contact scope. Only the do
-// function runs, as natively for a cast's later hits: no start, no use check,
+// A later hit of the cast (strike_skills.h Sequence) on `target`: game thread,
+// outside any stroke (the hero's melee hit outside a physical swing). Only the
+// do function runs, as natively for a cast's later hits: no start, no use check,
 // no mana. The used skill node is aimed at the creature (type 1, its id) and
-// given a count of 1, so do 13 lands this one hit and never rewinds. False: not run.
-bool FollowUpStrike(uintptr_t game,uintptr_t player,int skill,int owner,uint32_t target) {
+// given a count of 1, so do 13 lands this one hit and never rewinds; do 13 still
+// checks native melee range and, if the creature is out of it, strikes the
+// nearest one in reach instead. False: not run.
+bool SequenceStrike(uintptr_t game,uintptr_t player,int skill,int owner,uint32_t target) {
     if(!strikeReady.load()||!StrikeSkillVerified(skill)||!framevr::strikeskills::MultiHit(skill))return false;
     using namespace spellvr::native;
     const auto node=reinterpret_cast<uintptr_t(*)(uintptr_t,int,int)>(d2rsig::Addr(nativeui::abi::SkillRva))(player,skill,owner);
@@ -546,9 +704,9 @@ bool FollowUpStrike(uintptr_t game,uintptr_t player,int skill,int owner,uint32_t
     if(!framevr::WriteMemory(reinterpret_cast<void*>(node+NodeTargetTypeOffset),&monster,sizeof monster)||
        !framevr::WriteMemory(reinterpret_cast<void*>(node+NodeTargetIdOffset),&target,sizeof target)||
        !framevr::WriteMemory(reinterpret_cast<void*>(node+NodeHitsOffset),&one,sizeof one))return false;
-    contact.skill=true;
+    sequenceScope=true;
     reinterpret_cast<int(*)(uintptr_t,uintptr_t,int,int,int,int,int)>(d2rsig::Addr(DispatchRva))(game,player,skill,level,1,0,0);
-    contact.skill=false;
+    sequenceScope=false;
     return true;
 }
 // Body volumes are deliberately approximate: native ground footprint, with
@@ -669,17 +827,8 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                         if(dual&&(!Read(weapon+8,selectedId)||selectedId!=r.sample.weapons.displayed[hand])){++dualRefused;continue;}
                         Feel(r,header[2]);
                         if(hits.Contains(r.session,r.sweep.stroke,header[2]))continue;
-                        // Fury's or Zeal's flurry (strike_skills.h Flurry): a landed stroke of a claw or weapon carrying
-                        // the open cast's skill, in its form, may be its next hit, timed from the
-                        // flurry's last hit: Unleashed any stroke but one swipe's follow-through;
-                        // Classic at the skill's own pace (sooner than the shared cadence would allow).
-                        using Feed=framevr::strikeskills::Flurry::Feed;
                         const uint32_t handCycle=cycleSession.load()==r.session?(speedHand?offCycleMs.load():cycleMs.load()):0;
                         const int shape=claws?interactionstate::ShapeForm(r.session,GetTickCount64()):0;
-                        if(const int lapsed=flurry.Lapse(r.session,r.at,handCycle,shape))flurryForfeit+=unsigned(lapsed);
-                        const uint64_t strokeKey=framevr::strikeskills::Flurry::StrokeKey(hand,r.sweep.stroke);
-                        const auto feed=r.sample.strikeSkill>=0?flurry.Feeds(r.session,r.sample.strikeSkill,shape,r.at,handCycle,attackSpeed.load(),strokeKey):Feed::None;
-                        const bool spread=flurry.SameStroke(strokeKey);   // the stroke already landed a Fury hit (rev6)
                         // Attack speed: a basic attack strikes one creature, and
                         // no sooner than its native attack cycle (IAS, WSM, class)
                         // after the last attack. A rolled miss spends the cycle
@@ -689,7 +838,7 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                             if(landed.Contains(r.session,r.sweep.stroke,0)){
                                 ++extraTargets;TraceRefusal(1,r,header[2]);if(dual||claws)continue;break;
                             }
-                            if(feed!=Feed::Hit&&!cadence.Ready(r.session,r.at)){
+                            if(!cadence.Ready(r.session,r.at)){
                                 ++tooSoon;TraceRefusal(0,r,header[2]);if(dual||claws)continue;break;
                             }
                             cycle=handCycle;
@@ -711,12 +860,6 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                                 strokeStart=true;
                             }
                         }
-                        // A flurry hit: a stroke's first landed contact, or (Unleashed, rev6) the next creature of
-                        // a later stroke that already landed one (Flurry: up to two per stroke; Classic lands one
-                        // creature per stroke). It lands the skill's own damage and on-hit effects; other creatures
-                        // that stroke reaches keep the stroke's true recovery, as cleave follow-ups.
-                        const bool followUp=feed==Feed::Hit&&(attackSpeed.load()||strokeStart||spread);
-                        const bool early=feed==Feed::TooSoon&&(attackSpeed.load()||strokeStart);   // an early stroke, not a cleave contact
                         if(!hits.Insert(r.session,r.sweep.stroke,header[2]))continue;
                         ++contacts;
                         const auto saved=contact;contact={local.game,player,unit,false};
@@ -731,12 +874,11 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                             if(state.cleaveSession!=r.session||state.cleaveStroke!=r.sweep.stroke){state.cleaveSession=r.session;state.cleaveStroke=r.sweep.stroke;state.cleaveLanded=0;}
                             cleave=combat::CleaveFactor(state.cleaveLanded,step,cleaveFloor.load(std::memory_order_relaxed));cleaveTracked=true;
                         }
-                        const float swingRecoverySaved=combat::SwingRecovery(followUp?1.f:recovery*cleave);
+                        const float swingRecoverySaved=combat::SwingRecovery(recovery*cleave);
                         // Unleashed on-hit gate (Cal, 2026-10-21): on-hit effects only on a full-cycle
                         // stroke's first landed contact; a riposte has earned them. Classic: native.
-                        // A flurry hit is a whole native hit of the cast: it has them.
                         auto onHit=combat::OnHit::Allowed;bool riposte=false;
-                        if(!attackSpeed.load()&&!followUp) {
+                        if(!attackSpeed.load()) {
                             onHit=combat::OnHitGate(strokeStart,since,cycle);
                             riposte=onHit!=combat::OnHit::Allowed&&combat::RiposteDue(header[2]);
                         }
@@ -746,27 +888,25 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                         // skill casts it on a full-cycle stroke's first landed contact (Unleashed) or on
                         // every paced contact (Classic); everything else, and a refused cast, stays the
                         // basic attack. The cast keeps this contact's scope, scaling and on-hit gate.
-                        // A multi-hit cast (Fury, Zeal) lands its first hit and opens the flurry; while it is
-                        // open, the hand's paced strokes land its next hits and early ones stay basic.
+                        // Fury and Zeal (Cal, 2026-10-25, rev2): the cast lands hit 1 here and the mod
+                        // lands the rest at the native pace (SequenceHit), the hero free to move; strokes
+                        // while it runs, and those before the next full cycle, stay basic attacks.
                         const int strikeSkill=r.sample.strikeSkill;
-                        auto strike=StrikeOutcome::Basic;int flurryHit=0;const uint64_t sinceFlurryHit=flurry.SinceHit(r.at);
+                        auto strike=StrikeOutcome::Basic;int castHits=0;
                         {
                             meleeweapon::Scope selected(player,weapon);
                             if(strikeSkill>=0) {
                                 ++strikeArmed;
-                                if(followUp) {
-                                    if(FollowUpStrike(local.game,player,strikeSkill,r.sample.skillOwner,header[2])) {
-                                        strike=StrikeOutcome::FollowUp;flurryHit=flurry.Hit(r.at,strokeKey);++flurryHits;if(spread)++flurrySpread;
-                                        if(!flurry.Left())++flurrySpent;
-                                    } else {flurry.End();++flurryRefused;}
-                                } else if(feed!=Feed::TooSoon&&framevr::strikeskills::Casts(strikeSkill,attackSpeed.load(),onHit==combat::OnHit::Allowed)) {
-                                    int castHits=0,pace=0;
-                                    strike=CastStrike(local.game,player,r.session,strikeSkill,r.sample.skillOwner,&castHits,&pace);
+                                if(sequence.Open(r.session)){++strikeBasic;++sequenceBusy;}
+                                else if(framevr::strikeskills::Casts(strikeSkill,attackSpeed.load(),onHit==combat::OnHit::Allowed)) {
+                                    strike=CastStrike(local.game,player,r.session,strikeSkill,r.sample.skillOwner,&castHits);
                                     if(strike==StrikeOutcome::Basic)++strikeFallback;
                                     if(strike==StrikeOutcome::Cast&&framevr::strikeskills::MultiHit(strikeSkill)) {
-                                        flurry.Begin(r.session,strikeSkill,shape,castHits,pace,r.at,strokeKey);flurryHit=1;++flurryCasts;
-                                    } else if(strike!=StrikeOutcome::Basic)flurry.End();   // another skill's cast ends an open flurry
-                                } else {++strikeBasic;if(early)++flurryEarly;}
+                                        sequence.Begin(r.session,strikeSkill,r.sample.skillOwner,shape,castHits,handCycle,GetTickCount64(),header[2]);
+                                        sequenceDueAt=sequence.DueAt();++sequenceCasts;
+                                        if(strikeSkill==framevr::strikeskills::Zeal)ZealStruck(unit,header[2]);
+                                    }
+                                } else ++strikeBasic;
                             }
                             if(strike==StrikeOutcome::Basic)
                                 reinterpret_cast<int(*)(uintptr_t,uintptr_t,int,int)>(d2rsig::Addr(AttackRva))(local.game,player,0,1);
@@ -774,19 +914,19 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                         // A cast that ran spends the stroke like a resolved swing, even if its
                         // hit check was not seen (the clocks must move on).
                         if(strike!=StrikeOutcome::Basic&&!contact.resolved){
-                            contact.resolved=true;contact.accepted=strike==StrikeOutcome::Cast||strike==StrikeOutcome::FollowUp;
+                            contact.resolved=true;contact.accepted=strike==StrikeOutcome::Cast;
                         }
                         // A form's attack voice (growl, or Rabies/Hunger's bite) on each stroke that
                         // natively is one attack (strike_skills.h FormVoice); the animation that plays it is skipped.
-                        // A flurry's later hits are the same native attack as its cast: silent.
-                        if(claws&&contact.resolved&&strike!=StrikeOutcome::FollowUp) {
+                        // A cast's later hits (Sequence) are the same native attack: silent.
+                        if(claws&&contact.resolved) {
                             const int voice=framevr::strikeskills::FormVoice(shape,attackSpeed.load(),
                                 onHit==combat::OnHit::Allowed,strike==StrikeOutcome::Cast?strikeSkill:-1,VoiceRoll());
                             if(voice){QueueHeroSound(voice);++formVoices;}
                         }
                         combat::GateOnHit(onHitSaved);
                         if(contact.resolved&&!attackSpeed.load())
-                            ++onHitWhy[strike==StrikeOutcome::FollowUp?OnHitFlurry:riposte?OnHitRiposte:onHit==combat::OnHit::CleaveFollowUp?OnHitCleave:
+                            ++onHitWhy[riposte?OnHitRiposte:onHit==combat::OnHit::CleaveFollowUp?OnHitCleave:
                                        onHit==combat::OnHit::NotFullCycle?OnHitNotFull:cycle?OnHitAllowed:OnHitUnknownCycle];
                         combat::SwingRecovery(swingRecoverySaved);
                         combat::PhysicalSwing(swing);
@@ -798,13 +938,9 @@ void __cdecl Apply(const D2RL::PluginContext*,void* token) noexcept {
                         if(contact.resolved&&strokeStart){recoveryState.Landed(r.session,r.at,cycle);state.strokeSession=r.session;state.strokeId=r.sweep.stroke;state.strokeRecovery=recovery;}
                         if(contact.resolved&&cleaveTracked)++state.cleaveLanded;
                         if(trace.load()) {
-                            // A flurry's hits: "cast 1/5", "flurry 3/5 after 352 ms" (since its previous hit);
-                            // an early stroke inside it: "basic_strike flurry_early after 40 ms".
+                            // "cast 1/5": Fury or Zeal, hit 1 of its count (SequenceHit logs the rest).
                             char tag[64];
-                            if(strike==StrikeOutcome::FollowUp&&spread)snprintf(tag,sizeof tag,"flurry %d/%d spread",flurryHit,flurry.Total());
-                            else if(strike==StrikeOutcome::FollowUp)snprintf(tag,sizeof tag,"flurry %d/%d after %llu ms",flurryHit,flurry.Total(),(unsigned long long)sinceFlurryHit);
-                            else if(flurryHit)snprintf(tag,sizeof tag,"cast %d/%d",flurryHit,flurry.Total());
-                            else if(strikeSkill>=0&&early)snprintf(tag,sizeof tag,"basic_strike flurry_early after %llu ms",(unsigned long long)sinceFlurryHit);
+                            if(strike==StrikeOutcome::Cast&&castHits>0)snprintf(tag,sizeof tag,"cast 1/%d",castHits);
                             else snprintf(tag,sizeof tag,"%s",strike==StrikeOutcome::Cast?"cast":strike==StrikeOutcome::StartRefused?"cast_start_refused":
                                           strikeSkill<0?"basic":"basic_strike");
                             TraceHit(r,header[2],contact.accepted?"LANDED":contact.resolved?"MISSED (roll)":"native rejected",since,cycle,effects,tag);
@@ -1130,6 +1266,71 @@ int Hostiles(Hostile* out,int max,float range,float& heroX,float& heroY) {
     }
     return n;
 }
+// The creature a cast's next hit goes to (strike_skills.h Sequence), as native
+// do 13 picks it: the nearest other live hostile within reach and in sight of
+// the hero, else the one the previous hit struck if it still is; 0: none (the
+// cast ends, as natively when no creature is left). Game thread.
+constexpr float SequenceReachCells=3.5f;   // about native melee reach; do 13 still checks its own
+// nearest: the nearest live hostile at any distance (cells; -1 none), for the trace.
+uint32_t SequenceTarget(uintptr_t game,uintptr_t self,uint32_t last,float& nearest) {
+    Vec selfPos{};uintptr_t buckets[128]{};nearest=-1;
+    if(!Position(self,selfPos)||!Read(game+0x4c6*8,buckets))return 0;
+    uint32_t best=0,again=0;float bestDistance=SequenceReachCells;unsigned visited=0;
+    for(uintptr_t unit:buckets) {
+        for(unsigned chain=0;unit&&chain<256&&visited++<4096;++chain) {
+            uintptr_t next=0;uint32_t header[4]{};Vec pos{};
+            if(!Read(unit+0x158,next)||!Read(unit,header))break;
+            if(header[0]==1&&header[3]!=0&&header[3]!=12&&Position(unit,pos)) {
+                const float d=std::hypot((pos.x-selfPos.x)*.5f,(pos.z-selfPos.z)*.5f);
+                if(d<60&&(nearest<0||d<nearest)&&reinterpret_cast<int(*)(uintptr_t,uintptr_t,uintptr_t)>(d2rsig::Addr(RelationRva))(game,self,unit)&&
+                   !(MonsterFlags(unit)&(kMonNpc|kMonInTown)))nearest=d;
+                if(d<=SequenceReachCells&&(header[2]==last||d<bestDistance)&&
+                   reinterpret_cast<int(*)(uintptr_t,uintptr_t,uintptr_t)>(d2rsig::Addr(RelationRva))(game,self,unit)&&
+                   !(MonsterFlags(unit)&(kMonNpc|kMonInTown))&&
+                   reinterpret_cast<int(*)(uintptr_t,uintptr_t,int)>(d2rsig::Addr(LineRva))(self,unit,0x804)==0) {
+                    if(header[2]==last)again=last;else{best=header[2];bestDistance=d;}
+                }
+            }
+            unit=next;
+        }
+    }
+    return best?best:again;
+}
+// The cast's next hit, when due (posted from Submit): game thread. Lands it on
+// SequenceTarget's creature; ends the cast when none is in reach, the game or
+// the form changed, or the hero is dead.
+void __cdecl SequenceHit(const D2RL::PluginContext*,void*) noexcept {
+    sequencePosted=false;
+    const auto now=GetTickCount64();const auto session=gamestate::LocalPlayer();
+    const auto finish=[&]{sequenceDueAt=sequence.DueAt();};
+    const int shape=interactionstate::ShapeForm(session,now);
+    if(sequence.Lapse(session,shape)){++sequenceLapsed;finish();return;}   // another game or form
+    if(!sequence.Due(session,now)){finish();return;}
+    Server local;{std::lock_guard lock(serverMutex);local=server;}
+    uint32_t id=0,mode=0;
+    const uintptr_t player=combat::LocalPlayerId(id)&&local.game&&local.session==session&&local.player==id?originalLookup(local.game,0,id):0;
+    if(!player||!Read(player+0xc,mode)||mode==0||mode==17){sequence.End();++sequenceLapsed;finish();return;}   // gone or dead
+    float nearest=-1;
+    const uint32_t target=SequenceTarget(local.game,player,sequence.Last(),nearest);
+    if(!target) {
+        if(trace.load()) {
+            char line[200];snprintf(line,sizeof line,"Frame melee trace: sequence skill=%d ended at hit %d/%d: no creature within %.1f cells in sight (nearest hostile %.1f cells)",
+                sequence.Skill(),sequence.Total()-sequence.Left(),sequence.Total(),SequenceReachCells,nearest);
+            framevr::logging::Write(line);
+        }
+        sequence.End();++sequenceNoTarget;finish();return;
+    }
+    const auto since=now-(sequence.DueAt()-sequence.Gap());
+    if(!SequenceStrike(local.game,player,sequence.Skill(),sequence.Owner(),target)){sequence.End();++sequenceRefused;finish();return;}
+    const int ordinal=sequence.Hit(now,target);++sequenceHits;
+    if(trace.load()) {
+        char line[200];snprintf(line,sizeof line,"Frame melee trace: sequence skill=%d hit %d/%d target=%u after %llu ms (pace %llu ms)%s",
+            sequence.Skill(),ordinal,sequence.Total(),target,(unsigned long long)since,(unsigned long long)sequence.Gap(),
+            sequence.Left()?"":" - spent");
+        framevr::logging::Write(line);
+    }
+    finish();
+}
 bool HirelingVitals(uint32_t hint,float& health,float& maxHealth,uint32_t& classId,uint32_t& unitId) {
     health=maxHealth=0;classId=unitId=0;
     const bool statReady=d2rsig::Check(nativeui::abi::StatRva,nativeui::abi::StatSig,sizeof nativeui::abi::StatSig);
@@ -1223,6 +1424,11 @@ void ConfigureSwingRecovery(bool on,float curve,float grace){swingRecovery=on;re
 void ConfigureCleave(float step,float floor){cleaveStep=step;cleaveFloor=floor;}
 void ConfigureAttackRating(bool native){attackRating=native;combat::ConfigureMeleeRolls(native);}
 void ConfigurePlayerFlinch(bool native){noFlinch=!native;}
+void ConfigureZealLight(bool on,float frames,float pool,float exit,float exitMs,float turn,float behind,float spread) {
+    zealLight=on;zealFrames=framevr::zeallight::Frames(frames);zealPool=framevr::zeallight::Pool(pool);
+    zealExit=framevr::zeallight::Exit(exit);zealExitMs=framevr::zeallight::ExitMs(exitMs);zealTurn=framevr::zeallight::Turn(turn);
+    zealBehind=framevr::zeallight::BehindCells(behind);zealSpread=framevr::zeallight::SpreadDeg(spread);
+}
 void ConfigureBlockSound(int sound) {
     static bool loaded=false; // settings thread only
     const int previous=blockSound.exchange(sound);
@@ -1236,11 +1442,44 @@ void ConfigureParrySound(int sound) {
     loaded=true;
 }
 void SetAttackCycle(uint64_t session,uint32_t milliseconds,int hand){if(hand==1)offCycleMs=milliseconds;else cycleMs=milliseconds;cycleSession=session;}
+// The hero is using a melee skill, not a basic attack: the used skill (skill list
+// +0x18, as the do functions read it) is past the basic ones (Skills.txt 0 Attack,
+// 1 Kick, 2 Throw, 3 Unsummon, 4 Left Hand Throw, 5 Left Hand Swing). Game thread.
+int UsedSkillId() {
+    uintptr_t game=0,self=0,list=0,node=0,row=0;int16_t id=-1;
+    return LocalServer(game,self)&&Read(self+0x100,list)&&Read(list+0x18,node)&&node&&Read(node,row)&&Read(row,id)?id:-1;
+}
+bool UsingSkill(){return UsedSkillId()>5;}
+// Zeal's light for a hit outside a physical swing: a swing cast's later hit
+// (sequenceScope: the creature do 13 really struck) or Zeal held on the trigger.
+void ZealButtonHit(uint32_t monster) {
+    const bool cast=sequenceScope&&sequence.Skill()==framevr::strikeskills::Zeal;
+    if(!zealLight.load()||(!cast&&UsedSkillId()!=framevr::strikeskills::Zeal))return;
+    uintptr_t game=0,self=0;
+    if(LocalServer(game,self)&&originalLookup)ZealStruck(originalLookup(game,1,monster),monster);
+}
 ButtonStroke ButtonHit(uint32_t monster) {
     ButtonStroke out;out.smite=smiteDepth>0;
     // The swing clocks belong to the game thread (Apply); anywhere else nothing is read or stamped.
     if(GetCurrentThreadId()!=gameThread.load(std::memory_order_relaxed)){++triggerOtherThread;return out;}
     const auto session=gamestate::LocalPlayer(),now=GetTickCount64();
+    // Melee skills deliver natively (Cal, 2026-10-26: "Melee SKILLS that are cast whether
+    // from a button or swinging the weapon ... should behave, in terms of damage delivery
+    // and timing, the way they would in normal unmodified D2R"; rev5): a skill's hit outside
+    // a physical swing - a trigger-held cast, Smite, a Fury or Zeal cast's later hit - is
+    // whole: no recovery factor, its on-hit effects. Unleashed attack rating still scales
+    // its damage (Cal: option A). It is still the latest attack, so swings right after it
+    // (between the skill's own casting windows) stay recovery-scaled.
+    if(sequenceScope||UsingSkill()) {
+        ++(sequenceScope?sequenceWhole:skillWhole);
+        ZealButtonHit(monster);
+        triggerLanded={session,now};++buttonAttacks;
+        if(trace.load()&&!sequenceScope) {
+            char line[160];snprintf(line,sizeof line,"Frame melee trace: trigger target=%u%s skill hit: whole (recovery 1, on-hit effects)",monster,out.smite?" smite":"");
+            framevr::logging::Write(line);
+        }
+        return out;
+    }
     const uint32_t cycle=cycleSession.load()==session?cycleMs.load():0;
     const uint64_t sinceSwing=std::min(hands[0].recovery.Since(session,now),hands[1].recovery.Since(session,now));
     const auto v=combat::TriggerRecovery(sinceSwing,cycle,swingRecovery.load(std::memory_order_relaxed),
@@ -1257,6 +1496,18 @@ ButtonStroke ButtonHit(uint32_t monster) {
 }
 void Submit(const Sample& sample) {
     if(sample.handIndex<0||sample.handIndex>1)return;
+    // Zeal's light (rev4): while a hand's trigger skill is Zeal, keep beams lit in advance.
+    if(const uint64_t now=GetTickCount64();zealLight.load()&&context&&threads&&threads->runOnUiThread) {
+        if(sample.strikeSkill==framevr::strikeskills::Zeal)zealArmedAt=now;
+        const uint64_t armedAt=zealArmedAt.load();
+        if(armedAt&&now-armedAt<framevr::zeallight::DisarmMs+1000&&now-zealPoolPostedAt.load()>=framevr::zeallight::PoolTickMs) {
+            zealPoolPostedAt=now;threads->runOnUiThread(context,&ZealPoolTick,nullptr);
+        }
+    }
+    // A Fury or Zeal cast's next hit, when due, every frame either hand reports (strike_skills.h Sequence): one post at a time.
+    if(const auto due=sequenceDueAt.load();due&&context&&threads&&threads->runOnGameThread&&
+       GetTickCount64()+framevr::strikeskills::SequenceEarlyMs>=due&&!sequencePosted.exchange(true)&&
+       threads->runOnGameThread(context,&SequenceHit,nullptr)!=D2RL::Threads::Result::Success)sequencePosted=false;
     uintptr_t token=0;
     {
         std::lock_guard lock(queueMutex);
@@ -1335,10 +1586,23 @@ void Report() {
     {   // Unleashed on-hit gate: resolved contacts with their effects, and gated ones by reason.
         unsigned w[OnHitReasons];bool any=false;for(int k=0;k<OnHitReasons;++k){w[k]=onHitWhy[k].exchange(0);any|=w[k]!=0;}
         if(any) {
-            char why[260];snprintf(why,sizeof why,"Frame on-hit gate: with effects=%u (unknown_cycle=%u riposte=%u flurry=%u) gated not_full_cycle=%u cleave_follow_up=%u",
-                w[OnHitAllowed]+w[OnHitUnknownCycle]+w[OnHitRiposte]+w[OnHitFlurry],w[OnHitUnknownCycle],w[OnHitRiposte],w[OnHitFlurry],w[OnHitNotFull],w[OnHitCleave]);
+            char why[260];snprintf(why,sizeof why,"Frame on-hit gate: with effects=%u (unknown_cycle=%u riposte=%u) gated not_full_cycle=%u cleave_follow_up=%u",
+                w[OnHitAllowed]+w[OnHitUnknownCycle]+w[OnHitRiposte],w[OnHitUnknownCycle],w[OnHitRiposte],w[OnHitNotFull],w[OnHitCleave]);
             framevr::logging::Write(why);
         }
+    }
+    if(const auto lit=zealLit.exchange(0),made=zealCreated.exchange(0),failed=zealFailed.exchange(0),same=zealSame.exchange(0),
+                  full=zealFull.exchange(0),dropped=zealDropped.exchange(0),untimed=zealUntimed.exchange(0);lit||made||failed||dropped||full||untimed) {
+        const auto warm=zealWarm.exchange(0),cold=zealCold.exchange(0);const uint64_t warmAge=zealWarmAge.exchange(0);
+        char line[400];snprintf(line,sizeof line,"Frame zeal light: beams asked=%u created=%u (lit in advance=%u, on average %llu ms; new=%u) refused=%u dropped=%u not timed=%u "
+            "(%d frames each); no beam: same hit twice=%u %zu showing (cap)=%u; pool %d: lit hidden=%u failed=%u no free slot=%u left in the old level=%u",lit,made,warm,
+            (unsigned long long)(warm?warmAge/warm:0),cold,failed,dropped,untimed,zealFrames.load(),same,framevr::zeallight::MaxBeams,full,
+            zealPool.load(),zealStaged.exchange(0),zealStageFailed.exchange(0),zealNoSlot.exchange(0),zealLevelDrops.exchange(0));
+        framevr::logging::Write(line);
+    }
+    if(const auto sw=skillWhole.exchange(0);sw) {
+        char line[120];snprintf(line,sizeof line,"Frame trigger melee: skill hits left whole=%u",sw);
+        framevr::logging::Write(line);
     }
     if(const auto tp=triggerPenalised.exchange(0),to=triggerOtherThread.exchange(0);tp||to) {
         char line[200];snprintf(line,sizeof line,"Frame trigger melee: hits inside a swing's cycle (recovery / on-hit gated)=%u off the game thread (not timed)=%u",tp,to);
@@ -1356,11 +1620,11 @@ void Report() {
                 w[size_t(Refusal::Delay)],w[size_t(Refusal::Other)],start,voices);
             framevr::logging::Write(why);
         }
-        const auto casts=flurryCasts.exchange(0),hits=flurryHits.exchange(0),early=flurryEarly.exchange(0),forfeit=flurryForfeit.exchange(0),
-                   spent=flurrySpent.exchange(0),refused=flurryRefused.exchange(0),spreadHits=flurrySpread.exchange(0);
-        if(casts||hits||early||forfeit||refused) {
-            char line[260];snprintf(line,sizeof line,"Frame melee flurries: casts=%u follow-up hits=%u (spread to a second creature=%u) early strokes (basic)=%u spent=%u hits forfeited=%u follow-up refused=%u",
-                casts,hits,spreadHits,early,spent,forfeit,refused);
+        const auto casts=sequenceCasts.exchange(0),hits=sequenceHits.exchange(0),refused=sequenceRefused.exchange(0),
+                   none=sequenceNoTarget.exchange(0),lapsed=sequenceLapsed.exchange(0),busy=sequenceBusy.exchange(0),whole=sequenceWhole.exchange(0);
+        if(casts||hits||refused||none||lapsed||busy||whole) {
+            char line[340];snprintf(line,sizeof line,"Frame melee sequences (Fury, Zeal): casts=%u later hits=%u (hit checks left whole=%u) strokes while running (basic)=%u "
+                "ended: no creature in reach=%u form/game change=%u hit not run=%u",casts,hits,whole,busy,none,lapsed,refused);
             framevr::logging::Write(line);
         }
     }

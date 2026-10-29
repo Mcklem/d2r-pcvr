@@ -87,9 +87,18 @@ int main(){
     Check(cadence.Ready(7,2000),"an unknown cycle never gates");
     {   // one batch, two claws on two creatures, applied out of time order
         Cadence c;c.Landed(7,3005,600);
-        Check(c.Since(7,3000)==0,"a contact timed before the latest landed hit is not recovered");
+        Check(c.Since(7,3000)==UINT64_MAX,"a contact timed before the only landed hit is the first stroke");
         c.Landed(7,3000,600);
         Check(c.Since(7,3010)==5&&!c.Ready(7,3604)&&c.Ready(7,3605),"the clock never runs back");
+        // Swing at 2000, then a batch applies the follow-through (2640, on creature A) before the
+        // real swipe (2600, on creature B): the swipe is measured from 2000, not scored as zero.
+        Cadence d;d.Landed(7,2000,600);d.Landed(7,2640,600);
+        Check(d.Since(7,2600)==600,"an out-of-order contact is measured from its own predecessor");
+        d.Landed(7,2600,600);
+        Check(d.Since(7,3300)==660&&d.Ready(7,3240),"the later hit still owns the clock");
+        Cadence e;e.Landed(7,1000,600);e.Landed(7,1500,600);
+        Check(e.Since(7,900)==UINT64_MAX&&e.Since(7,1200)==200,"before both hits: first stroke; between them: from the earlier");
+        Check(e.Since(8,1200)==UINT64_MAX,"another session has no predecessor either");
     }
     std::puts("attack-speed-test passed");
 }

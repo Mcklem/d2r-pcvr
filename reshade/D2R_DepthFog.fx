@@ -495,9 +495,13 @@ uniform bool UiMaskOff <
 // How much fog a depth value gets, 0..1. Empty depth (the void) is far: full fog.
 // How much the full fog covers, 0..1 (vrcam [fog] caves_strength in caves, else 1): below 1 the far end shows through.
 uniform float FogStrength < hidden = true; > = 1.0;
+// Eased in over its first 40 units: under 1 the curve leaves the start with no limit to its slope,
+// and the clear ground round the hero ended in a hard ring (the owner, 2026-10-28: "a circle of
+// clarity around the player ... with a very sharp line defining its border").
 float FogAt(float dist)
 {
-    return pow(saturate((dist - FogStart) / max(FogEnd - FogStart, 1.0)), FogCurve) * FogStrength;
+    const float ease = smoothstep(FogStart, FogStart + 40.0, dist);
+    return pow(saturate((dist - FogStart) / max(FogEnd - FogStart, 1.0)), FogCurve) * ease * FogStrength;
 }
 float FogAmount(float depth)
 {

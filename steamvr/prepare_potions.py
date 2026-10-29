@@ -12,8 +12,9 @@ import struct
 from pathlib import Path
 from game_assets import open_assets
 from potion_assets import Granny, texture
+import bone_pieces
 
-VERSION = 4   # the cache; 2 adds the arrow, 3 the thrown traps, 4 the throwing potions
+VERSION = 5   # the cache; 2 adds the arrow, 3 the thrown traps, 4 the throwing potions, 5 Bone Armor's pieces
 FORMAT = 1    # each .pvr file's layout
 CODES = tuple(f'{kind}p{tier}' for kind in 'hm' for tier in range(1, 6)) + ('rvs','rvl','yps','wms','vps')
 # The gas and oil potions thrown by hand (#292): each flies as its own bottle
@@ -129,7 +130,8 @@ def prepare(game, destination=None, force=False, casclib=None):
             try:
                 previous=json.loads(metadata.read_text())
                 if previous['version']==VERSION and previous['build']==assets.build_hash and all(
-                    hashlib.sha256((destination/(code+'.pvr')).read_bytes()).hexdigest()==previous['sha256'][code] for code in CODES+THROWN+(ARROW,)+tuple(TOSS)):
+                    hashlib.sha256((destination/(code+'.pvr')).read_bytes()).hexdigest()==previous['sha256'][code]
+                    for code in CODES+THROWN+(ARROW,)+tuple(TOSS)+tuple(c for c in bone_pieces.CODES if c in previous['sha256'])):
                     return previous
             except (ValueError,KeyError,OSError):
                 pass
@@ -151,8 +153,20 @@ def prepare(game, destination=None, force=False, casclib=None):
             model,albedo=unit_model(assets,unit_path)
             output[code]=encode_toss(Granny(assets.read(model)).meshes(),texture(assets.read(albedo)))
             sources[code]={'model':model,'albedo':albedo}
+        # Bone Armor's pieces for the forearm grafts (bone_pieces.py): optional, so a
+        # mesh this reader cannot split leaves the potions' cache intact.
+        bones={'pieces':0}
+        try:
+            chosen,found=bone_pieces.pieces(Granny(assets.read(bone_pieces.MODEL)).meshes())
+            tex=texture(assets.read(bone_pieces.ALBEDO))
+            for code,(verts,ix) in zip(bone_pieces.CODES,chosen):
+                output[code]=pack(verts,ix,tex)
+            bones={'pieces':len(chosen),'found':found,'triangles':[len(ix)//3 for _,ix in chosen]}
+            sources['bones']={'model':bone_pieces.MODEL,'albedo':bone_pieces.ALBEDO}
+        except (ValueError,KeyError,OSError,IndexError,struct.error) as error:
+            bones={'pieces':0,'error':str(error)}
         # Decode/validate all assets before replacing any live cache files.
-        result={'version':VERSION,'build':assets.build_hash,'models':len(CODES),'thrown':len(THROWN),'arrow':True,'toss':len(TOSS),'sources':sources,
+        result={'version':VERSION,'build':assets.build_hash,'models':len(CODES),'thrown':len(THROWN),'arrow':True,'toss':len(TOSS),'bones':bones,'sources':sources,
                 'sha256':{code:hashlib.sha256(data).hexdigest() for code,data in output.items()}}
         for code,data in output.items():
             temp=destination/(code+'.pvr.tmp');temp.write_bytes(data);os.replace(temp,destination/(code+'.pvr'))
@@ -169,3 +183,4 @@ if __name__=='__main__':
     args=parser.parse_args()
     result=prepare(args.game,args.output,args.force,args.casclib)
     print(f"Native potion cache: {result['models']} original 3D models with mipmapped textures")
+    print(f"Bone Armor pieces: {result.get('bones')}")

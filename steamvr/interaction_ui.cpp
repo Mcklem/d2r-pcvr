@@ -275,7 +275,12 @@ std::vector<uint8_t> Paint(const Snapshot& s,const Output& o,int selection,const
             const auto choice=available?dev::ChoiceFor(s.devClass,i):dev::Choices[i];
             frame({x,y,right,bottom},available&&o.hover==DeveloperCell(i));
             SetTextColor(dc,available?RGB(235,218,181):RGB(148,137,117));
-            const char* title=i==dev::DebugDrawsChoice?(s.devDebugDraws?"Render debug draws: ON":"Render debug draws: OFF"):
+            char tuned[64]{};
+            if(const int knob=dev::BodyKnob(i);knob>=0) {   // the value as it stands
+                const auto& info=limbs::KnobTable[size_t(knob)];
+                std::snprintf(tuned,sizeof tuned,"%s: %g%s%s",info.name,double(s.devBodies[size_t(knob)]),*info.unit?" ":"",info.unit);
+            }
+            const char* title=*tuned?tuned:i==dev::DebugDrawsChoice?(s.devDebugDraws?"Render debug draws: ON":"Render debug draws: OFF"):
                               i==dev::TurnsKeepOwnChoice?(s.devTurnsKeepOwn==1?"By turns own picture: NEAR":s.devTurnsKeepOwn==2?"By turns own picture: ALL":
                                                           s.devTurnsKeepOwn==3?"By turns own picture: FX":s.devTurnsKeepOwn==4?"By turns own picture: NEAR+FX":"By turns own picture: OFF"):
                               i==dev::TurnsSharpChoice?(s.devTurnsSharp?"By turns filter: SHARP":"By turns filter: SOFT"):
@@ -298,6 +303,7 @@ std::vector<uint8_t> Paint(const Snapshot& s,const Output& o,int selection,const
                                         "By turns: the rim round things against the sky stays with the sky, as before. Watch roof edges."):
              o.result==Result::SkyRimsUpdated?(s.devSkyRims?"The sky is painted over the dark rim round roofs and trees.":
                                            "The dark rim round roofs and trees against the sky stays, as before."):
+             o.result==Result::BodiesUpdated?"Saved to [bodies] in the dev INI. Bodies being pushed let go first; push one again to feel it.":
              o.result==Result::Applied?"Kit added to inventory. Equip it using the native inventory screen.":
              o.result==Result::Dispatched?"Commands sent. Check character stats / destination in game.":
              o.result==Result::KitRefused?"Kit could not be added. Check inventory space and the development log.":
@@ -310,7 +316,7 @@ std::vector<uint8_t> Paint(const Snapshot& s,const Output& o,int selection,const
         const RECT content{LONG(MapContent.left*768),LONG(MapContent.top*768),LONG(MapContent.right*768),LONG(MapContent.bottom*768)};
         frame({content.left-4,content.top-4,content.right+4,content.bottom+4});
         text("Waiting for map...",content);
-        SelectObject(dc,shortcutFont);text("Hand map + compass: VR Settings > HUD",{38,650,730,677});SelectObject(dc,font);
+        SelectObject(dc,shortcutFont);text("Zoom: right stick up / down.  Hand map + compass: VR Settings > Wrist",{38,650,730,677});SelectObject(dc,font);
     } else if(o.editor==3) {
         frame({20,28,748,681});
         text("QUICK USE / INVENTORY",{38,47,730,88});

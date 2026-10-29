@@ -12,8 +12,9 @@
 // (RankWeight). Strain shows as a soft black shadow at the rim of the view that
 // creeps inward; each block sends one pulse in from
 // the edge. Full strain breaks the guard: the light swells toward the centre
-// and breathes slowly. The shield still blocks throughout; what the player
-// loses is sight of the fight. Strain drains while the shield is down, and
+// and breathes slowly. The shield still meets every hit, but while the guard is
+// broken each block leaks a chip (vr/combat.cpp GuardedBlock); the player also
+// loses sight of the fight. Strain drains while the shield is down, and
 // also while it stays up once no hit has reached it (block or parry) for
 // recoverSeconds; the next hit stops the drain and restarts that wait. A broken
 // guard stays broken until it has fully faded. Raising it again part way keeps

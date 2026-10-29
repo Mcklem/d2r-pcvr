@@ -2,6 +2,7 @@
 #include <array>
 #include <algorithm>
 #include <string_view>
+#include "limb_tuning.h"
 
 namespace framevr::dev {
 inline constexpr char Mod[]="pcvr-dev";
@@ -34,8 +35,12 @@ inline constexpr int ThrowingPotionsChoice=44;
 inline constexpr int TurnsRimsChoice=45;
 // And [sky] cover_rims (on, off): the sky over that rim in the picture itself; on CHARACTER too.
 inline constexpr int SkyRimsChoice=46;
+// Pushable bodies (limb_tuning.h): one value each, stepped and saved to
+// [bodies] in the dev INI; the last puts them all back to their defaults.
+inline constexpr int BodyKnobChoice=47,BodyResetChoice=BodyKnobChoice+limbs::Knobs;
+inline int BodyKnob(int choice){return choice>=BodyKnobChoice&&choice<BodyResetChoice?choice-BodyKnobChoice:-1;}
 inline constexpr int PageSize=14;
-inline constexpr std::array<Choice,47> Choices{{
+inline constexpr std::array<Choice,BodyResetChoice+1> Choices{{
     {"Level 90", "All class skills rank 20 / test attributes", nullptr},
     {"Primary gear", "Class-specific unique equipment", nullptr},
     {"Alternate gear", "Equipment for the other class abilities", nullptr},
@@ -90,23 +95,39 @@ inline constexpr std::array<Choice,47> Choices{{
     {"Throwing potions", "Gas and oil potions / equip a stack to throw", nullptr},
     {"By turns rims", "Dark rim round roofs and trees against the sky: moved with them / left", nullptr},
     {"Sky over rims", "Sky painted over the dark rim round roofs and trees / rim kept", nullptr},
+    // Their titles show the value (interaction_ui.cpp); the details are limb_tuning.h's.
+    {"Limb spring back", "How fast a bent limb swings back to the animation", nullptr},
+    {"Body spring back", "How fast a shoved body returns to its place and lean", nullptr},
+    {"Bounce", "Low wobbles past the pose; 1 settles without overshoot", nullptr},
+    {"Push strength", "The most a weapon or fist pushes with", nullptr},
+    {"Joint strength", "How hard each joint holds the pose, per kg it holds", nullptr},
+    {"Body steadiness", "How hard the hips hold their place, per kg of the body", nullptr},
+    {"Hit kick", "A landed hit's push on the struck limb (0 = none)", nullptr},
+    {"Most bend", "How far a limb may swing off the animation", nullptr},
+    {"Most shove", "How far the whole body may be pushed", nullptr},
+    {"Ease back", "When the physics lets a body go, how long it eases back", nullptr},
+    {"Bodies: defaults", "Every value above back to its default", nullptr},
 }};
+static_assert(limbs::Knobs==10,"one BODIES choice per knob");
 // Stable action IDs are independent of their presentation order.
-inline constexpr int PageCount=5;
-inline constexpr const char* PageNames[]={"CHARACTER","EQUIPMENT","ACT I - II","ACT III","ACT IV - V"};
+inline constexpr int PageCount=6;
+inline constexpr const char* PageNames[]={"HERO","GEAR","ACT I-II","ACT III","ACT IV-V","BODIES"};
 inline constexpr const char* PageHelp[]={
     "Test presets replace stats and skills; gear and button bindings stay as they are.",
     "Starter kits work at low levels; unique kits are for level 90. Equip in Inventory.",
     "Area entrances and inspection spots. Bosses depend on this test character's save.",
     "Kurast Sewers: take the stairs back outside to inspect the entrance and interaction.",
-    "Area entrances. Travel does not complete quests, reset bosses or change difficulty."
+    "Area entrances. Travel does not complete quests, reset bosses or change difficulty.",
+    "Each press steps a value and saves it in the dev INI's [bodies]. Then push a body to feel it."
 };
 inline constexpr std::array<std::array<int,PageSize>,PageCount> Pages{{
     {{Level10Choice,Level30Choice,Level60Choice,0,HealChoice,UnlockQuestsChoice,ThrowingPotionsChoice,TurnsRimsChoice,SkyRimsChoice,-1,-1,-1,-1,-1}},
     {{StarterPrimaryChoice,StarterAlternateChoice,1,2,CrossbowChoice,BowChoice,SmallShieldChoice,DebugDrawsChoice,TurnsKeepOwnChoice,ThrowingChoice,PotionsChoice,TurnsSharpChoice,TurnsFillChoice,TorchChoice}},
     {{4,11,14,15,16,5,3,8,9,-1,-1,-1,-1,-1}},
     {{17,UpperKurastChoice,KurastSewersChoice,18,19,26,27,-1,-1,-1,-1,-1,-1,-1}},
-    {{6,7,20,21,22,23,24,25,-1,-1,-1,-1,-1,-1}}
+    {{6,7,20,21,22,23,24,25,-1,-1,-1,-1,-1,-1}},
+    {{BodyKnobChoice,BodyKnobChoice+1,BodyKnobChoice+2,BodyKnobChoice+3,BodyKnobChoice+4,BodyKnobChoice+5,BodyKnobChoice+6,
+      BodyKnobChoice+7,BodyKnobChoice+8,BodyKnobChoice+9,BodyResetChoice,-1,-1,-1}}
 }};
 inline int PageFor(int choice){for(int p=0;p<PageCount;++p)for(int id:Pages[p])if(id==choice&&id>=0)return p;return -1;}
 inline int SlotFor(int choice){for(const auto& page:Pages)for(int i=0;i<PageSize;++i)if(page[i]==choice&&choice>=0)return i;return -1;}

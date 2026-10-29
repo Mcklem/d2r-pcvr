@@ -29,6 +29,8 @@ namespace framevr {void SetTurnsFill(bool on){fill=on;}bool TurnsFill(){return f
 namespace framevr {void SetTurnsRims(bool on){rims=on;}bool TurnsRims(){return rims;}}
 static bool skyRims=true;
 namespace d2rcam {void SetSkyOverRims(bool on){skyRims=on;}bool SkyOverRims(){return skyRims;}}
+static int bodySaves=0;   // vrcam's [bodies] save: the value in use at once
+namespace d2rcam {bool SaveBodyTuning(int knob,float value){++bodySaves;framevr::limbs::Tuned().Set(framevr::limbs::Knob(knob),value);return true;}}
 
 static Threads::Result Queue(Threads::Callback callback,void* data,bool game) {
     assert(devscenarios::Status().result==Result::Pending);
@@ -353,6 +355,17 @@ int main(){
     }
     devscenarios::Request(Make(SkyRimsChoice));++local;Run(tasks.size()-1);--local;
     assert(skyRims&&devscenarios::Status().result==Result::Refused);
+    // BODIES: each press steps a value and saves it, local to the menu thread;
+    // the last button puts every value back to its default.
+    {
+        using namespace framevr::limbs;
+        devscenarios::Request(Make(BodyKnobChoice+LimbSpring));assert(!tasks.back().game);Run(tasks.size()-1);
+        assert(devscenarios::Status().result==Result::BodiesUpdated&&Tuned().Get(LimbSpring)==1&&bodySaves==1);
+        Snapshot snapshot;devscenarios::Capture(snapshot);assert(snapshot.devBodies[LimbSpring]==1);   // 6, the default, wraps round to 1
+        devscenarios::Request(Make(BodyKnobChoice+EaseBack));Run(tasks.size()-1);assert(Tuned().Get(EaseBack)==300);
+        devscenarios::Request(Make(BodyResetChoice));Run(tasks.size()-1);
+        assert(devscenarios::Status().result==Result::BodiesUpdated&&Tuned().Get()==Tuning::Standard()&&bodySaves==2+Knobs);
+    }
     assert(commands.size()==debugCommands&&itemCalls==debugItems);
     devscenarios::execute=Execute;
     inlineQueue=true;devscenarios::Request(Make(3,100));

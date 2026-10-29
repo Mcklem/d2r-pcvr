@@ -37,6 +37,7 @@
 #include "target_lock.h"
 #include "journal_ui.h"
 #include "../steamvr/native_panels.h"
+#include "../steamvr/leather_menu.h"
 #include "../steamvr/notice_card.h"
 #include "../steamvr/weapon_skills.h"
 #include "../steamvr/callback_ticket.h"
@@ -203,7 +204,7 @@ void MaintainNotice(const PluginContext* ctx) {
 }
 // The aura icon at the top left (native_hud.h AuraIconHider): active auras
 // show on the wrist, so it is hidden in every VR session, menus included,
-// while VR Settings > HUD > Companions & effects is On.
+// while VR Settings > Wrist > Buffs and companions is On.
 framevr::nativehud::AuraIconHider g_auraIcon;
 framevr::nativehud::AuraIconLog g_auraLog;
 void AuraLine(const char* line){if(g_auraLog.Allow())framevr::logging::Write(line);}   // detail lines, capped
@@ -323,6 +324,8 @@ std::atomic<uint32_t> g_menuEpoch{0};
 std::atomic<bool> g_journalOnly{false};
 std::atomic<bool> g_opaqueMenu{false};
 std::atomic<bool> g_upperBandMenu{false};
+std::atomic<bool> g_leatherMenu{false};
+std::atomic<uint32_t> g_panelChanges{0};   // every panel opened or closed (leather::Back)
 std::atomic<bool> g_npcChoices{false};
 std::atomic<uint32_t> g_questNotices{0};   // quest updates while the notification panel is hidden
 std::atomic<bool> g_noticePanel{false};     // the native NotificationPanel is open (hidden or not)
@@ -854,6 +857,7 @@ bool Has(const char* s, const char* part) {
     return false;
 }
 
+void TellSheetRects(const char* opened);   // below
 SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, const SharedEvents::UiMessageEvent* e, void*) noexcept {
     if (!e) return SharedEvents::UiMessageAction::Continue;
     const char* target = e->target ? e->target : "";
@@ -872,6 +876,8 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
         if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel")) { if (*text) g_panels.insert(text); }
         else if (!strcmp(command, "ClosePanel") || !strcmp(command, "UnloadPanel")) g_panels.erase(text);
         else if (!strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panels.clear();
+        if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel") || !strcmp(command, "ClosePanel") ||
+            !strcmp(command, "UnloadPanel") || !strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panelChanges.fetch_add(1);
         g_autoMap.store(g_panels.count("AutoMap") ? 1 : 0);
         framevr::fullmap::g_panel.store(g_panels.count("AutoMap") != 0);
         g_noticePanel.store(g_panels.count("NotificationPanel") != 0);
@@ -879,6 +885,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
             [](const auto& name){return framevr::panels::UpperBand(name);}));
         g_opaqueMenu.store(std::any_of(g_panels.begin(),g_panels.end(),
             [](const auto& name){return framevr::panels::OpaqueBackground(name);}));
+        g_leatherMenu.store(framevr::leather::OnSheet(g_panels));
         bool menu = false;
         for (const std::string& n : g_panels) if (IsMenuPanel(n)) { menu = true; break; }
         if(menu!=before)++g_menuEpoch;
@@ -893,6 +900,9 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
                 command,text,int(g_panels.count("NpcDialogPanel")!=0),int(g_panels.count("ScrollSpeechPanel")!=0),int(npc),menus);Log(b);
         }
         if(g_journalOnly.load())ReadJournalRect();
+#ifdef D2RVR_DEVELOPER   // a diagnostic: developer builds only
+        if(g_leatherMenu.load()&&!strcmp(command,"OpenPanel"))TellSheetRects(text);
+#endif
         if (menu != before) {
             std::string list;
             for (const std::string& n : g_panels) list += n + " ";
@@ -1099,6 +1109,8 @@ bool NoticeText(int kind,char* out,uint32_t size) {
 bool JournalOnly(){return g_journalOnly.load();}
 bool OpaqueMenuOpen(){return g_opaqueMenu.load();}
 bool UpperBandMenuOpen(){return g_upperBandMenu.load();}
+bool LeatherMenuOpen(){return g_leatherMenu.load();}
+uint32_t PanelChanges(){return g_panelChanges.load();}
 bool NpcChoicesOnly(){return g_npcChoices.load();}
 void ReadNpcChoicesRect() {
     if(!g_npcChoices.load()||!g_widgets||!g_widgets->getWidgetRect||!g_widgets->findPanel)return;
@@ -1126,6 +1138,22 @@ bool NpcChoicesRect(int32_t out[4]) {
     if(!g_npcChoices.load()||!npcChoicesAt||GetTickCount64()-npcChoicesAt>650)return false;
     std::copy_n(npcChoicesRect,4,out);return true;
 }
+// Once a session per panel: where the game puts the tabbed menu's widgets (their own
+// units), to compare with what shows on the leather (2026-10-28, a ghost square beside the
+// menu). Widget calls on this UI thread, as OnUiMessage runs.
+namespace {   // the declaration above OnUiMessage is in this file's anonymous namespace
+void TellSheetRects(const char* opened) {
+    static std::set<std::string> told;
+    if(!g_widgets||!g_widgets->findPanel||!g_widgets->getWidgetRect||!opened||!*opened||told.size()>24)return;
+    for(const char* name:{opened,"UISwitcher","ControllerOverlay"}) {
+        if(!told.insert(name).second)continue;
+        Widgets::WidgetHandle panel=0;Widgets::Rect r{};
+        const auto found=g_widgets->findPanel(g_ctx,name,&panel);
+        const auto read=found==Widgets::Result::Success?g_widgets->getWidgetRect(g_ctx,panel,&r):found;
+        char b[200];snprintf(b,sizeof b,"gamestate: leather menu panel '%s' rect %d,%d %dx%d (result %u)",name,r.x,r.y,r.width,r.height,unsigned(read));Log(b);
+    }
+}
+}  // namespace
 void ReadJournalRect() {
     if(!g_journalOnly.load()||!g_widgets)return;
     Widgets::WidgetHandle panel=0;Widgets::Rect r{};
@@ -1184,6 +1212,11 @@ void __cdecl ReadPlate(const PluginContext* ctx, void*) noexcept {
         Log(b);
     }
 }
+// A callback on the game's UI thread (the leather's walk click, vrcam).
+bool RunOnUi(Threads::Callback callback) {
+    return callback && g_ctx && g_threads && g_threads->runOnUiThread &&
+        g_threads->runOnUiThread(g_ctx, callback, nullptr) == Threads::Result::Success;
+}
 void PollPlate() {
     if (g_ctx && g_threads && g_threads->runOnUiThread && g_widgets) g_threads->runOnUiThread(g_ctx, &ReadPlate, nullptr);
 }
@@ -1228,6 +1261,26 @@ void __cdecl DispatchMenuToggle(const PluginContext* ctx,void*) noexcept {
 bool ToggleMenus() {
     return g_ctx&&g_threads&&g_threads->runOnUiThread&&g_widgets&&g_widgets->dispatchUiAction&&
         g_threads->runOnUiThread(g_ctx,&DispatchMenuToggle,nullptr)==Threads::Result::Success;
+}
+// Right B the game left unanswered on the leather (leather::Back): close the
+// tabbed menu as the left menu button does, on this UI thread, if it is still
+// only the menu and its pages (leather::BackCloses) and the cursor holds no item.
+void __cdecl DispatchLeatherClose(const PluginContext* ctx,void*) noexcept {
+    if(!g_widgets||!g_widgets->dispatchUiAction)return;
+    if(!framevr::leather::BackCloses(g_panels)){Log("gamestate: B on the leather - a cube or dialog is open over the menu; left to the game");return;}
+    PlayerHandle player=InvalidPlayerHandle;ItemHandle held=InvalidItemHandle;
+    if(g_inventory&&g_inventory->getCursorItem&&g_inventory->getLocalPlayer(ctx,&player)==Inventory::Result::Success&&
+       player!=InvalidPlayerHandle&&g_inventory->getCursorItem(ctx,player,&held)==Inventory::Result::Success&&held!=InvalidItemHandle) {
+        Log("gamestate: B on the leather - an item is on the cursor; menu left open");return;
+    }
+    Widgets::UiAction action{};action.structSize=sizeof action;
+    action.target="PanelManager";action.text=framevr::panels::TabbedMenu;action.command="ClosePanel";
+    const auto result=g_widgets->dispatchUiAction(ctx,&action);
+    char line[180];snprintf(line,sizeof line,"gamestate: B on the leather went unanswered by the game - ClosePanel UISwitcher (result %u)",unsigned(result));Log(line);
+}
+bool CloseLeatherMenu() {
+    return g_ctx&&g_threads&&g_threads->runOnUiThread&&g_widgets&&g_widgets->dispatchUiAction&&
+        g_threads->runOnUiThread(g_ctx,&DispatchLeatherClose,nullptr)==Threads::Result::Success;
 }
 void SetViewMode(uint32_t mode) { if (g_view.exchange(mode) != mode) Publish(); }
 

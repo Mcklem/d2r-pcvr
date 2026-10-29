@@ -19,9 +19,10 @@ int main() {
           "a strike skill is a gesture on either trigger, a press on a face button");
     Check(Has(Line(strikeskills::Bash,rightTrigger),"full-cycle")&&Has(Details(strikeskills::Bash,rightTrigger),"no on-hit effects")&&
           Has(Details(strikeskills::Bash,rightTrigger),"basic attack"),"a strike: the full-cycle rule, what quicker swings lose, when a swing stays basic");
-    Check(Has(Line(strikeskills::Zeal,rightTrigger),"full-strength")&&Has(Details(strikeskills::Zeal,rightTrigger),"on-hit effects")&&
-          Has(Details(strikeskills::Fury,rightTrigger),"however fast")&&Has(Details(strikeskills::Zeal,rightTrigger),"no more mana"),
-          "a flurry's later swings are full-strength hits with on-hit effects and no mana, whatever their speed");
+    Check(Has(Line(strikeskills::Zeal,rightTrigger),"land by themselves")&&Has(Line(strikeskills::Fury,rightTrigger),"basic attacks")&&
+          Has(Details(strikeskills::Fury,rightTrigger),"moving on to monsters nearby")&&Has(Details(strikeskills::Zeal,rightTrigger),"keep moving")&&
+          Has(Details(strikeskills::Zeal,rightTrigger),"Swings while it runs"),
+          "Fury and Zeal: one swing casts, the other hits land by themselves while you move, swings meanwhile stay basic");
     Check(Has(Line(strikeskills::Bash,rightFace),"On a trigger it is a gesture")&&Has(Details(strikeskills::Zeal,rightFace),"On a trigger it becomes a gesture"),
           "a face button points to the trigger gesture");
     Check(Gesture(weaponskills::Smite,leftTrigger)&&!Gesture(weaponskills::Smite,rightTrigger)&&Has(Details(weaponskills::Smite,leftTrigger),"shield"),
@@ -35,7 +36,10 @@ int main() {
     Check(Has(Line(Interact,rightFace),"pick up")&&Has(Line(weaponskills::Attack,rightTrigger),"attack"),"Interact and the basic attack say what they do, not \"cast\"");
     Check(Gesture(weaponskills::Throw,rightTrigger)&&!Gesture(weaponskills::Throw,leftTrigger)&&Has(Details(weaponskills::Throw,rightTrigger),"gas or oil potion")&&
           Has(Details(weaponskills::Attack,rightTrigger),"thrown by hand"),"Throw and Attack on the right trigger throw a held javelin or potion by hand");
+    for(int slot=0;slot<skills::Count;++slot)
+        Check(Gesture(weaponskills::BlessedHammer,slot)&&Gesture(weaponskills::Charge,slot),"Blessed Hammer and Charge are gestures from every slot");
+    Check(Has(Line(weaponskills::BlessedHammer,rightFace),"punch")&&Has(Details(weaponskills::Charge,leftTrigger),"weapon hand"),"the Paladin punches are described");
     if(failures)return 1;
-    std::puts("skill usage: every skill and slot fits; gestures and flurries described");
+    std::puts("skill usage: every skill and slot fits; gestures and native sequences described");
     return 0;
 }

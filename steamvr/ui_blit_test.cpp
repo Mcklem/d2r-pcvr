@@ -10,9 +10,10 @@ using Microsoft::WRL::ComPtr;
 static void Check(HRESULT hr,const char* what){if(FAILED(hr)){std::fprintf(stderr,"%s: %08lx\n",what,(unsigned long)hr);throw std::runtime_error(what);}}
 static float Half(uint16_t x){const int e=(x>>10)&31,m=x&1023;return (x&0x8000?-1.f:1.f)*std::ldexp(e?1.f+m/1024.f:m/1024.f,e?e-15:-14);}
 int main(int argc,char** argv){try {
-    bool blackBackground=false,typeless=false,squareMap=false,portrait=false;
+    bool blackBackground=false,typeless=false,squareMap=false,portrait=false,undim=false;
     for(int i=1;i<argc;++i) {if(!std::strcmp(argv[i],"--typeless"))typeless=true;
         else if(!std::strcmp(argv[i],"--square-map"))squareMap=true;
+        else if(!std::strcmp(argv[i],"--undim"))undim=true;
         else if(!std::strcmp(argv[i],"--portrait"))portrait=true;else blackBackground=true;}
     ComPtr<ID3D12Device> device;Check(D3D12CreateDevice(nullptr,D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device)),"device");
     framevr::UiBlit blit;if(!blit.Initialize(device.Get(),+[](const char* s){std::puts(s);}))return 1;
@@ -42,8 +43,20 @@ int main(int argc,char** argv){try {
     // Out-of-range alpha probes test the unfiltered menu path. Real map
     // pixels have valid transmittance before hardware filtering.
     if(squareMap){pixels[4][3]=0x3c00;pixels[5][3]=0;}
-    const float expected[8][4]={{0,0,0,0},{1,.21404114f,.05087609f,1},{.10702057f,.02543804f,0,.5f},{.16053085f,0,.03815707f,.75f},
+    float expected[8][4]={{0,0,0,0},{1,.21404114f,.05087609f,1},{.10702057f,.02543804f,0,.5f},{.16053085f,0,.03815707f,.75f},
         {0,0,0,0},{.21404114f,0,0,1},{1,1,1,1},{0,0,0,1}};
+    // --undim (the leather): a menu over the game's 50% black backdrop, which covers the whole
+    // 4x2 band. Its corners and side middles are the backdrop alone and come out empty; the
+    // text, the 50% border and the 75% icon drawn over it convert as they do without it
+    // (above), and a panel's faint black drop shadow over it (30%) comes out empty too. The
+    // top-right corner is clear (the game's dim does not reach every corner): it must not
+    // count as the backdrop, and stays empty.
+    const uint16_t dimmed[8][4]={{0,0,0,0x3800},{0x3c00,0x3800,0x3400,0},{0x3400,0x3000,0,0x3400},{0,0,0,0x3c00},
+        {0,0,0,0x3800},{0x3600,0,0x3200,0x3000},{0,0,0,0x359a},{0,0,0,0x3800}};
+    const float undimmed[8][4]={{0,0,0,0},{1,.21404114f,.05087609f,1},{.10702057f,.02543804f,0,.5f},{0,0,0,0},
+        {0,0,0,0},{.16053085f,0,.03815707f,.75f},{0,0,0,0},{0,0,0,0}};
+    if(undim){std::memcpy(pixels,dimmed,sizeof pixels);std::memcpy(expected,undimmed,sizeof expected);}
+    const int32_t band[4]={0,0,int32_t(sourceWidth),int32_t(sourceHeight)};
     void* data=nullptr;D3D12_RANGE empty{0,0};Check(upload->Map(0,&empty,&data),"map upload");
     for(UINT y=0;y<sourceHeight;++y)std::memcpy(static_cast<char*>(data)+y*footprint.Footprint.RowPitch,pixels[y*sourceWidth],sourceWidth*8);
     upload->Unmap(0,nullptr);
@@ -55,7 +68,7 @@ int main(int argc,char** argv){try {
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition={source.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE|D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     commands->ResourceBarrier(1,&barrier);
-    if(!blit.Render(device.Get(),commands.Get(),source.Get(),target.Get(),blackBackground,squareMap))throw std::runtime_error("render");
+    if(!blit.Render(device.Get(),commands.Get(),source.Get(),target.Get(),blackBackground,squareMap,0,0,1.f,1.f,0.f,0.f,0.f,0.f,undim?band:nullptr))throw std::runtime_error("render");
     barrier.Transition={target.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE};commands->ResourceBarrier(1,&barrier);
     from.pResource=target.Get();from.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;from.SubresourceIndex=0;
     to.pResource=readback.Get();to.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;to.PlacedFootprint=outputFootprint;commands->CopyTextureRegion(&to,0,0,0,&from,nullptr);
@@ -104,5 +117,6 @@ int main(int argc,char** argv){try {
         // alpha, framing and the unfiltered menu retain the strict tolerance.
         for(int c=0;c<4;++c)if(std::abs(Half(out[c])-want[c])>(squareMap&&c<3?2.f/255:.0006f)){correct=false;std::printf("pixel %u,%u lane %d = %f expected %f\n",x,y,c,Half(out[c]),want[c]);}}
     readback->Unmap(0,&empty);if(!correct)throw std::runtime_error("converted pixels differ");
-    std::puts(blackBackground?"Native UI GPU conversion passed: opaque black backing, unchanged artwork colors":"Native UI GPU conversion passed: orientation, SDR color, translucent edges, inverse alpha and clamping");return 0;
+    std::puts(undim?"Native UI GPU conversion passed: the menu's backdrop taken out, what is drawn over it unchanged":
+              blackBackground?"Native UI GPU conversion passed: opaque black backing, unchanged artwork colors":"Native UI GPU conversion passed: orientation, SDR color, translucent edges, inverse alpha and clamping");return 0;
 }catch(const std::exception& e){std::fprintf(stderr,"%s\n",e.what());return 1;}}

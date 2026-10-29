@@ -24,6 +24,7 @@
 
 #include "../camera/game_layout.h"
 #include "../sigscan/sigscan.h"
+#include "../../steamvr/far_objects.h"
 
 #include <D2RLPlugin/api.h>
 
@@ -46,6 +47,7 @@ using EnsureTiledFn = void*(__fastcall*)(uint32_t gameVersion, void* drlgRoom);
 using PushBackFn    = void(__fastcall*)(void* list, void* const* element);
 using SetRadiusFn   = void(__fastcall*)(float units);
 using GetRadiusFn   = float(__fastcall*)();
+using InRangeFn     = bool(__fastcall*)(const float* box, const float* hero, float radiusSq, int flags);
 
 const D2RL::PluginContext* g_ctx  = nullptr;
 uintptr_t                  g_base = 0;
@@ -67,6 +69,12 @@ SetRadiusFn            g_setModelRadius = nullptr;
 GetRadiusFn            g_getModelRadius = nullptr;
 std::atomic<uint64_t>  g_recalcUntil { 0 };
 bool                   g_recalcOk = false;
+
+// Big objects drawn farther: the game's test, hooked once the setting is first on.
+InRangeFn              o_inRange = nullptr;
+std::atomic<float>     g_bigRadius { 0.0f };
+std::atomic<uint32_t>  g_bigKept { 0 };
+uint64_t               g_nextInRangeTry = 0;
 
 // Both hooks run on the thread that runs SimulationTick; the flags only pair a
 // FindRooms call with the tick that made it.
@@ -272,6 +280,37 @@ bool Check(const Site& s) {
 	return d2rsig::Check(s.rva, s.bytes, s.size);
 }
 
+// The AssetStandbySystem's test for each model: kept drawn while true. A big model's reach grows
+// with its size (steamvr/far_objects.h); with the setting off it is the game's own test.
+bool __fastcall HookInRange(const float* box, const float* hero, float radiusSq, int flags) {
+	const float big = g_bigRadius.load(std::memory_order_relaxed);
+	if (big <= 0.0f) {
+		return Orig(o_inRange)(box, hero, radiusSq, flags);
+	}
+	const bool in = farobjects::InRange(box, hero, radiusSq, big);
+	if (in && !farobjects::InRange(box, hero, radiusSq, 0.0f)) {
+		g_bigKept.fetch_add(1, std::memory_order_relaxed);
+	}
+	return in;
+}
+
+// Its page is decrypted once the game has run it (the hero walked); tried at most twice a second.
+bool HookInRangeIn() {
+	if (o_inRange != nullptr) {
+		return true;
+	}
+	const uint64_t now = GetTickCount64();
+	if (g_ctx == nullptr || now < g_nextInRangeTry) {
+		return false;
+	}
+	g_nextInRangeTry = now + 500;
+	if (!Check(ModelInRange) || !d2rsig::Hook(ModelInRange.rva, ModelInRange.bytes, ModelInRange.size, reinterpret_cast<void*>(&HookInRange), reinterpret_cast<void**>(&o_inRange))) {
+		o_inRange = nullptr;
+		return false;
+	}
+	return true;
+}
+
 }   // namespace
 
 bool Install(const D2RL::PluginContext* ctx) {
@@ -343,6 +382,25 @@ bool SetModelRadius(float units) {
 }
 
 float ModelRadius() { return g_getModelRadius != nullptr ? g_getModelRadius() : -1.0f; }
+
+bool SetBigRadius(float units) {
+	const float big = farobjects::Normalize(units);
+	g_bigRadius.store(big, std::memory_order_relaxed);
+	if (big <= 0.0f && o_inRange == nullptr) {
+		return true;   // off: the game's test untouched
+	}
+	if (!HookInRangeIn()) {
+		return false;
+	}
+	if (g_recalcOk) {   // re-sort now, as for the model radius
+		*reinterpret_cast<volatile uint8_t*>(d2rsig::Addr(ModelRecalcEveryFrame)) = 1;
+		g_recalcUntil.store(GetTickCount64() + 500, std::memory_order_relaxed);
+	}
+	return true;
+}
+
+float BigRadius() { return g_bigRadius.load(std::memory_order_relaxed); }
+uint32_t TakeBigKept() { return g_bigKept.exchange(0, std::memory_order_relaxed); }
 int RoomsAddedLastTick() { return g_added.load(); }
 int RoomsLoadedTotal() { return g_loaded.load(); }
 

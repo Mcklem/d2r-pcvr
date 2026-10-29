@@ -46,10 +46,12 @@ class PotionTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<6I',result,32+3*36),(0,1,1,2,2,2))   # each mesh's indices after the last
         for code in TOSS:self.assertIn(code+'.pvr',FILES)
         self.assertEqual(sorted(TOSS),['tbs','tfb','tst','tsw','twk'])
-        # The six throwing potions (#292) fly as their own bottles: cache v4.
+        # The six throwing potions (#292) fly as their own bottles: cache v4;
+        # v5 adds Bone Armor's optional pieces (bone_pieces.py), outside FILES.
         for code in THROWN:self.assertIn(code+'.pvr',FILES)
         self.assertEqual(THROWN,('gps','gpm','gpl','ops','opm','opl'))
-        self.assertEqual(VERSION,4)
+        self.assertEqual(VERSION,5)
+        for code in ('bn1','bn2','bn3'):self.assertNotIn(code+'.pvr',FILES)
         with self.assertRaises(ValueError):encode_toss([('point',[(0,0,0,0,1,0,0,0)]*3,[0,1,2])],(4,4,78,[bytes(16)]))
 
     def test_texture_relative_offset_mips_and_truncation(self):

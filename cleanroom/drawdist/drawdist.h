@@ -26,4 +26,11 @@ int RoomsLoadedTotal();
 bool  SetModelRadius(float units);
 float ModelRadius();   // -1 when unknown
 
+// Big models kept drawn past the model radius by their size, out to this many world units
+// (steamvr/far_objects.h; 0 = off). Hooks the game's test the first time it is on; false until
+// that hook is in (it is tried again at most twice a second).
+bool     SetBigRadius(float units);
+float    BigRadius();
+uint32_t TakeBigKept();   // models kept past the model radius by their size since the last call
+
 }   // namespace d2rcam::drawdist

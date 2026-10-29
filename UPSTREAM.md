@@ -151,7 +151,7 @@ camera and contains none of its code.
 
 ## Licences
 
-D2R VR is MIT (`LICENSE`): use it, change it, build your own and share it -
+D2R VR is MIT (`NOTICE`): use it, change it, build your own and share it -
 keep the copyright notice. The licence does not cover the name "D2R VR" as a
 mark, nor BodyWalk / FlatVR, which are separate products.
 

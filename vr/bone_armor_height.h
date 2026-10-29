@@ -30,6 +30,16 @@ constexpr float Default=.3f;
 inline float Height(float configured) {
     return std::isfinite(configured)&&configured>=0.f&&configured<=Native?configured:Default;
 }
+// The hero's own Bone Armor: its origin within this many units of the head
+// across the ground (developer captures: 0.046-0.150). Others' stay native.
+constexpr float OwnReach=1.f;
+// While the forearm grafts carry it (steamvr/bone_graft.h), the hero's own
+// orbit centre (mask 19) goes this far under the floor, and the orbit with it.
+constexpr float HiddenDepth=200.f;
+inline bool Own(portal::Vec origin,portal::Vec head) {
+    const float dx=origin.x-head.x,dz=origin.z-head.z;
+    return portal::Finite(origin)&&portal::Finite(head)&&dx*dx+dz*dz<=OwnReach*OwnReach;
+}
 // Only the captured native centre moves; any other local point an emitter
 // converts stays native. False when the height is the native one.
 inline bool Lowered(portal::Vec local,float height,portal::Vec& result) {

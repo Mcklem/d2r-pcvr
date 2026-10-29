@@ -100,6 +100,12 @@ int  GetRenderRadius();
 bool  SetModelRadius(float units);
 float GetModelRadius();   // -1 when unknown
 
+// Big models (trees, houses, walls) kept drawn past the model radius by their size, out to this
+// many world units (steamvr/far_objects.h); 0 = off. False until the game's test is hooked.
+bool     SetBigModelRadius(float units);
+float    GetBigModelRadius();
+uint32_t TakeBigModelsKept();   // models kept past the model radius by their size since the last call
+
 // Diagnostics for a status line: which hook groups are live.
 struct Status {
 	bool cameraHooks;     // all camera hooks installed

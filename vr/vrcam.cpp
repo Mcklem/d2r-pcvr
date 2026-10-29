@@ -27,12 +27,16 @@
 #include "../steamvr/profile.h"
 #include "../steamvr/resource_descriptions.h"
 #include "../steamvr/vr_settings.h"
+#include "../steamvr/biome_list.h"
+#include "../steamvr/limb_tuning.h"
+#include "../steamvr/far_objects.h"
 #include "../steamvr/interact_press.h"
 #include "../steamvr/sewer_interaction.h"
 #include "../steamvr/dropped_item_labels.h"
 #include "../steamvr/arm_pointing.h"
 #include "../steamvr/aim_reach.h"
 #include "../steamvr/torch_light.h"
+#include "../steamvr/leather_menu.h"
 #include <tlhelp32.h>
 #include <intrin.h>
 #include <xinput.h>
@@ -94,6 +98,7 @@ namespace gamestate { uint32_t MenuEpoch(); }
 namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandsKey(); bool MenuOpen(); int ObjectLight(uint32_t txt, uint32_t mode, float rgb[3]); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); bool SetAutoMap(bool open); void PollPlate(); bool PlateRect(int32_t out[4]); }
 namespace gamestate {bool LeftShield();}
 namespace gamestate {bool OpaqueMenuOpen();}
+namespace gamestate {bool RunOnUi(D2RL::Threads::Callback callback);}
 #include "d2r_vr_state.h"
 
 #include "MinHook.h"
@@ -208,6 +213,7 @@ struct Settings {
     std::atomic<int>   entityPoolMb{280};
     std::atomic<int>   rings{int(framevr::settings::Definitions[framevr::settings::DrawDistance].defaultValue)};
     std::atomic<float> modelRadius{framevr::settings::Definitions[framevr::settings::ObjectDistance].defaultValue};
+    std::atomic<float> bigRadius{framevr::settings::Definitions[framevr::settings::BigObjectDistance].defaultValue};
     std::atomic<int>   hudMap{0};           // [hud] map: 0 in the picture, 1 out of it, into its own texture
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
@@ -473,6 +479,9 @@ bool IniB(const wchar_t* sec, const wchar_t* key, bool def) { return IniF(sec, k
 // 121) come from level data too, and are open air.
 SRWLOCK g_biomeLock = SRWLOCK_INIT;
 std::vector<std::string> g_outdoor;
+// [fog] no_fog_areas: open-air areas with no added fog, as caves with [fog] caves=0. The River of
+// Flame (act4_lava) by default: its lava's own glow and haze stay the game's (the owner, 2026-10-28).
+std::vector<std::string> g_noFogBiomes;
 char g_biome[96] = "";                  // last name the game set, bare (no folder, no extension), lower case
 std::atomic<uint32_t> g_biomeGen{0};    // bumped by every SetCurrentBiome
 
@@ -480,17 +489,11 @@ void LoadOutdoorBiomes() {
     wchar_t buf[1024];
     GetPrivateProfileStringW(L"sky", L"outdoor", L"act1_outdoors,act1_tristram,act1_court,act2_outdoors,act2_town,act3_jungle,act3_docktown,act3_kurast,act3_travincal_outdoors,act4_mesa,act4_lava,act4_diab,expansion_town,expansion_siege,expansion_mountaintop,expansion_ruins,expansion_ruins_snow,expansion_wildtemple_tempenter",
                              buf, (DWORD)std::size(buf), g_iniPath);
-    std::vector<std::string> list;
-    std::string cur;
-    for (const wchar_t* p = buf;; ++p) {
-        if (*p == L',' || *p == 0) {
-            if (!cur.empty()) list.push_back(cur);
-            cur.clear();
-            if (!*p) break;
-        } else if (*p != L' ' && *p != L'\t' && *p < 128) cur += (char)towlower(*p);
-    }
-    AcquireSRWLockExclusive(&g_biomeLock); g_outdoor = list; ReleaseSRWLockExclusive(&g_biomeLock);
-    g_biomeGen.fetch_add(1);   // re-judged with the new list
+    std::vector<std::string> list = framevr::biomes::Parse(buf);
+    GetPrivateProfileStringW(L"fog", L"no_fog_areas", L"act4_lava", buf, (DWORD)std::size(buf), g_iniPath);
+    std::vector<std::string> noFog = framevr::biomes::Parse(buf);
+    AcquireSRWLockExclusive(&g_biomeLock); g_outdoor = list; g_noFogBiomes = noFog; ReleaseSRWLockExclusive(&g_biomeLock);
+    g_biomeGen.fetch_add(1);   // re-judged with the new lists
 }
 
 // Cave ceiling (docs/plan_cave_ceiling.md): the biomes that get a vault over the
@@ -806,11 +809,17 @@ int ActOfBiome(const std::string& biome) {
 // On the [sky] outdoor list: open air. Everything else in the world is a cave,
 // a dungeon or a building.
 bool IsOutdoorBiome(const std::string& biome) {
-    bool outdoor = false;
     AcquireSRWLockShared(&g_biomeLock);
-    for (const std::string& o : g_outdoor) if (o == biome) { outdoor = true; break; }
+    const bool outdoor = framevr::biomes::Has(g_outdoor, biome);
     ReleaseSRWLockShared(&g_biomeLock);
     return outdoor;
+}
+// On [fog] no_fog_areas: no added fog there.
+bool IsNoFogBiome(const std::string& biome) {
+    AcquireSRWLockShared(&g_biomeLock);
+    const bool none = framevr::biomes::Has(g_noFogBiomes, biome);
+    ReleaseSRWLockShared(&g_biomeLock);
+    return none;
 }
 
 // -1 = no sky here. Called on the timer thread.
@@ -867,8 +876,20 @@ void LoadSettings() {
         IniF(L"interactions",L"belt_forward",.26f),IniF(L"interactions",L"dominant_hand",0)==1?1:0);
     framevr::ConfigureBottlePhysics(IniB(L"interactions",L"bottle_physics",true));
     framevr::ConfigurePropPhysics(IniB(L"interactions",L"prop_physics",true));
+    framevr::ConfigureBodyPhysics(IniB(L"interactions",L"body_physics",true));
+    {   // [bodies]: how bodies react (limb_tuning.h), live; DEV > Bodies steps and saves them
+        framevr::limbs::Tuning tuning;
+        for (int k = 0; k < framevr::limbs::Knobs; ++k) {
+            const auto& knob = framevr::limbs::KnobTable[size_t(k)];
+            tuning.value[size_t(k)] = IniF(L"bodies", knob.key, knob.standard);
+        }
+        framevr::limbs::Tuned().Set(tuning);
+    }
+    framevr::ConfigureLeatherMenu(IniB(L"interactions",L"leather_menu",true),IniF(L"interactions",L"leather_menu_width",framevr::leather::DefaultMenuWidth),
+        IniF(L"interactions",L"leather_tilt",framevr::leather::DefaultTilt),IniB(L"interactions",L"leather_world",true),
+        IniB(L"interactions",L"leather_backdrop",false));
     projectiles::Configure(IniB(L"gameplay",L"motion_controls",false),IniF(L"gameplay",L"arrow_speed",2.f),IniB(L"gameplay",L"arrow_direct_release",true));
-    // Movement speed (VR Settings > VR): % of the way from the no-gear base run speed to the gear's (-10 walks).
+    // Movement speed (VR Settings > Body): % of the way from the no-gear base run speed to the gear's (-10 walks).
     projectiles::ConfigureRunSpeed(framevr::runspeed::NormalizePercent(IniF(L"gameplay",L"run_speed_pct",100)));
     bowvr::Configure(IniB(L"gameplay",L"motion_controls",false));
     combat::Configure(IniB(L"gameplay",L"motion_controls",false)&&IniB(L"gameplay",L"contact_hits",true));
@@ -895,6 +916,9 @@ void LoadSettings() {
     // recovery or block animation to stun-lock a VR body. 1 = native flinching.
     // Classic always flinches natively.
     melee::ConfigurePlayerFlinch(classicMelee||IniB(L"gameplay",L"player_flinch",false));
+    melee::ConfigureZealLight(IniB(L"gameplay",L"zeal_light",true),IniF(L"gameplay",L"zeal_light_frames",0),
+        IniF(L"gameplay",L"zeal_light_pool",-1),IniF(L"gameplay",L"zeal_light_exit",-1),IniF(L"gameplay",L"zeal_light_exit_ms",-1),
+        IniF(L"gameplay",L"zeal_light_turn",0),IniF(L"gameplay",L"zeal_light_behind",-1),IniF(L"gameplay",L"zeal_light_spread",-1));
     // Unleashed (on by default): a broken guard leaks a chip of each blocked hit.
     combat::ConfigureGuardChip(!classicMelee&&IniB(L"gameplay",L"guard_break_chip",true),
                                IniF(L"gameplay",L"guard_break_chip_scale",1));
@@ -947,7 +971,7 @@ void LoadSettings() {
     // 0 = none, strain still runs). The rim is black only, drawn denser by
     // guard_strain_dark_density (2.5; 1 = the plain curve): over D2's dark scenes a
     // dark rim hides far less than its opacity suggests.
-    // guard_strain_vignette 0 (VR Settings > Combat > Guard strain vignette: Off) hides
+    // guard_strain_vignette 0 (VR Settings > Shield > Guard strain shadow: Off) hides
     // it; strain still runs. Missing: the old Guard strain color Off (guard_strain_dark 2) stays Off.
     const bool strainShown=std::lround(IniF(L"gameplay",L"guard_strain_vignette",
                                             std::lround(IniF(L"gameplay",L"guard_strain_dark",0))==2?0.f:1.f))!=0;
@@ -963,7 +987,13 @@ void LoadSettings() {
     // guard_strain_recover_ms (1500), at the guard_strain_reset_ms rate (1500): clear 3 s after the
     // last hit from full. 0 = only lowering clears it.
     framevr::ConfigureGuardStrainRecover(IniF(L"gameplay",L"guard_strain_recover_ms",1500)/1000.f);
-    {   // Low-life heartbeat (start: VR Settings > Combat, [gameplay] low_life_heart_start): % on top of
+    // Bone Armor grafted onto both forearms (steamvr/bone_graft.h); missing keys: the defaults.
+    // On, the hero's own spinning orbit is never shown (any view, menus too).
+    billboards::ConfigureBoneArmorHidden(IniB(L"render",L"bone_armor_graft",true));
+    framevr::ConfigureBoneGraft(IniB(L"render",L"bone_armor_graft",true),IniF(L"render",L"bone_armor_graft_size",1.f),
+        IniF(L"render",L"bone_armor_graft_out",.05f),IniF(L"render",L"bone_armor_graft_spread",40.f),IniF(L"render",L"bone_armor_graft_along",.5f),
+        IniF(L"render",L"bone_armor_graft_width",.5f));
+    {   // Low-life heartbeat (start: VR Settings > Survival, [gameplay] low_life_heart_start): % on top of
         // the game's Master x Combat volume (0 = off), tempo range, wind-down time from full, and
         // an optional one-beat 16-bit PCM WAV (next to this ini unless a full path). The old
         // guard_strain_heart* keys are still read when the low_life_heart* key is absent.
@@ -1076,6 +1106,7 @@ void LoadSettings() {
     g_set.entityPoolMb.store(std::clamp((int)IniF(L"render", L"entity_pool_mb", 280.0f), 0, 4096));
     g_set.rings.store(std::clamp((int)IniF(L"render", L"rings", framevr::settings::Definitions[framevr::settings::DrawDistance].defaultValue), 1, 8));
     g_set.modelRadius.store(std::clamp(IniF(L"render", L"model_radius", framevr::settings::Definitions[framevr::settings::ObjectDistance].defaultValue), 10.0f, 10000.0f));
+    g_set.bigRadius.store(farobjects::Normalize(IniF(L"render", L"big_radius", framevr::settings::Definitions[framevr::settings::BigObjectDistance].defaultValue)));
     g_set.mouseLook.store(IniB(L"input", L"mouse_look", false));
     g_set.hudHide.store(std::clamp((int)IniF(L"hud", L"hide", 0.0f), 0, 2));
     hud::SetHide(g_set.hudHide.load());
@@ -1243,7 +1274,7 @@ void LoadSettings() {
     g_set.hudTop.store(std::clamp(IniF(L"stereo", L"ui_top", 0.70f), 0.0f, 1.0f));
     g_set.fogOn.store(IniB(L"fog", L"enabled", false));
     g_set.fogStart.store(std::clamp(IniF(L"fog", L"start", 150.0f), 0.0f, 100000.0f));
-    g_set.fogEnd.store(std::clamp(IniF(L"fog", L"end", 600.0f), g_set.fogStart.load() + 1.0f, 200000.0f));
+    g_set.fogEnd.store(std::clamp(IniF(L"fog", L"end", framevr::settings::Definitions[framevr::settings::FogDistance].defaultValue), g_set.fogStart.load() + 1.0f, 200000.0f));
     // caves: their own range, the open air's when not set (caves are smaller, their fog nearer)
     g_set.fogCaveStart.store(std::clamp(IniF(L"fog", L"caves_start", g_set.fogStart.load()), 0.0f, 100000.0f));
     g_set.fogCaveEnd.store(std::clamp(IniF(L"fog", L"caves_end", g_set.fogEnd.load()), g_set.fogCaveStart.load() + 1.0f, 200000.0f));
@@ -2579,6 +2610,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     memcpy(g_lookAt, in.lookAt, sizeof g_lookAt);
     g_lookOk = in.lookAtValid;
     ReleaseSRWLockExclusive(&g_lookLock);
+    if (in.lookAtValid) billboards::SetHero(in.lookAt);   // whose Bone Armor is the hero's, menus included
     // The menus (the character screen's 3D scene too: it has a hero point) keep the game's camera.
     if (!g_inWorld.load()) return false;
 #ifdef D2RVR_NATIVE_OPENXR
@@ -2972,8 +3004,8 @@ namespace aimsettings {
 std::atomic<ULONGLONG> at{0};
 std::atomic<uint32_t> bits{0};
 std::atomic<float> hue[2]{45.0f, 210.0f};   // the outline colors: right hand, left hand (0 = By range)
-std::atomic<float> spanM{1.6f};   // VR Settings > Controller span (arm_span_m), set with or without Body calibration
-std::atomic<int> ground{0};       // VR Settings > Aim > Ground skills: 0 the game's aim, 1 where you point, 2 the aimed monster
+std::atomic<float> spanM{1.6f};   // the calibrated controller span (arm_span_m; Body > Height and arm span), set with or without Body calibration
+std::atomic<int> ground{0};       // VR Settings > Aim > Ground skill aim: 0 the game's aim, 1 where you point, 2 the aimed monster
 std::atomic<int> lock{0};         // Skills go to the aimed monster: bits 1 spells, 2 bow skills
 constexpr framevr::settings::Key keys[] = {framevr::settings::TargetHighlight,
                                            framevr::settings::StaffPoint,
@@ -3003,16 +3035,16 @@ bool AimOn(framevr::settings::Key key) {
 int GroundAimMode() { aimsettings::Refresh(); return aimsettings::ground.load(); }
 bool SpellsLocked() { aimsettings::Refresh(); return (aimsettings::lock.load() & 1) != 0; }
 bool BowSkillsLocked() { aimsettings::Refresh(); return (aimsettings::lock.load() & 2) != 0; }
-// VR Settings > Aim > Aim follows your view (Off by default): the eyes' tunnel,
+// VR Settings > Aim > Aim with your view (Off by default): the eyes' tunnel,
 // the hands' wedge and a raised hand aiming alone (aimtargets).
 bool FollowsView() { return AimOn(framevr::settings::AimFollowsView); }
 // How far a hand is held out from the head before it points, cm: the arm counts as
 // pointing once held out a tenth of the player's span (Jeff: 15 cm on a 1.5 m span).
 float AimArmOutCm() { aimsettings::Refresh(); return framevr::armpointing::ArmOutCm(aimsettings::spanM.load()); }
-// VR Settings > Aim > Right / Left hand color: the color of a source's outline
+// VR Settings > Targets > Right / Left hand outline color: the color of a source's outline
 // (aimrules::Source), 0 = By range. The eyes have no color of their own: their
 // monster is shown in the color of the hand that would cast at it - the bow hand
-// (left) while a bow is the equipped weapon, else VR Settings > Dominant hand.
+// (left) while a bow is the equipped weapon, else VR Settings > Body > Dominant hand.
 float OutlineHue(int source) {
     aimsettings::Refresh();
     if (source == framevr::aimrules::Eyes)
@@ -3420,7 +3452,7 @@ int HookSpellCommand(framevr::spellaim::NativeCommand* command) {
     return result;
 }
 
-// Monster outline strength (VR Settings > Aim, 0 = Off), read by the update and
+// Monster outline strength (VR Settings > Targets, 0 = Off), read by the update and
 // render threads: one settings snapshot every 200 ms, not one per frame.
 float TargetOutlineStrength() {
     static std::atomic<ULONGLONG> at{0};
@@ -3604,7 +3636,7 @@ bool Resolve(int button, bool bow, framevr::aimrules::Use use, float& x, float& 
         }
     return false;
 }
-// The outlines to draw: Both hands (VR Settings > Aim > Monster highlights)
+// The outlines to draw: Both hands (VR Settings > Targets > Outlines shown)
 // the right hand's monster and the left's - a held button's own while it is
 // held - and with neither, the eyes'; Dominant hand that hand's, else the
 // eyes'. How many (0-2). The render thread.
@@ -4663,8 +4695,10 @@ bool DirectWalkNow() {
     // instead of clearing it and relying on those callbacks to restore it.
     // Aim is resolved separately; neither the aim stick nor stand-still Shift
     // may replace player movement. Native animation/state gates remain native.
+    // The tabbed menu on the leather keeps the world round it, and the left stick walks
+    // there (transport leaves it out of the menu's cursor; the XInput detour below too).
     return g_set.platform.load() == 1 && g_set.directWalk.load() && g_enabled.load() && g_inWorld.load() &&
-           !gamestate::MenuOpen() && !ChatOpen() && !NativeCastOwnsAim();
+           (!gamestate::MenuOpen() || framevr::LeatherMenuWorld()) && !ChatOpen() && !NativeCastOwnsAim();
 }
 // BodyWalk's stick as the game takes a walking vector (x right, y up on its screen,
 // length <= 1, its dead zone 10349 of 32767 with no rescale), turned by our camera.
@@ -4797,6 +4831,8 @@ float* HookStickGet(void* handler, float* out, uint32_t player) {
         const bool on = BodyWalkWalk(&x, &y);
         r[0] = on ? x : 0.0f;
         r[1] = on ? y : 0.0f;
+        static bool toldMenu = false;   // once: the game runs its walk with the tabbed menu up
+        if (on && gamestate::MenuOpen() && !toldMenu) { toldMenu = true; Log("vrcam: walking with the tabbed menu on the leather: the game's walk runs"); }
         static ULONGLONG lastLog = 0;
         if (on && GetTickCount64() - lastLog >= 2000) {
             lastLog = GetTickCount64();
@@ -4856,8 +4892,8 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
        framevr::spellaim::ControllerPoint(cast,px,py,tx,ty)) {
         g_spellCommand={reinterpret_cast<uintptr_t>(unit),tx,ty};
         x=tx;y=ty;
-        // Every ground skill the mod places (VR Settings > Aim > Ground skills
-        // not Game), Fire Blast included: a circle at the cast point, in the
+        // Every ground skill the mod places (VR Settings > Aim > Ground skill aim
+        // not Game's aim), Fire Blast included: a circle at the cast point, in the
         // element's color, once the game accepts the cast (HookSpellCommand).
         const int skill=GroundAimMode()>0?framevr::GroundSpellSkill():-1;
         if(skill>=0)g_landing={skill,tx,ty,float(tx)-px,float(ty)-py};
@@ -4913,6 +4949,75 @@ void InstallMapClickHook() {
            : "vrcam: flat: click hook FAILED - a click on the ground walks");
 #endif
 }
+
+#ifdef D2RVR_NATIVE_OPENXR
+// Walking with the tabbed menu on the leather (owner 2026-10-28: "I also want to be
+// able to walk while this menu is open"). Under its menu the game runs no controller
+// walk (rev5: HookStickGet's walk call never came), so the left stick is turned into
+// what a held left click on bare ground does: a walk toward a point (MapClick, type 0
+// then 1 held, no Stand Still; inside it 0x101EF0), a few cells ahead along the stick
+// on the game's screen (isometric: screen right = grid +x -y, screen up = grid -x -y).
+// On the UI thread, ten times a second; never with a unit under the game's pointer (that
+// click would attack or talk); a release clicks the hero's own cell, so he stops.
+namespace leatherwalk {
+std::atomic<int> g_state{0};   // 0 idle, 1 walking (the next click is a hold), 2 stop due
+std::atomic<uint64_t> g_target{0};   // grid x << 32 | grid y
+std::atomic<bool> g_queued{false};
+std::atomic<uint32_t> g_sent{0},g_refused{0};
+void __cdecl Click(const D2RL::PluginContext*, void*) noexcept {
+    g_queued.store(false);
+    if (g_mapClick.load() != 1 || !OrigMapClick || !gamestate::MenuOpen() || !framevr::LeatherMenuWorld()) return;
+    uintptr_t hero = 0;
+    if (!combat::LocalPlayerUnit(hero) || !hero) return;
+    const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(reinterpret_cast<void*>(hero));
+    if (idx < 0 || idx >= 8) return;
+    const int state = g_state.load();
+    float px = 0, py = 0;
+    if (!SpellPlayerPosition(reinterpret_cast<void*>(hero), px, py)) return;
+    int x = int(px), y = int(py), type = 0;
+    if (state == 2) { g_state.store(0); }   // stop: a click on his own cell
+    else {
+        if (((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx)) {   // a unit there: no attack, no talk
+            if (g_refused.fetch_add(1) == 0) Log("vrcam: walking with the tabbed menu on the leather: a unit is under the game's pointer - no walk click");
+            return;
+        }
+        const uint64_t t = g_target.load(); x = int(t >> 32); y = int(uint32_t(t));
+        type = state == 1 ? 1 : 0;
+        g_state.store(1);
+    }
+    OrigMapClick(reinterpret_cast<void*>(hero), type, x, y, 0x100);   // high byte: run
+    if (g_sent.fetch_add(1) == 0) LogF("vrcam: walking with the tabbed menu on the leather: walk click %d,%d (hero %.1f,%.1f)", x, y, px, py);
+}
+// The 1 ms timer: the stick from BodyWalk's report, as the game's screen sees it.
+void Tick(ULONGLONG now) {
+    static ULONGLONG next = 0;
+    if (now < next) return;
+    next = now + 100;
+    const bool active = g_enabled.load() && g_inWorld.load() && gamestate::MenuOpen() && framevr::LeatherMenuWorld() && g_mapClick.load() == 1;
+    BWPadMirror m{};
+    const bool read = active && PadMirrorRead(&m);
+    const float lx = read ? float(m.thumb_lx) : 0.f, ly = read ? float(m.thumb_ly) : 0.f;
+    const bool pushed = lx * lx + ly * ly > 10349.0f * 10349.0f;
+    if (!pushed) {
+        if (g_state.load() == 1) { g_state.store(2); if (!g_queued.exchange(true) && !gamestate::RunOnUi(&Click)) g_queued.store(false); }
+        return;
+    }
+    uintptr_t hero = 0; float px = 0, py = 0;
+    if (!combat::LocalPlayerUnit(hero) || !SpellPlayerPosition(reinterpret_cast<void*>(hero), px, py)) return;
+    float sx = std::clamp(lx / 32767.0f, -1.0f, 1.0f), sy = std::clamp(ly / 32767.0f, -1.0f, 1.0f);
+    ViewStickToGame(&sx, &sy);
+    const float l = sqrtf(sx * sx + sy * sy);
+    if (l < 1e-4f) return;
+    const float reach = 5.0f * std::min(l, 1.0f) + 1.0f;   // cells ahead: more with a fuller push
+    const float gx = (sx - sy) / l * 0.70710678f, gy = (-sx - sy) / l * 0.70710678f;
+    const int tx = int(px + gx * reach), ty = int(py + gy * reach);
+    if (tx < 1 || ty < 1 || tx > 65534 || ty > 65534) return;
+    g_target.store((uint64_t(uint32_t(tx)) << 32) | uint32_t(ty));
+    if (g_state.load() == 2) g_state.store(0);
+    if (!g_queued.exchange(true) && !gamestate::RunOnUi(&Click)) g_queued.store(false);
+}
+}
+#endif
 
 // Twice a second: says when the game loses or gets back its pads, and when W A
 // S D are held but the game never asks for a keyboard move (its UI is on a pad:
@@ -5012,6 +5117,7 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
         if(!allowed||nativeUi||framevr::SettingsOpen()) {
             if(idx==0){SequenceSkillPad(s,false);InteractButton(false,ActionsHeld());}
             if(!allowed||framevr::SettingsOpen())s->Gamepad={};
+            else if(gamestate::MenuOpen()&&framevr::LeatherMenuWorld())s->Gamepad.sThumbLX=s->Gamepad.sThumbLY=0;   // it walks (DirectWalkNow), not the cursor
             if(idx==0){g_aHeld.store(false);g_skillHeld.store(false);g_rightX.store(0.f);}
             // Native menu buttons/sticks bypass gameplay action translation
             // and camera-relative movement. Laser reports are already empty.
@@ -5421,13 +5527,31 @@ void MouseTick() {
 
 // [render] rings and model_radius into cleanroom/drawdist (the old
 // renderdistance plugin's job); the radius retries until its hook is in.
+// big_radius (steamvr/far_objects.h) apart: its hook goes in only once it is
+// on, and waits for the game to have run that code.
 std::atomic<bool> g_renderDirty{true};
+std::atomic<bool> g_bigDirty{true};
 void ApplyRender() {
-    if (!g_renderDirty.load()) return;
-    d2rcam::SetRenderRadius(g_set.rings.load());
-    if (d2rcam::SetModelRadius(g_set.modelRadius.load())) {
-        g_renderDirty.store(false);
-        LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
+    if (g_renderDirty.load()) {
+        d2rcam::SetRenderRadius(g_set.rings.load());
+        if (d2rcam::SetModelRadius(g_set.modelRadius.load())) {
+            g_renderDirty.store(false);
+            LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
+        }
+    }
+    if (g_bigDirty.load() && d2rcam::SetBigModelRadius(g_set.bigRadius.load())) {
+        g_bigDirty.store(false);
+        static bool wasOn = false;
+        const float big = g_set.bigRadius.load();
+        if (big > 0) LogF("vrcam: big objects - trees, houses and walls drawn out to %.0f by their size (models out to %.0f, %d room rings)", big, g_set.modelRadius.load(), g_set.rings.load());
+        else if (wasOn) Log("vrcam: big objects - off, every model out to the object draw distance");
+        wasOn = big > 0;
+    }
+    // what they cost: how many models their size kept, every 10 s
+    static int ticks = 0;
+    if (g_set.bigRadius.load() > 0 && ++ticks >= 20) {
+        ticks = 0;
+        LogF("vrcam: big objects - %u model decisions kept past %.0f by size in 10 s", d2rcam::TakeBigModelsKept(), g_set.modelRadius.load());
     }
 }
 
@@ -5630,7 +5754,7 @@ std::string BusyThreads(double spanUs) {
 
 void Recenter();
 #ifdef D2RVR_NATIVE_OPENXR
-// Eyes by turns (VR Settings > Perf > Stereo rendering): one pass a game frame,
+// Eyes by turns (VR Settings > Performance > Eyes drawn per frame): one pass a game frame,
 // the eyes in turn. The headset gets this eye fresh and the other as it was
 // last drawn, at the pose it was drawn with - the runtime turns it to the head.
 // Half the CPU work a headset frame, each eye at half the rate, and the eyes a
@@ -5683,7 +5807,7 @@ void WarnGpuWait() {
     if (framevr::GpuWaitDeferred()) { told = false; return; }
     if (told) return;
     told = true;
-    Say("Each frame waits for the GPU ([render] defer_gpu_wait=0), about half the frame rate - VR Settings > Perf > Defer GPU wait turns it on");
+    Say("Each frame waits for the GPU ([render] defer_gpu_wait=0), about half the frame rate - VR Settings > Performance > Defer GPU wait turns it on");
 }
 bool TurnsWanted() {
     if (framevr::StereoRendering() != 1) return false;
@@ -7163,7 +7287,7 @@ void BowTick() {
             using framevr::math::Vec;
             const Vec ground=framevr::bowflight::RenderGround(shot,Vec{mx*2.0f,0.0f,my*2.0f});
             if(framevr::bowflight::LockAimDirection(shot.origin,framevr::bowflight::LockAimPoint(ground,false,{},{}),shot.planar,shot.direction)) {
-                // one steerer per shot: VR Settings' Projectile aim assist would
+                // one steerer per shot: VR Settings' Spell aim assist would
                 // bend it again, perhaps toward another monster
                 shot.aimAssist=0;
                 shot.lockTarget=lockId;
@@ -7297,7 +7421,8 @@ void PushArms() {
         in.grip[1] = sh->gripMagic == D2RVR_GRIP_MAGIC ? sh->leftGrip : -1.0f;
     }
     float hero[3];
-    if (LookAtNow(hero)) {
+    const bool heroPlaced = LookAtNow(hero);
+    if (heroPlaced) {
         skel::SetHeroPos(hero[0], hero[1], hero[2]);
         memcpy(g_heroPosNow, hero, sizeof hero);
     }
@@ -7308,6 +7433,11 @@ void PushArms() {
         && (!gamestate::MenuOpen()||framevr::SpatialMenu())
 #endif
         ;
+#ifdef D2RVR_NATIVE_OPENXR
+    // Bodies that give way: in first person with physical melee, the hook
+    // posts the monsters and townsfolk within reach of the hero.
+    skel::SetLimbs(own && heroPlaced && framevr::BodyPhysics(), hero, std::max(1.f, ScaleHeight()) / UserEyeHeightM());
+#endif
     in.mode = own ? ArmsMode() : 0;
     // From behind the game animates all of him, but he still turns with the
     // camera: else the right stick only swung the camera round a hero who
@@ -7537,6 +7667,7 @@ std::atomic<int> g_fogAct{0};        // the area's act for the fog colour, caves
 std::atomic<bool> g_underground{false};   // in the world, off the outdoor list: the fog takes [fog] color_caves
 std::atomic<bool> g_inWorld{false};  // a game area is loaded: not the main menu (its own "frontend" biome), not before any
 std::atomic<bool> g_ceilBiome{false};   // the area's biome is on [ceiling] biomes
+std::atomic<bool> g_noFogArea{false};   // the area's biome is on [fog] no_fog_areas
 
 // The game's own day and night (2026-10-05). The game draws a debug line with
 // the time of day ("End of dusk, start of night" ... and "Env Cycle = %i") from
@@ -8407,7 +8538,8 @@ int Lights(Light* out) {
 
 bool WorldMenuBlocksEffects() {
 #ifdef D2RVR_NATIVE_OPENXR
-    return framevr::panels::BlockWorldEffects(gamestate::MenuOpen(),framevr::SpatialMenu(),gamestate::OpaqueMenuOpen());
+    // The leather keeps the world round it (leather_world), so its effects too.
+    return framevr::panels::BlockWorldEffects(gamestate::MenuOpen(),framevr::SpatialMenu(),gamestate::OpaqueMenuOpen()&&!framevr::LeatherMenuWorld());
 #else
     return gamestate::MenuOpen();
 #endif
@@ -8434,12 +8566,14 @@ void SkyTick() {
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
         g_ceilBiome.store(world && IsCeilingBiome(biome));
+        g_noFogArea.store(world && IsNoFogBiome(biome));
         static std::string told = "?";   // no biome name has a question mark
         if (biome != told) {
             told = biome;
-            LogF("vrcam: biome '%s' - %s%s", biome.empty() ? "(none yet)" : biome.c_str(),
+            LogF("vrcam: biome '%s' - %s%s%s", biome.empty() ? "(none yet)" : biome.c_str(),
                  palette >= 0 ? kPalettes[palette].part : "no sky here (not in [sky] outdoor)",
-                 g_ceilBiome.load() ? ", a cave ceiling ([ceiling] biomes)" : "");
+                 g_ceilBiome.load() ? ", a cave ceiling ([ceiling] biomes)" : "",
+                 g_noFogArea.load() ? ", no added fog ([fog] no_fog_areas)" : "");
         }
     }
     {   // the cave ceiling: each change of mind to the log, like the sky's
@@ -8680,7 +8814,8 @@ bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load(
 
 bool FogWanted() {
     return !g_arcaneSky.load() && g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !WorldMenuBlocksEffects() &&
-           (g_set.fogCaves.load() || !g_underground.load());   // [fog] caves=0: none underground
+           (g_set.fogCaves.load() || !g_underground.load()) &&   // [fog] caves=0: none underground
+           !g_noFogArea.load();                                    // [fog] no_fog_areas: none there (the River of Flame)
 }
 // The table (F5): the void black, the game lifted off black - D2R_DepthFog.fx TableKey.
 bool TableKeyWanted() { return TableView() && g_inWorld.load() && !gamestate::MenuOpen(); }
@@ -9424,7 +9559,7 @@ void OnBeginEffects(reshade::api::effect_runtime* rt, reshade::api::command_list
         // that shape's edge. xyz centre relative to the hero, w strength;
         // shape = radius, lowest and highest height (world units). Up to two
         // (aimtargets::ShownTargets: each hand's, else the eyes'), each in its
-        // own source's color (VR Settings > Aim; the eyes take the casting hand's).
+        // own source's color (VR Settings > Targets; the eyes take the casting hand's).
         SkyView sv[2];
         AcquireSRWLockShared(&g_skyLock); sv[0] = g_skyView[0]; sv[1] = g_skyView[1]; ReleaseSRWLockShared(&g_skyLock);
         aimtargets::Shown shown[2];
@@ -9824,6 +9959,9 @@ DWORD WINAPI UpdateThread(void*) {
         flog::Tick(g_set.frameLog.load());
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
 #ifdef D2RVR_NATIVE_OPENXR
+        leatherwalk::Tick(nowMs);   // the left stick walks with the tabbed menu on the leather
+#endif
+#ifdef D2RVR_NATIVE_OPENXR
         mobaim::Tick();    // the aim rules' targets: each hand's held out, and the one looked at
 #endif
         FloorPointerTick();   // F3: the mouse pointer on the game's ground, as the head moves
@@ -9896,6 +10034,7 @@ DWORD WINAPI UpdateThread(void*) {
 #endif
             const int previousRings=g_set.rings.load();
             const float previousModelRadius=g_set.modelRadius.load();
+            const float previousBigRadius=g_set.bigRadius.load();
             bool iniChanged = ReloadIfChanged();
 #ifdef D2RVR_NATIVE_OPENXR
             if(menuSaved&&!iniChanged){LoadSettings();iniChanged=true;}
@@ -9907,6 +10046,7 @@ DWORD WINAPI UpdateThread(void*) {
                 // not restart that work. Keep a pending initial/retry apply.
                 if(previousRings!=g_set.rings.load()||previousModelRadius!=g_set.modelRadius.load())
                     g_renderDirty.store(true);
+                if(previousBigRadius!=g_set.bigRadius.load())g_bigDirty.store(true);
                 g_mouseLookOn.store(MouseLookForView());
             }
             FollowMode();
@@ -9981,6 +10121,16 @@ void SetSkyOverRims(bool on) {
     if (g_set.skyRims.exchange(on) != on) Log(on ? "vrcam: the sky goes over the dark rim round things against it" : "vrcam: the dark rim round things against the sky stays");
 }
 bool SkyOverRims() { return g_set.skyRims.load(); }
+// DEV > Bodies: a stepped value saved as [bodies] <key>, at once in use (the
+// reload that follows reads the same value).
+bool SaveBodyTuning(int knob, float value) {
+    if (knob < 0 || knob >= framevr::limbs::Knobs) return false;
+    const auto k = framevr::limbs::Knob(knob);
+    value = framevr::limbs::Clamped(k, value);
+    framevr::limbs::Tuned().Set(k, value);
+    wchar_t text[32]; swprintf_s(text, L"%g", double(value));
+    return WritePrivateProfileStringW(L"bodies", framevr::limbs::KnobTable[size_t(knob)].key, text, g_iniPath) != FALSE;
+}
 }
 
 #ifdef D2RVR_NATIVE_OPENXR

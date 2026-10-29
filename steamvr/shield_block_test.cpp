@@ -69,6 +69,24 @@ int main() {
         assert(block()==1&&fixture::impacts==impacts+1);
         assert(ReadGuardDebug(debug)&&debug.raised&&debug.hit==1&&debug.hitAt);
     }
+    {   // A blocked hit consumes its records: nothing lingers to claim the next missile (audit 2026-10-24).
+        prime();
+        incomingHit={monster.Address(),player.Address(),40,GetTickCount64(),false};
+        missScope={monster.Address(),player.Address(),GetTickCount64(),false};
+        assert(block()==1&&!incomingHit.attacker&&!missScope.attacker);
+        // An open guard lets the hit land: the records stay for its life write.
+        prime();auto open=guard.state.surface;open.hand={-.2f,-.8f,0};
+        framevr::guard::Update(guard.state,open,true,true,guard.at,true,GuardTuning());
+        incomingHit={monster.Address(),player.Address(),40,GetTickCount64(),false};
+        assert(block()==0&&incomingHit.attacker==monster.Address());
+        guardRejections[size_t(framevr::guard::Rejection::TooLow)]=0;   // the lowered guard's rejection, counted below
+        // A melee hit's record never claims a missile's damage; a missile hit's does.
+        fixture::Unit missile(3,77,99);
+        assert(ContactFactor(missile.Address(),player.Address())==1);
+        incomingHit.missile=true;
+        assert(ContactFactor(missile.Address(),player.Address())<1);
+        incomingHit={};
+    }
     // Movement never grants a guard by itself; hand and view rules still apply.
     player.Put(0xc,3u);prime();
     auto lowered=guard.state.surface;lowered.hand={-.2f,-.8f,0};

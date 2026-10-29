@@ -76,7 +76,7 @@ run the relevant Python fixture tests, for example:
 
 For isolated gameplay testing, see [developer mode](steamvr/DEVELOPMENT_SCENARIOS.md).
 `--frame-dev` selects a separate offline character list; its DEV tools provide
-level presets, class gear and travel. VR Settings > Release Notes is available
+level presets, class gear and travel. VR Settings > What's new is available
 in regular and developer builds.
 `build_windows.ps1 -Developer -Test` stages a candidate separately for this mode.
 Run `prepare_dev_scenarios_test.py` and `launch_windows_test.py` after changing
@@ -103,9 +103,9 @@ Test only with offline characters; do not test this injected mod in online play.
 - Do not commit downloaded dependencies, build output, release ZIPs, credentials
   or private player/account data. Review logs before sharing them.
 - Submit code and assets you have the right to contribute under the project's
-  [MIT license](LICENSE). Preserve copyright notices and credit upstream work.
-  Document third-party licenses in [THIRD_PARTY.md](THIRD_PARTY.md); do not add
-  dependencies whose terms prevent distribution with the mod.
+  [Mozilla Public License 2.0](LICENSE). Preserve copyright notices and credit
+  upstream work. Document third-party licenses in [THIRD_PARTY.md](THIRD_PARTY.md);
+  do not add dependencies whose terms prevent distribution with the mod.
 - Installer and uninstaller changes must preserve player saves, support repeat
   runs and restore tracked backups without deleting unrelated files. Keep
   normal unmodded desktop play available.

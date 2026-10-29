@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 
-// Movement speed (VR Settings > VR, last row; [gameplay] run_speed_pct, Cal
+// Movement speed (VR Settings > Body > Movement speed; [gameplay] run_speed_pct, Cal
 // 2026-10-25; first a skill-wheel slider, which replaced RUN / WALK). Its lowest
 // stop, Walk (-10), walks; every stop above runs - Base run (0), then 10% of the
 // way to the gear's full run speed per stop, up to Full run (100). The plugin keeps the game's own run /

@@ -90,7 +90,7 @@ int main(){
         Check(c!=Context(s.in.snapshot,s.out,true),"count changes invalidate paint and old click eligibility");
         for(auto page:{MenuPage::Spells,MenuPage::Equipment}) {
             Check(WheelCell(.1f,.1f,-1,page,1)==QuickUseCell,"quick slot shares hit and paint bounds");
-            Check(WheelCell(.85f,.14f,-1,page,1)==-1,"no RUN / WALK box or movement slider on the wheel (VR Settings > VR > Movement speed)");
+            Check(WheelCell(.85f,.14f,-1,page,1)==-1,"no RUN / WALK box or movement slider on the wheel (VR Settings > Body > Movement speed)");
         }
         for(auto page:{MenuPage::Map,MenuPage::Developer,MenuPage::EditSlots,MenuPage::EditSkills,MenuPage::EditItems})
             Check(WheelCell(.1f,.1f,-1,page,1)!=QuickUseCell,"hidden quick control never intercepts another page");
@@ -256,6 +256,25 @@ int main(){
         s.in.grip[dominant]=1;
         Check(s.Step().request.index==1,"second deliberate shoulder press returns to set I");
     }
+    // The tabbed menu on leather (leather_menu.h): the left hand over the left shoulder, a fresh grip.
+    for(int dominant=0;dominant<2;++dominant){
+        Sim s;Config c;c.dominant=dominant;s.e.Configure(c);s.in.leatherReach=true;s.Step(4);
+        s.in.hand[1].p=s.in.head.p+Vec{-.23f,-.2f,.14f};s.Step(10);
+        Check(!s.out.inventory&&!s.out.block,"the left hand behind the shoulder without grip changes nothing");
+        s.in.grip[1]=1;const auto o=s.Step();
+        if(dominant==0){
+            Check(o.inventory&&o.block&&o.request.action==Action::None&&o.feedback==1&&o.feedbackHand==1,
+                  "left grip over the left shoulder opens the tabbed menu with a tick, no weapon swap");
+            for(int i=0;i<12;++i)Check(!s.Step().inventory,"one press opens it once");
+            s.in.grip[1]=0;s.Step(3);s.in.grip[1]=1;Check(s.Step().inventory,"a new press asks again (the menu was not opened)");
+        } else Check(!o.inventory&&o.request.action==Action::Equip,"with Dominant hand = Left the left shoulder stays the weapon swap");
+    }
+    {Sim s;s.Step(4);s.in.hand[1].p=s.in.head.p+Vec{-.23f,-.2f,.14f};s.Step(10);s.in.grip[1]=1;
+     Check(!s.Step().inventory&&!s.out.block,"[interactions] leather_menu=0 leaves the left shoulder alone");}
+    {Sim s;s.in.leatherReach=true;s.Step(4);s.in.hand[0].p=s.in.head.p+Vec{-.23f,-.2f,.14f};s.Step(10);s.in.grip[0]=1;
+     const auto o=s.Step();Check(!o.inventory&&o.request.action==Action::Equip,"the right hand over the left shoulder still swaps weapons");}
+    {Sim s;s.in.leatherReach=true;s.Step(4);s.in.hand[1].p=s.in.head.p+Vec{-.23f,-.2f,.14f};s.in.wheel=true;s.in.wheelHand=0;s.Step(10);
+     s.in.grip[1]=1;Check(!s.Step().inventory,"an open wheel keeps the left grip");}
     {Sim s;s.in.hand[0]=s.out.holster[1];s.in.grip[0]=1;s.Step();s.in.hand[0].p.z-=.2f;
      Check(s.Step().request.action==Action::None,"hip pulls are disabled in the default controls");}
     {

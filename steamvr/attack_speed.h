@@ -88,19 +88,22 @@ inline uint32_t Milliseconds(int frames) {return frames>0?uint32_t(frames)*1000u
 // attack starts the cycle whether its roll hit or missed, as the native swing
 // animation would; geometric whiffs and refused contacts never do.
 class Cadence {
-    uint64_t session=0,readyAt=0,landedAt=0;
+    uint64_t session=0,readyAt=0,landedAt=0,priorAt=0;   // priorAt: the landed hit before landedAt (0 = none)
 public:
     bool Ready(uint64_t s,uint64_t now) const {return s!=session||now>=readyAt;}
     uint64_t Remaining(uint64_t s,uint64_t now) const {return Ready(s,now)?0:readyAt-now;}
     // Milliseconds since the previous landed hit; UINT64_MAX when there is none. One batch
-    // can apply its contacts out of time order (creature by creature): one timed before the
-    // latest landed hit is not recovered at all, and the clock never runs back.
+    // can apply its contacts out of time order (creature by creature): a contact timed before
+    // the latest landed hit is measured from the hit before that one (its own predecessor), so
+    // it is not scored as zero (audit 2026-10-24); the clock itself never runs back.
     uint64_t Since(uint64_t s,uint64_t now) const {
-        return s==session&&landedAt?(now>=landedAt?now-landedAt:0):UINT64_MAX;
+        if(s!=session||!landedAt)return UINT64_MAX;
+        if(now>=landedAt)return now-landedAt;
+        return priorAt&&now>=priorAt?now-priorAt:UINT64_MAX;   // no known predecessor: a first stroke
     }
     void Landed(uint64_t s,uint64_t now,uint32_t cycle) {
-        if(s==session&&landedAt&&now<landedAt){readyAt=std::max(readyAt,now+cycle);return;}
-        session=s;landedAt=now;readyAt=now+cycle;
+        if(s==session&&landedAt&&now<landedAt){if(now>priorAt)priorAt=now;readyAt=std::max(readyAt,now+cycle);return;}
+        priorAt=s==session?landedAt:0;session=s;landedAt=now;readyAt=now+cycle;
     }
 };
 }

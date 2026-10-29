@@ -22,7 +22,7 @@ inline constexpr int PowerStrike=14,Impale=19,ChargedStrike=24,LightningStrike=3
 //  - Hunger: no start function (0), do 122 rolls and resolves; the do
 //    dispatcher pays its mana.
 //  - Fury: start 37 sets the cast's hit count and first target, do 13 lands
-//    one hit per call (multi-hit: Flurry below).
+//    one hit per call (multi-hit: Sequence below).
 // The weapon skills that strike once a cast (#223), each with its own start:
 //  - Bash, Stun, Concentrate and Conversion 32, Power Strike and Charged
 //    Strike 6, Impale 7, Lightning Strike 10, Poison Dagger 16, Sacrifice 29,
@@ -30,7 +30,7 @@ inline constexpr int PowerStrike=14,Impale=19,ChargedStrike=24,LightningStrike=3
 //  - do 2, the shared melee resolve, or the skill's own: Charged Strike 11
 //    (its bolts), Lightning Strike 14 (its chain), Poison Dagger 32,
 //    Sacrifice 64, Conversion 79.
-// Zeal is Fury's start 37 and do 13 with a weapon: multi-hit (Flurry below).
+// Zeal is Fury's start 37 and do 13 with a weapon: multi-hit (Sequence below).
 // Jab, Fend, Frenzy, Double Swing and Whirlwind hit more than once a cast
 // with functions of their own, and Charge runs first: not (yet) strike skills.
 struct Row {int skill,start,action;};
@@ -85,78 +85,72 @@ inline Refusal FromUseState(int state) {
 inline bool Casts(int skill,bool classic,bool fullCycleFirst) {
     return skill>=0&&(classic||fullCycleFirst);
 }
-// Multi-hit strike skills (Cal, 2026-10-23, option A: "a werewolf swipe flurry
-// feeds Fury's hits"). One native cast, its hits delivered by the strokes that
-// follow. Zeal (2026-10-23, the owner: "add Zeal") is the same with a weapon.
-// The casting stroke (the rule above) pays the mana and lands hit 1; each
-// later landed stroke of a claw or weapon carrying the same skill, in the same form,
-// lands the next hit on the creature it struck: the skill's own damage and
-// on-hit effects, no mana, one hit per stroke (the stroke's first landed contact).
-// Pace, measured from the flurry's previous hit (never from an early stroke):
-//  - Unleashed (Cal, 2026-10-23 rev5: "make the next X hits be Fury hits once
-//    the first is cast"): none. Every landed stroke takes the next hit, so no
-//    swipe is lost; the burst limits itself, since a new cast still needs a
-//    full-cycle stroke. Only one swipe's follow-through, which the sweep can
-//    split into a second stroke 15-80 ms later, is kept from taking a second
-//    hit: FlurryStrokeGapMs.
-//  - Classic (native pacing): the skill's Param2 % of the attack cycle (Fury 70:
-//    natively each middle hit comes after 70 % of the wind-up; Zeal 100).
-// The unused hits lapse when none lands for two attack cycles; the next
-// qualifying stroke casts anew.
-// Spread (Cal, 2026-10-23 rev6, "most like native"): natively each hit after
-// the first jumps to another creature nearby. A later stroke that reaches more
-// than one creature lands Fury on up to FlurryHitsPerStroke of them, the first
-// and the next one it touches, each a whole Fury hit; the casting stroke stays
-// one hit. Further creatures in that stroke stay cleave basics.
+// Multi-hit strike skills: Fury and Zeal (Cal, 2026-10-25: "no longer have the
+// player act out the entire attack"). The casting stroke (the rule above) pays
+// the mana and lands hit 1 on the creature it struck; the mod then lands the
+// cast's other hits itself, at the skill's native pace, each on the nearest
+// other creature in reach as the native sequence does (none: the cast ends).
+// rev2 (Cal: "the player stays locked in position for duration of attack"):
+// the hero is never put in the skill's mode, so movement stays free; rev1 asked
+// the server for the native sequence, which roots the hero for its length.
+// Strokes while it runs stay basic attacks (Cal: "land basic"); the next
+// full-cycle stroke after it ends casts again. Its later hits are the cast's own
+// (rev3): whole, with on-hit effects, attack rating still scaling them, as the
+// old flurry's follow-ups were; not penalised as trigger hits, but each is the
+// latest attack swings are measured from (rev5), so swings during it stay scaled.
 inline bool MultiHit(int skill) {return skill==Fury||skill==Zeal;}
-inline constexpr uint32_t FlurryWindowCycles=2,FlurryUnknownCycleMs=1500,FlurryStrokeGapMs=100;
-inline constexpr int FlurryHitsPerStroke=2;
-// A Param2 outside 10..100 (unread, a mod) paces one hit per full cycle.
-inline int FlurryPace(int param2) {return param2>=10&&param2<=100?param2:100;}
-class Flurry {
-    uint64_t session=0,lastHit=0,stroke=0;int skill=-1,form=-1,total=0,left=0,pace=100,strokeHits=0;bool castStroke=false;
+// Pace (rev4, Cal: "native damage and animation speed"): the native sequence's
+// own rhythm, measured from rev1, which ran it natively (2026-10-25 21:08-21:14,
+// trigger hits of 19 Fury and 10 Zeal casts): Fury at a 360 ms attack cycle
+// landed a hit every 156-163 ms (4 of its 9 animation frames), Zeal at 560 ms
+// every 269-284 ms (7 of 14). The animation's speed scales the whole cycle, so
+// the gap is that share of the hero's current cycle: Fury 4/9, Zeal 1/2. The
+// swing itself is the wind-up (natively hit 1 came 240-280 ms after the cast
+// started), so hit 2 follows hit 1 by one gap. An unknown cycle is
+// SequenceUnknownCycleMs; never sooner than SequenceMinGapMs.
+inline constexpr uint64_t SequenceUnknownCycleMs=500,SequenceMinGapMs=60;
+struct SequenceShare {uint32_t frames,cycleFrames;};
+inline SequenceShare SequenceShareOf(int skill) {return skill==Zeal?SequenceShare{1,2}:SequenceShare{4,9};}
+inline uint64_t SequenceGap(uint32_t cycle,int skill) {
+    const auto share=SequenceShareOf(skill);
+    const uint64_t c=cycle?uint64_t(cycle):SequenceUnknownCycleMs;
+    return std::max<uint64_t>(SequenceMinGapMs,(c*share.frames+share.cycleFrames/2)/share.cycleFrames);
+}
+// A due hit runs on the game thread's next update (40 ms apart): it may run
+// this early, and the next one is timed from when this one was due, so the
+// rhythm holds instead of drifting late by a tick each hit.
+inline constexpr uint64_t SequenceEarlyMs=20;
+// One cast's remaining hits (game thread).
+class Sequence {
+    uint64_t session=0,nextAt=0,gap=0;int skill=-1,owner=0,form=-1,total=0,left=0;uint32_t last=0;
 public:
-    enum class Feed:uint8_t {None,TooSoon,Hit};
-    // The cast landed its first hit at `now`; hits: the cast's whole count.
-    // strokeKey: the casting stroke (StrokeKey).
-    void Begin(uint64_t s,int sk,int shape,int hits,int param2,uint64_t now,uint64_t strokeKey=0) {
-        session=s;skill=sk;form=shape;total=hits>0?hits:0;left=total>1?total-1:0;pace=FlurryPace(param2);lastHit=now;
-        stroke=strokeKey;strokeHits=1;castStroke=true;
+    // The cast landed hit 1 of `hits` on `struck` at `now`.
+    void Begin(uint64_t s,int sk,int skillOwner,int shape,int hits,uint32_t cycle,uint64_t now,uint32_t struck) {
+        session=s;skill=sk;owner=skillOwner;form=shape;total=hits>0?hits:0;left=total>1?total-1:0;
+        gap=SequenceGap(cycle,sk);nextAt=now+gap;last=struck;
     }
-    // One hand's stroke, as both claws number their strokes separately.
-    static uint64_t StrokeKey(int hand,uint64_t strokeId) {return strokeId*2+uint64_t(hand&1)+2;}
-    void End() {left=0;}
-    bool Open(uint64_t s,int sk,int shape) const {return left>0&&s==session&&sk==skill&&shape==form;}
-    // The least time since the previous hit before a stroke takes the next one.
-    uint64_t Floor(uint32_t cycle,bool classic) const {return classic?uint64_t(cycle)*uint64_t(pace)/100:FlurryStrokeGapMs;}
-    static uint64_t Window(uint32_t cycle) {return cycle?uint64_t(cycle)*FlurryWindowCycles:FlurryUnknownCycleMs;}
-    // Closes a flurry whose window passed, or on a stroke in another form or game;
-    // returns the hits it forfeits. shape: the form this stroke was made in.
-    int Lapse(uint64_t s,uint64_t now,uint32_t cycle,int shape) {
-        if(left<=0||(s==session&&shape==form&&(now<=lastHit||now-lastHit<=Window(cycle))))return 0;
-        const int forfeited=left;left=0;return forfeited;
+    bool Open(uint64_t s) const {return left>0&&s==session;}
+    // When the next hit is due; 0: none.
+    uint64_t DueAt() const {return left>0?nextAt:0;}
+    bool Due(uint64_t s,uint64_t now) const {return Open(s)&&now+SequenceEarlyMs>=nextAt;}
+    // A game or form change ends it (the hero is no longer that attack's).
+    bool Lapse(uint64_t s,int shape) {
+        if(left<=0||(s==session&&shape==form))return false;
+        left=0;return true;
     }
-    // What a landed stroke of this skill and form is to the open flurry. A
-    // contact timed before the last hit (one batch applies out of order) is too soon.
-    // strokeKey 0: no stroke spread (the pace rule only).
-    Feed Feeds(uint64_t s,int sk,int shape,uint64_t now,uint32_t cycle,bool classic,uint64_t strokeKey=0) const {
-        if(!Open(s,sk,shape))return Feed::None;
-        if(strokeKey&&strokeKey==stroke)   // another creature in the stroke that took the last hit
-            return !castStroke&&strokeHits<FlurryHitsPerStroke?Feed::Hit:Feed::TooSoon;
-        return now>=lastHit&&now-lastHit>=Floor(cycle,classic)?Feed::Hit:Feed::TooSoon;
-    }
-    // This stroke already landed a Fury hit: its next creature is a spread hit, not a new swipe.
-    bool SameStroke(uint64_t strokeKey) const {return strokeKey&&strokeKey==stroke;}
-    // A follow-up hit ran (hit or miss: natively a miss spends the hit too); returns its ordinal.
-    int Hit(uint64_t now,uint64_t strokeKey=0) {
+    // The next hit ran on `struck`; returns its ordinal (2..total). The one after
+    // is due a gap after this one was due (never less than half a gap from now).
+    int Hit(uint64_t now,uint32_t struck) {
         if(left>0)--left;
-        lastHit=std::max(lastHit,now);
-        if(strokeKey&&strokeKey==stroke)++strokeHits;else{stroke=strokeKey;strokeHits=1;castStroke=false;}
-        return total-left;
+        last=struck;nextAt=std::max(nextAt+gap,now+gap/2);return total-left;
     }
+    void End() {left=0;}
+    int Skill() const {return skill;}
+    int Owner() const {return owner;}
     int Total() const {return total;}
     int Left() const {return left;}
-    uint64_t SinceHit(uint64_t now) const {return now>=lastHit?now-lastHit:0;}   // diagnostics
+    uint64_t Gap() const {return gap;}
+    uint32_t Last() const {return last;}   // the creature the previous hit struck
 };
 // A refused cast lands the strike as a basic attack (Cal, 2026-10-22); a mana
 // refusal also asks for the native "I need mana" voice. A start function that

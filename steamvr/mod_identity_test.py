@@ -158,7 +158,8 @@ class IdentityTests(unittest.TestCase):
         rc = (ROOT / 'vr/vrcam.rc').read_text(encoding='utf-8')
         for value in ('D2RPCVR_VERSION_RC', 'D2RPCVR_NAME', 'D2RPCVR_PLUGIN_FILE', 'BodyWalkVR'):
             self.assertIn(value, rc)
-        self.assertIn('BodyWalkVR', (ROOT / 'LICENSE').read_text(encoding='utf-8'))
+        self.assertTrue((ROOT / 'LICENSE').read_text(encoding='utf-8').startswith('Mozilla Public License Version 2.0'))
+        self.assertIn('BodyWalkVR', (ROOT / 'NOTICE').read_text(encoding='utf-8'))
         self.assertIn(ids.PLUGIN.name, values['D2RPCVR_PLUGIN_FILE'])
 
     def test_release_lists_ship_the_new_names_only(self):
@@ -172,6 +173,13 @@ class IdentityTests(unittest.TestCase):
         self.assertTrue((ROOT / 'd2r_pcvr.ini').is_file())
         self.assertFalse((ROOT / 'd2r_vr.ini').exists())
         self.assertIn('add_library(d2rl-pcvr SHARED', (ROOT / 'steamvr/CMakeLists.txt').read_text(encoding='utf-8'))
+
+    def test_release_lists_ship_both_licence_files(self):
+        # LICENSE is the MPL; NOTICE holds the MIT notice of the code released before it.
+        for name in ('steamvr/package.py', 'installer/stage_native_installer.py'):
+            with self.subTest(name=name):
+                text = (ROOT / name).read_text(encoding='utf-8')
+                self.assertIn("'LICENSE', 'NOTICE'", text)
 
     def test_d2r_vr_installer_leftovers_are_gone(self):
         # D2R VR's own Inno script (its AppId) and build script are not this mod's.

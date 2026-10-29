@@ -23,6 +23,32 @@ bool SpellReady();
 // UI thread: one native sound (sounds.txt row) at the local client player,
 // through the game's own mixer and volume. False when unavailable.
 bool PlayHeroSound(int sound);
+// UI thread: a client-only visual made with projectiles::CreateVisual is retired
+// (the bow's client-tick kill) once GetTickCount64() reaches at. False when the
+// client hooks are missing or 16 are already waiting (it then stays).
+bool RetireVisualAt(uintptr_t unit,uint64_t at);
+// Staged client visuals (melee's Zeal light): a client-only visual lit ahead of
+// time, hidden far below the world, then shown at a cell (its root moved there)
+// and retired at a time. UI thread; BindStaged from the visual's entity release
+// (projectiles), BeginStaging/EndStaging around its projectiles::CreateVisual.
+void BeginStaging(uint32_t missile);
+void EndStaging();
+bool StagingWanted(uintptr_t unit);   // cheap: this unit is (being) staged
+bool BindStaged(uint32_t entity,uintptr_t unit,bool root);
+bool StageVisual(uintptr_t unit,int x,int y);
+unsigned StagedHidden(uint32_t missile);
+// exitStyle 0 off, 1 rise, 2 sink, 3 shrink: from until over exitMs, then retired.
+// awayX/awayZ (render x,z; 0,0 none): the visual is turned about its root so its light
+// comes from that side (the far side of the creature from the hero); turnDeg a trim.
+// offX/offZ: render units added to the cell's position (rev8: behind the creature).
+bool ShowStaged(uint32_t missile,int x,int y,uint64_t until,int exitStyle,uint64_t exitMs,float awayX,float awayZ,float turnDeg,
+                float offX,float offZ,uint64_t& age,bool& bound);
+unsigned RecycleStaged(uint32_t missile,uint64_t maxAge);   // hidden ones lit longer than maxAge: retired
+unsigned RecycleStagedFar(uint32_t missile,int x,int y,int cells);   // hidden ones lit more than cells from x,y: retired
+unsigned AbandonStaged(uint32_t missile);   // the hero changed level: hidden ones retired, their slots free at once
+unsigned StagedFree();   // slots a StageVisual could take now (free, or a retirement overdue: stranded)
+void StagedCensus(char* out,size_t size,int x,int y);   // developer log: what holds the slots
+void DropStaged(uint32_t missile);
 bool SpellTarget(uintptr_t game,uintptr_t player,int* x,int* y);
 // 0: unrelated request; 1: copied/adjusted; -1: reject before native creation.
 int SpellParams(uintptr_t game,uintptr_t params,std::array<uint8_t,0x98>& adjusted);
