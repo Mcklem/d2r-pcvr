@@ -859,8 +859,9 @@ void ExecuteCompanionTacticalChargesInternal(
     }
 
     static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
-    static uint64_t s_lastChargeScanMs = 0;
     static uint32_t s_lastHirelingUnitId = 0;
+    static std::array<uint32_t, 4> s_lastItemIds{};
+    static size_t s_lastSlotCount = 0;
     static uint64_t s_lastDiagScanLogMs = 0;
 
     const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
@@ -880,62 +881,83 @@ void ExecuteCompanionTacticalChargesInternal(
         return;
     }
 
-    if (nowMs - s_lastChargeScanMs > 1000 || s_lastHirelingUnitId != compHeader[2]) {
-        s_lastChargeScanMs = nowMs;
-        s_lastHirelingUnitId = compHeader[2];
-
-        std::array<framevr::companionai::EquippedItemSlot, 4> slots{};
-        size_t slotCount = 0;
-        for (int loc : {1, 3, 4, 5}) {
-            uintptr_t item = eqFn(inv, loc);
-            uint32_t ih[3]{};
-            if (item && Read(item, ih) && ih[0] == 4) {
-                slots[slotCount++] = { ih[2], loc, item };
-            }
+    // Inspect current equipped item IDs (sub-microsecond memory read)
+    std::array<framevr::companionai::EquippedItemSlot, 4> slots{};
+    std::array<uint32_t, 4> currentItemIds{};
+    size_t slotCount = 0;
+    for (int loc : {1, 3, 4, 5}) {
+        uintptr_t item = eqFn(inv, loc);
+        uint32_t ih[3]{};
+        if (item && Read(item, ih) && ih[0] == 4) {
+            currentItemIds[slotCount] = ih[2];
+            slots[slotCount++] = { ih[2], loc, item };
         }
+    }
+
+    const bool hirelingChanged = (s_lastHirelingUnitId != compHeader[2]);
+    const bool itemsChanged = (slotCount != s_lastSlotCount || currentItemIds != s_lastItemIds);
+
+    // ZERO OVERHEAD: Only perform probe if the mercenary or equipped item IDs actually changed!
+    if (hirelingChanged || itemsChanged) {
+        s_lastHirelingUnitId = compHeader[2];
+        s_lastSlotCount = slotCount;
+        s_lastItemIds = currentItemIds;
 
         auto prevCharges = std::move(s_cachedCharges);
         s_cachedCharges.clear();
+
+        // 59 verified candidate charged skills in Diablo II
+        static constexpr uint16_t CandidateSkills[] = {
+            54,  // Teleport
+            7, 9, 264, // Inner Sight, Slow Missiles, Cloak of Shadows
+            66, 69, 71, 72, 76, 77, 82, 86, 87, 91, // Curses
+            44, 45, 55, 59, 78, 89, 240, // Crowd Control
+            75, 85, 90, 94, 95, 221, 222, 226, 227, 232, 236, 237, 242, 246, 247, // Summons
+            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
+            52, 68, 235 // Buffs
+        };
 
         for (size_t sIdx = 0; sIdx < slotCount; ++sIdx) {
             const auto& slot = slots[sIdx];
             bool foundChargeOnItem = false;
 
-            // Probe 1: Full 16-bit parameter sweep on the item unit
-            for (uint32_t p = 0; p <= 0xFFFF; ++p) {
-                const int32_t statVal = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, static_cast<uint16_t>(p));
-                if (statVal > 0) {
-                    foundChargeOnItem = true;
-                    char hitBuf[256];
-                    std::snprintf(hitBuf, sizeof hitBuf,
-                        "Frame companion AI: [STAT 204 ITEM HIT] loc=%d itemId=%u param=%u (0x%04X) val=%d (0x%08X)",
-                        slot.bodyLocation, slot.itemId, p, p, statVal, statVal);
-                    framevr::logging::Write(hitBuf);
+            auto processHit = [&](uint16_t p, int32_t statVal) {
+                foundChargeOnItem = true;
+                char hitBuf[256];
+                std::snprintf(hitBuf, sizeof hitBuf,
+                    "Frame companion AI: [STAT 204 ITEM HIT] loc=%d itemId=%u param=%u (0x%04X) val=%d (0x%08X)",
+                    slot.bodyLocation, slot.itemId, p, p, statVal, statVal);
+                framevr::logging::Write(hitBuf);
 
-                    const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
-                    const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
+                const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
+                const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
 
-                    const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
-                    const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
+                const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
+                const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
 
-                    const uint16_t sB = static_cast<uint16_t>(p);
-                    const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
+                const uint16_t sB = static_cast<uint16_t>(p);
+                const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
 
-                    const uint16_t s3 = static_cast<uint16_t>(p & 0x3FF);
-                    const uint8_t l3 = static_cast<uint8_t>((p >> 10) & 0x3F);
+                const uint16_t s3 = static_cast<uint16_t>(p & 0x3FF);
+                const uint8_t l3 = static_cast<uint8_t>((p >> 10) & 0x3F);
 
-                    const uint16_t s4 = static_cast<uint16_t>((p >> 6) & 0x3FF);
-                    const uint8_t l4 = static_cast<uint8_t>(p & 0x3F);
+                const uint16_t s4 = static_cast<uint16_t>((p >> 6) & 0x3FF);
+                const uint8_t l4 = static_cast<uint8_t>(p & 0x3F);
 
-                    uint16_t skillId = 0;
-                    uint8_t lvl = 1;
-                    if (sA > 0 && sA < 600 && lA > 0 && lA <= 40) { skillId = sA; lvl = lA; }
-                    else if (sB > 0 && sB < 600) { skillId = sB; lvl = (lB > 0 && lB <= 40) ? lB : 5; }
-                    else if (s3 > 0 && s3 < 600 && l3 > 0 && l3 <= 40) { skillId = s3; lvl = l3; }
-                    else if (s4 > 0 && s4 < 600 && l4 > 0 && l4 <= 40) { skillId = s4; lvl = l4; }
-                    else { skillId = sA ? sA : sB; lvl = lA ? lA : 1; }
+                uint16_t skillId = 0;
+                uint8_t lvl = 1;
+                if (sA > 0 && sA < 600 && lA > 0 && lA <= 40) { skillId = sA; lvl = lA; }
+                else if (sB > 0 && sB < 600) { skillId = sB; lvl = (lB > 0 && lB <= 40) ? lB : 5; }
+                else if (s3 > 0 && s3 < 600 && l3 > 0 && l3 <= 40) { skillId = s3; lvl = l3; }
+                else if (s4 > 0 && s4 < 600 && l4 > 0 && l4 <= 40) { skillId = s4; lvl = l4; }
+                else { skillId = sA ? sA : sB; lvl = lA ? lA : 1; }
 
-                    if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
+                if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
+                    bool already = false;
+                    for (const auto& cs : s_cachedCharges) {
+                        if (cs.itemId == slot.itemId && cs.skillId == skillId) { already = true; break; }
+                    }
+                    if (!already) {
                         framevr::companionai::CompanionChargedSkill cSkillObj{};
                         cSkillObj.itemId = slot.itemId;
                         cSkillObj.bodyLocation = slot.bodyLocation;
@@ -953,8 +975,36 @@ void ExecuteCompanionTacticalChargesInternal(
                         s_cachedCharges.push_back(cSkillObj);
                     }
                 }
+            };
+
+            // Phase 1: Targeted candidate skill probe (Levels 1..25 with both D2 standard and 10-bit packing)
+            for (uint16_t cSkill : CandidateSkills) {
+                // Direct skill
+                int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, cSkill);
+                if (v > 0) processHit(cSkill, v);
+
+                for (uint8_t lvl = 1; lvl <= 25; ++lvl) {
+                    const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
+                    v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
+                    if (v > 0) processHit(pStd, v);
+
+                    const uint16_t p10 = static_cast<uint16_t>((lvl << 10) | (cSkill & 0x3FF));
+                    if (p10 != pStd && p10 != cSkill) {
+                        v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, p10);
+                        if (v > 0) processHit(p10, v);
+                    }
+                }
             }
 
+            // Phase 2: If no charge found via candidates, probe general skill IDs 1..350 direct
+            if (!foundChargeOnItem) {
+                for (uint16_t sk = 1; sk <= 350; ++sk) {
+                    int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, sk);
+                    if (v > 0) processHit(sk, v);
+                }
+            }
+
+            // Phase 3: Diagnostic stat dump if item has no recognized charges
             if (!foundChargeOnItem) {
                 const int def = statFn(slot.itemUnit, 31, 0);
                 const int dur = statFn(slot.itemUnit, 72, 0);
@@ -975,49 +1025,25 @@ void ExecuteCompanionTacticalChargesInternal(
             }
         }
 
-        // Probe 2: Also check if Stat 204 is linked on the hireling unit itself
-        for (uint32_t p = 0; p <= 0xFFFF; ++p) {
-            const int32_t statVal = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, static_cast<uint16_t>(p));
-            if (statVal > 0) {
+        // Targeted probe on hireling unit as well (fast candidate check)
+        for (uint16_t cSkill : CandidateSkills) {
+            int32_t v = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, cSkill);
+            if (v > 0) {
                 char hitBuf[256];
                 std::snprintf(hitBuf, sizeof hitBuf,
-                    "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u (0x%04X) val=%d (0x%08X)",
-                    compHeader[2], p, p, statVal, statVal);
+                    "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u val=%d",
+                    compHeader[2], cSkill, v);
                 framevr::logging::Write(hitBuf);
-
-                const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
-                const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
-
-                const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
-                const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
-                const uint16_t sB = static_cast<uint16_t>(p);
-                const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
-
-                uint16_t skillId = (sA > 0 && sA < 600 && lA > 0 && lA <= 40) ? sA : sB;
-                uint8_t lvl = (lA > 0 && lA <= 40) ? lA : ((lB > 0 && lB <= 40) ? lB : 5);
-
-                if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
-                    bool already = false;
-                    for (const auto& existing : s_cachedCharges) {
-                        if (existing.skillId == skillId) { already = true; break; }
-                    }
-                    if (!already) {
-                        framevr::companionai::CompanionChargedSkill cSkillObj{};
-                        cSkillObj.itemId = slots.empty() ? 0 : slots[0].itemId;
-                        cSkillObj.bodyLocation = slots.empty() ? 1 : slots[0].bodyLocation;
-                        cSkillObj.skillId = skillId;
-                        cSkillObj.level = lvl;
-                        cSkillObj.currentCharges = cur;
-                        cSkillObj.maxCharges = maxC;
-                        cSkillObj.kind = framevr::companionai::GetTacticalSkillKind(skillId);
-                        for (const auto& prev : prevCharges) {
-                            if (prev.skillId == cSkillObj.skillId) {
-                                cSkillObj.lastCastMs = prev.lastCastMs;
-                                break;
-                            }
-                        }
-                        s_cachedCharges.push_back(cSkillObj);
-                    }
+            }
+            for (uint8_t lvl = 1; lvl <= 25; ++lvl) {
+                const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
+                v = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, pStd);
+                if (v > 0) {
+                    char hitBuf[256];
+                    std::snprintf(hitBuf, sizeof hitBuf,
+                        "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u val=%d",
+                        compHeader[2], pStd, v);
+                    framevr::logging::Write(hitBuf);
                 }
             }
         }
@@ -1042,7 +1068,6 @@ void ExecuteCompanionTacticalChargesInternal(
             }
         }
     }
-
     if (s_cachedCharges.empty()) {
         return;
     }
