@@ -896,16 +896,19 @@ void ExecuteCompanionTacticalChargesInternal(
         auto prevCharges = std::move(s_cachedCharges);
         s_cachedCharges.clear();
 
-        // 61 verified candidate charged skills in Diablo II (including Radament's Sphere and Hellrack)
+        // Verified candidate charged skills in Diablo II (expanded for all classes, items, and assassin traps)
         static constexpr uint16_t CandidateSkills[] = {
             54,  // Teleport
             7, 9, 264, // Inner Sight, Slow Missiles, Cloak of Shadows
-            66, 69, 71, 72, 76, 77, 82, 86, 87, 91, // Curses
-            44, 45, 55, 59, 78, 89, 240, // Crowd Control
-            75, 85, 90, 94, 95, 221, 222, 226, 227, 232, 236, 237, 242, 246, 247, // Summons
-            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 83, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
-            31, // Immolation Arrow (Hellrack)
-            52, 68, 235 // Buffs
+            66, 69, 71, 72, 76, 77, 81, 82, 86, 87, 91, 137, 146, // Curses
+            43, 44, 45, 55, 59, 78, 88, 89, 116, 130, 139, 150, 154, 240, 253, 273, // Crowd Control
+            17, 32, 75, 85, 90, 94, 95, 221, 222, 226, 227, 232, 236, 237, 242, 246, 247, 268, 279, // Summons
+            6, 10, 11, 12, 14, 16, 19, 20, 21, 22, 24, 25, 26, 27, 29, 30, 31, 34, 35, // Amazon attacks & arrows
+            36, 38, 39, 41, 42, 46, 47, 48, 49, 51, 53, 56, 62, 64, 67, 73, 74, 83, 84, 92, 93, // Sorc & Necro damage
+            96, 101, 111, 112, 121, 126, 140, 152, // Paladin & Barbarian attacks
+            223, 225, 229, 234, 244, 245, 249, 250, // Druid elemental
+            251, 254, 256, 257, 259, 261, 262, 265, 266, 269, 271, 272, 274, 276, 280, // Assassin traps & martial arts
+            40, 50, 52, 57, 58, 60, 68, 138, 149, 155, 235, 258, 267, 277, 278 // Buffs
         };
 
         for (size_t sIdx = 0; sIdx < slotCount; ++sIdx) {
@@ -997,7 +1000,7 @@ void ExecuteCompanionTacticalChargesInternal(
                 for (uint16_t sk = 1; sk <= 350; ++sk) {
                     int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, sk);
                     if (v > 0) processHit(sk, v);
-                    for (uint8_t lvl = 1; lvl <= 10; ++lvl) {
+                    for (uint8_t lvl = 1; lvl <= 20; ++lvl) {
                         const uint16_t pStd = framevr::companionai::PackChargedSkillParam(sk, lvl);
                         v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
                         if (v > 0) processHit(pStd, v);
@@ -1125,6 +1128,16 @@ void ExecuteCompanionTacticalChargesInternal(
                 closestDist = d;
                 primaryTargetX = hostiles[i].x;
                 primaryTargetY = hostiles[i].y;
+            }
+        }
+        if (closestDist >= 9998.0f && hCount > 0) {
+            for (int i = 0; i < hCount; ++i) {
+                const float d = std::hypot(hostiles[i].x - compPos.x, hostiles[i].y - compPos.y);
+                if (d < closestDist) {
+                    closestDist = d;
+                    primaryTargetX = hostiles[i].x;
+                    primaryTargetY = hostiles[i].y;
+                }
             }
         }
     }

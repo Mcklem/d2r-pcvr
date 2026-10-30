@@ -116,29 +116,42 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
             return TacticalSkillKind::Suppression;
 
         // Curses
-        case 66: // Weaken
-        case 69: // Amplify Damage
-        case 71: // Dim Vision
-        case 72: // Iron Maiden
-        case 76: // Terror
-        case 77: // Confuse
-        case 82: // Life Tap
-        case 86: // Attract
-        case 87: // Decrepify
-        case 91: // Lower Resist
+        case 66:  // Amplify Damage
+        case 71:  // Dim Vision
+        case 72:  // Weaken
+        case 76:  // Iron Maiden
+        case 77:  // Terror
+        case 81:  // Confuse
+        case 82:  // Life Tap
+        case 86:  // Attract
+        case 87:  // Decrepify
+        case 91:  // Lower Resist
+        case 137: // Taunt
+        case 146: // Battle Cry
             return TacticalSkillKind::Curse;
 
         // Crowd Control
+        case 43:  // Telekinesis
         case 44:  // Frost Nova
         case 45:  // Ice Blast
         case 55:  // Glacial Spike
         case 59:  // Blizzard
         case 78:  // Bone Wall
-        case 89:  // Bone Prison
+        case 88:  // Bone Prison
+        case 89:  // Bone Prison (variant ID)
+        case 116: // Conversion
+        case 130: // Howl
+        case 139: // Stun
+        case 150: // Grim Ward
+        case 154: // War Cry
         case 240: // Twister
+        case 253: // Psychic Hammer
+        case 273: // Mind Blast
             return TacticalSkillKind::CrowdControl;
 
         // Summons
+        case 17:  // Decoy
+        case 32:  // Valkyrie
         case 75:  // Clay Golem
         case 85:  // Blood Golem
         case 90:  // Iron Golem
@@ -154,14 +167,36 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 242: // Solar Creeper
         case 246: // Heart of Wolverine
         case 247: // Grizzly
+        case 268: // Shadow Warrior
+        case 279: // Shadow Master
             return TacticalSkillKind::Summon;
 
         // Targeted Damage Spells & AoE
+        case 6:   // Magic Arrow
+        case 10:  // Jab
+        case 11:  // Cold Arrow
+        case 12:  // Multiple Shot
+        case 14:  // Power Strike
+        case 16:  // Fire Arrow
+        case 19:  // Poison Javelin
+        case 20:  // Impale
+        case 21:  // Ice Arrow
+        case 22:  // Guided Arrow
+        case 24:  // Lightning Bolt
+        case 25:  // Charged Strike
+        case 26:  // Exploding Arrow
+        case 27:  // Strafe
+        case 29:  // Plague Javelin
+        case 30:  // Fend
         case 31:  // Immolation Arrow (Hellrack)
+        case 34:  // Lightning Strike
+        case 35:  // Freezing Arrow
         case 36:  // Fire Bolt
         case 38:  // Charged Bolt
         case 39:  // Ice Bolt
+        case 41:  // Inferno
         case 42:  // Static Field
+        case 46:  // Blaze
         case 47:  // Fire Ball
         case 48:  // Nova
         case 49:  // Lightning
@@ -171,13 +206,20 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 62:  // Hydra
         case 64:  // Frozen Orb
         case 67:  // Teeth
+        case 73:  // Poison Dagger
         case 74:  // Corpse Explosion
         case 83:  // Poison Explosion (Radament's Sphere)
         case 84:  // Bone Spear
         case 92:  // Poison Nova
         case 93:  // Bone Spirit
+        case 96:  // Sacrifice
         case 101: // Holy Bolt
+        case 111: // Vengeance
+        case 112: // Blessed Hammer
         case 121: // Fist of the Heavens
+        case 126: // Bash
+        case 140: // Double Swing
+        case 152: // Berserk
         case 223: // Arctic Blast
         case 225: // Firestorm
         case 229: // Molten Boulder
@@ -186,15 +228,52 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 245: // Tornado
         case 249: // Armageddon
         case 250: // Hurricane
+        case 251: // Fire Blast
+        case 254: // Tiger Strike
+        case 256: // Shock Web
+        case 257: // Blade Sentinel
+        case 259: // Fists of Fire
+        case 261: // Charged Bolt Sentry (Traps)
+        case 262: // Wake of Fire
+        case 265: // Cobra Strike
+        case 266: // Blade Fury
+        case 269: // Claws of Thunder
+        case 271: // Lightning Sentry
+        case 272: // Wake of Inferno
+        case 274: // Blades of Ice
+        case 276: // Death Sentry
+        case 280: // Phoenix Strike
             return TacticalSkillKind::DamageSpell;
 
         // Buffs
+        case 40:  // Frozen Armor
+        case 50:  // Shiver Armor
         case 52:  // Enchant
+        case 57:  // Thunder Storm
+        case 58:  // Energy Shield
+        case 60:  // Chilling Armor
         case 68:  // Bone Armor
+        case 138: // Shout
+        case 149: // Battle Orders
+        case 155: // Battle Command
         case 235: // Cyclone Armor
+        case 258: // Burst of Speed
+        case 267: // Fade
+        case 277: // Blade Shield
+        case 278: // Venom (Andariel's Visage)
             return TacticalSkillKind::Buff;
 
+        // Non-combat utility explicitly excluded
+        case 0:
+        case 218: // Identify
+        case 219: // Town Portal
+            return TacticalSkillKind::None;
+
         default:
+            // Safe fallback: Any unrecognized valid class skill (1..360) is treated as DamageSpell
+            if (skillId > 0 && skillId < 360) {
+                return TacticalSkillKind::DamageSpell;
+            }
             return TacticalSkillKind::None;
     }
 }
@@ -209,7 +288,7 @@ inline uint64_t GetTacticalCooldownMs(TacticalSkillKind kind) noexcept {
         case TacticalSkillKind::Summon:       return 45000; // 45.0s
         case TacticalSkillKind::DamageSpell:  return  4000; //  4.0s
         case TacticalSkillKind::Buff:         return 60000; // 60.0s
-        default:                              return  5000;
+        default:                              return  4000;
     }
 }
 
@@ -385,6 +464,14 @@ inline bool EvaluateTacticalCharge(
             }
             return false;
 
+        case TacticalSkillKind::None:
+            // Fallback for uncategorized active skills: trigger during active combat
+            if (sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 1 || sensors.isCombatActive) {
+                outReason = "P8 Uncategorized Combat Action";
+                return true;
+            }
+            return false;
+
         default:
             return false;
     }
@@ -403,15 +490,16 @@ inline TacticalCastDecision SelectBestTacticalCharge(
         return decision;
     }
 
-    // Evaluation in strict priority hierarchy (P1 to P7)
-    constexpr std::array<TacticalSkillKind, 7> PriorityOrder = {
+    // Evaluation in strict priority hierarchy (P1 to P8)
+    constexpr std::array<TacticalSkillKind, 8> PriorityOrder = {
         TacticalSkillKind::Teleport,
         TacticalSkillKind::Suppression,
         TacticalSkillKind::Curse,
         TacticalSkillKind::CrowdControl,
         TacticalSkillKind::Summon,
         TacticalSkillKind::DamageSpell,
-        TacticalSkillKind::Buff
+        TacticalSkillKind::Buff,
+        TacticalSkillKind::None
     };
 
     for (TacticalSkillKind kind : PriorityOrder) {

@@ -82,13 +82,25 @@ void TestTacticalSkillKindClassification() {
     assert(GetTacticalSkillKind(264) == TacticalSkillKind::Suppression); // Cloak of Shadows
     assert(GetTacticalSkillKind(44) == TacticalSkillKind::CrowdControl); // Frost Nova
     assert(GetTacticalSkillKind(55) == TacticalSkillKind::CrowdControl); // Glacial Spike
+    assert(GetTacticalSkillKind(88) == TacticalSkillKind::CrowdControl); // Bone Prison
+    assert(GetTacticalSkillKind(253) == TacticalSkillKind::CrowdControl); // Psychic Hammer
     assert(GetTacticalSkillKind(246) == TacticalSkillKind::Summon);      // Heart of Wolverine
     assert(GetTacticalSkillKind(226) == TacticalSkillKind::Summon);      // Oak Sage
     assert(GetTacticalSkillKind(47) == TacticalSkillKind::DamageSpell);  // Fire Ball
     assert(GetTacticalSkillKind(56) == TacticalSkillKind::DamageSpell);  // Meteor
     assert(GetTacticalSkillKind(83) == TacticalSkillKind::DamageSpell);  // Poison Explosion (Radament's Sphere)
     assert(GetTacticalSkillKind(31) == TacticalSkillKind::DamageSpell);  // Immolation Arrow (Hellrack)
+    assert(GetTacticalSkillKind(261) == TacticalSkillKind::DamageSpell); // Charged Bolt Sentry (User's Helm charge)
+    assert(GetTacticalSkillKind(251) == TacticalSkillKind::DamageSpell); // Fire Blast
+    assert(GetTacticalSkillKind(271) == TacticalSkillKind::DamageSpell); // Lightning Sentry
+    assert(GetTacticalSkillKind(41) == TacticalSkillKind::DamageSpell);  // Inferno
+    assert(GetTacticalSkillKind(40) == TacticalSkillKind::Buff);         // Frozen Armor
     assert(GetTacticalSkillKind(52) == TacticalSkillKind::Buff);         // Enchant
+    assert(GetTacticalSkillKind(278) == TacticalSkillKind::Buff);        // Venom
+    assert(GetTacticalSkillKind(138) == TacticalSkillKind::Buff);        // Shout
+    assert(GetTacticalSkillKind(0) == TacticalSkillKind::None);
+    assert(GetTacticalSkillKind(218) == TacticalSkillKind::None);        // Identify
+    assert(GetTacticalSkillKind(219) == TacticalSkillKind::None);        // Town Portal
     assert(GetTacticalSkillKind(999) == TacticalSkillKind::None);
 
     std::puts("TestTacticalSkillKindClassification: OK");
@@ -302,6 +314,22 @@ void TestTacticalPriorityArbitration() {
         assert(decision.shouldCast);
         assert(decision.kind == TacticalSkillKind::DamageSpell);
         assert(decision.skillId == 47);
+    }
+
+    // Test Assassin Traps (e.g. Charged Bolt Sentry, ID 261):
+    {
+        std::vector<CompanionChargedSkill> trapSkills;
+        trapSkills.push_back({1010, 1, 261, 2, 26, 30, 0, GetTacticalSkillKind(261)});
+        TacticalCombatSensors trapSensors{};
+        trapSensors.nowMs = 100000;
+        trapSensors.hasActiveBoss = true;
+        trapSensors.isCombatActive = true;
+
+        auto decision = SelectBestTacticalCharge(trapSkills, trapSensors, true, true);
+        assert(decision.shouldCast);
+        assert(decision.skillId == 261);
+        assert(decision.level == 2);
+        assert(decision.kind == TacticalSkillKind::DamageSpell);
     }
 
     // Test Master Toggle Disabled: `isMasterEnabled == false`
