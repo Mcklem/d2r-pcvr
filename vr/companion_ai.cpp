@@ -796,19 +796,18 @@ int DetourSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, i
         });
 }
 
+static bool s_skillLevelHookAttempted = false;
 static uint64_t s_lastHookAttemptMs = 0;
 
 void EnsureSkillLevelInstalled() noexcept {
     if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) return;
-    if (g_skillLevelHooked.load(std::memory_order_relaxed)) return;
+    if (g_skillLevelHooked.load(std::memory_order_relaxed) || s_skillLevelHookAttempted) return;
+    s_skillLevelHookAttempted = true;
 
     if (d2rsig::Check(abi::SkillLevelRva, abi::SkillLevelSig, sizeof(abi::SkillLevelSig)) &&
         d2rsig::Check(abi::InventoryRva, abi::InventorySig, sizeof(abi::InventorySig)) &&
         d2rsig::Check(abi::EquippedRva, abi::EquippedSig, sizeof(abi::EquippedSig)) &&
         d2rsig::Check(abi::GetStatRva, abi::GetStatSig, sizeof(abi::GetStatSig))) {
-        const uint64_t now = GetTickCount64();
-        if (s_lastHookAttemptMs != 0 && (now - s_lastHookAttemptMs < 10000)) return;
-        s_lastHookAttemptMs = now;
         if (d2rsig::Hook(
                 abi::SkillLevelRva,
                 abi::SkillLevelSig,
@@ -849,6 +848,7 @@ static_assert(offsetof(SyntheticCompanionSkillNode, bonus) == 0x44);
 static_assert(offsetof(SyntheticCompanionSkillNode, base) == 0x48);
 static_assert(offsetof(SyntheticCompanionSkillNode, owner) == 0x4c);
 
+static uint8_t s_syntheticSkillRowBuffer[1024]{};
 static SyntheticCompanionSkillNode s_companionSyntheticNode{};
 using SkillLookupFn = uintptr_t(*)(uintptr_t unit, int skillId, int owner);
 
@@ -1304,6 +1304,7 @@ void ExecuteCompanionTacticalChargesInternal(
         // Resolve skill node: check native hireling skill list first (charges / native skills)
         const auto lookupFn = reinterpret_cast<SkillLookupFn>(d2rsig::Addr(abi::SkillRva));
         uintptr_t activeSkillNode = lookupFn ? lookupFn(hireling, decision.skillId, -1) : 0;
+        bool isSynthetic = false;
 
         // If the skill is not in the hireling's native list (vanilla D2R ITEM_EquipItem skips
         // inserting STAT 107 single skills and STAT 204 charged skills for non-player units),
@@ -1311,18 +1312,25 @@ void ExecuteCompanionTacticalChargesInternal(
         if (!activeSkillNode) {
             const void* skillRow = nativeui::GetSkillRow(decision.skillId);
             if (skillRow) {
-                s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
-                s_companionSyntheticNode.next = 0;
-                s_companionSyntheticNode.flags = 1;
-                s_companionSyntheticNode.hitCount = 1;
-                s_companionSyntheticNode.targetType = 1;
-                s_companionSyntheticNode.targetId = primaryTargetId;
-                s_companionSyntheticNode.level = decision.level > 0 ? decision.level : 1;
-                s_companionSyntheticNode.bonus = 0;
-                s_companionSyntheticNode.base = decision.level > 0 ? decision.level : 1;
-                s_companionSyntheticNode.owner = -1;
-                activeSkillNode = reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
+                std::memcpy(s_syntheticSkillRowBuffer, skillRow, sizeof(s_syntheticSkillRowBuffer));
+            } else {
+                std::memset(s_syntheticSkillRowBuffer, 0, sizeof(s_syntheticSkillRowBuffer));
             }
+            // Explicitly force offset 0 of pSkillsTxt to match wSkillId as expected by SkillLayoutSig (0f bf 11 / 3b d7):
+            *reinterpret_cast<uint16_t*>(s_syntheticSkillRowBuffer) = static_cast<uint16_t>(decision.skillId);
+
+            s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(s_syntheticSkillRowBuffer);
+            s_companionSyntheticNode.next = 0;
+            s_companionSyntheticNode.flags = 1;
+            s_companionSyntheticNode.hitCount = 1;
+            s_companionSyntheticNode.targetType = 1;
+            s_companionSyntheticNode.targetId = primaryTargetId;
+            s_companionSyntheticNode.level = decision.level > 0 ? decision.level : 1;
+            s_companionSyntheticNode.bonus = 0;
+            s_companionSyntheticNode.base = decision.level > 0 ? decision.level : 1;
+            s_companionSyntheticNode.owner = -1;
+            activeSkillNode = reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
+            isSynthetic = true;
         }
 
         // Safety invariant: NEVER dispatch a skill without a valid skill node in the caster's list.
@@ -1332,23 +1340,67 @@ void ExecuteCompanionTacticalChargesInternal(
             return;
         }
 
-        // Temporarily supply THIS skill node to the hireling's used skill slot (list + 0x18),
-        // exactly matching how spells.cpp and melee.cpp prepare the caster for StartRva and DispatchRva
+        // Temporarily supply THIS skill node to the hireling's skill list:
+        // 1. Prepend to list + 0x00 (pFirstSkill) so that native SKILLS_GetSkillNodeById (0x33dcd0)
+        //    successfully locates this skill node during StartSkill and DispatchSkill.
+        //    Without this, StartSkill (0x43b3e0) returns NULL pSkill, triggering BC_ASSERT(pSkill) crash
+        //    in SrvDo/SrvSt routines (e.g. SkillSor.cpp:148 on Arctic Blast / Inferno).
+        // 2. Supply to list + 0x18 and list + 0x20 (pUsedSkill / pRightSkill), matching how spells.cpp and melee.cpp prepare the caster.
         struct SelectionScope {
-            uintptr_t address = 0, previous = 0;
+            uintptr_t addressFirst = 0, previousFirst = 0;
+            uintptr_t address18 = 0, previous18 = 0;
+            uintptr_t address20 = 0, previous20 = 0;
             bool changed = false;
-            SelectionScope(uintptr_t unit, uintptr_t node) {
+
+            SelectionScope(uintptr_t unit, uintptr_t node, bool synthetic) {
                 uintptr_t list = 0;
-                if (node && unit && Read(unit + 0x100, list) && list >= 0x10000 && Read(list + 0x18, previous)) {
-                    address = list + 0x18;
-                    changed = framevr::WriteMemory(reinterpret_cast<void*>(address), &node, sizeof(node));
+                if (node && unit && Read(unit + 0x100, list) && list >= 0x10000) {
+                    if (Read(list + 0x18, previous18)) {
+                        address18 = list + 0x18;
+                        if (framevr::WriteMemory(reinterpret_cast<void*>(address18), &node, sizeof(node))) {
+                            changed = true;
+                        }
+                    }
+                    if (Read(list + 0x20, previous20)) {
+                        address20 = list + 0x20;
+                        (void)framevr::WriteMemory(reinterpret_cast<void*>(address20), &node, sizeof(node));
+                    }
+                    if (synthetic) {
+                        if (Read(list + 0x00, previousFirst)) {
+                            s_companionSyntheticNode.next = previousFirst;
+                            addressFirst = list + 0x00;
+                            (void)framevr::WriteMemory(reinterpret_cast<void*>(addressFirst), &node, sizeof(node));
+                        }
+                    }
                 }
             }
+
+            void Refresh(uintptr_t node, bool synthetic) {
+                if (address18) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(address18), &node, sizeof(node));
+                }
+                if (address20) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(address20), &node, sizeof(node));
+                }
+                if (synthetic && addressFirst) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(addressFirst), &node, sizeof(node));
+                }
+            }
+
             ~SelectionScope() {
-                if (changed) framevr::WriteMemory(reinterpret_cast<void*>(address), &previous, sizeof(previous));
+                if (addressFirst) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(addressFirst), &previousFirst, sizeof(previousFirst));
+                    s_companionSyntheticNode.next = 0;
+                }
+                if (address18) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(address18), &previous18, sizeof(previous18));
+                }
+                if (address20) {
+                    (void)framevr::WriteMemory(reinterpret_cast<void*>(address20), &previous20, sizeof(previous20));
+                }
             }
         };
-        SelectionScope selectionScope(hireling, activeSkillNode);
+        SelectionScope selectionScope(hireling, activeSkillNode, isSynthetic);
 
         uintptr_t targetUnit = 0;
         if (framevr::companionai::SkillRequiresCorpse(decision.skillId)) {
@@ -1393,6 +1445,8 @@ void ExecuteCompanionTacticalChargesInternal(
 
             s_companionSyntheticNode.targetId = arrowTargetId;
             s_companionSyntheticNode.hitCount = arrowCount - a;
+
+            selectionScope.Refresh(activeSkillNode, isSynthetic);
 
             const int res = dispatchFn(game, hireling, decision.skillId, decision.level, 1, arrowDestX, arrowDestY);
             if (res != 0) {
@@ -2672,6 +2726,7 @@ bool IsInTacticalRetreat() {
 void ConfigureItemSkills(bool enabled) {
     g_companionItemSkillsEnabled.store(enabled);
     s_lastHookAttemptMs = 0;
+    s_skillLevelHookAttempted = false;
 }
 
 bool IsItemSkillsEnabled() {

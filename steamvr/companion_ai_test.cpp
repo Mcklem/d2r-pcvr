@@ -241,9 +241,22 @@ static int g_lastDispatchedDestX = 0;
 static int g_lastDispatchedDestY = 0;
 static int g_dispatchCount = 0;
 
-static int __fastcall FakeStartSkill(uintptr_t, uintptr_t, int skillId, int level, int) {
+static int __fastcall FakeStartSkill(uintptr_t, uintptr_t unit, int skillId, int level, int) {
     g_lastStartedSkill = skillId;
     g_lastStartedLevel = level;
+    uintptr_t list = 0;
+    if (framevr::ReadMemory(&list, reinterpret_cast<void*>(unit + 0x100), sizeof(list)) && list) {
+        uintptr_t firstNode = 0;
+        if (framevr::ReadMemory(&firstNode, reinterpret_cast<void*>(list), sizeof(firstNode)) && firstNode) {
+            uintptr_t row = 0;
+            if (framevr::ReadMemory(&row, reinterpret_cast<void*>(firstNode), sizeof(row)) && row) {
+                uint16_t id = 0;
+                if (framevr::ReadMemory(&id, reinterpret_cast<void*>(row), sizeof(id))) {
+                    assert(id == skillId);
+                }
+            }
+        }
+    }
     return 1;
 }
 
@@ -1732,8 +1745,11 @@ int main() {
             assert(companionai::originalSkillLevel != nullptr);
 
             // Unit setups
-            alignas(8) uint8_t mercUnit[0x80]{};
+            alignas(8) uint8_t mockSkillList[0x40]{};
+            const uintptr_t mockSkillListPtr = reinterpret_cast<uintptr_t>(mockSkillList);
+            alignas(8) uint8_t mercUnit[0x120]{};
             const uintptr_t mercUnitPtr = reinterpret_cast<uintptr_t>(mercUnit);
+            std::memcpy(mercUnit + 0x100, &mockSkillListPtr, sizeof(mockSkillListPtr));
 
             alignas(8) int16_t skillsRow[16]{};
             skillsRow[0] = 7;
