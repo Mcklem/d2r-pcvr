@@ -29,6 +29,7 @@ struct CompanionChargedSkill {
     uint8_t maxCharges = 0;
     uint64_t lastCastMs = 0;
     TacticalSkillKind kind = TacticalSkillKind::None;
+    bool isEquipmentSkill = false; // true for skills granted directly by equipment (STAT 107/97)
 };
 
 // Tactical sensors provided by Layer 1 & Layer 2 to evaluate casting eligibility.
@@ -118,8 +119,9 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
             return TacticalSkillKind::Teleport;
 
         // Projectile Suppression & Vision
-        case 7:   // Inner Sight
+        case 8:   // Inner Sight
         case 9:   // Slow Missiles
+        case 17:  // Slow Missiles (variant)
         case 264: // Cloak of Shadows
             return TacticalSkillKind::Suppression;
 
@@ -158,7 +160,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
             return TacticalSkillKind::CrowdControl;
 
         // Summons
-        case 17:  // Decoy
+        case 28:  // Decoy (Dopplezon)
         case 32:  // Valkyrie
         case 75:  // Clay Golem
         case 85:  // Blood Golem
@@ -181,24 +183,25 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
 
         // Targeted Damage Spells & AoE
         case 6:   // Magic Arrow
+        case 7:   // Fire Arrow
         case 10:  // Jab
         case 11:  // Cold Arrow
         case 12:  // Multiple Shot
         case 14:  // Power Strike
-        case 16:  // Fire Arrow
-        case 19:  // Poison Javelin
-        case 20:  // Impale
+        case 15:  // Poison Javelin
+        case 16:  // Exploding Arrow
+        case 19:  // Impale
+        case 20:  // Lightning Bolt
         case 21:  // Ice Arrow
         case 22:  // Guided Arrow
-        case 24:  // Lightning Bolt
-        case 25:  // Charged Strike
-        case 26:  // Exploding Arrow
-        case 27:  // Strafe
-        case 29:  // Plague Javelin
+        case 24:  // Charged Strike
+        case 25:  // Plague Javelin
+        case 26:  // Strafe
+        case 27:  // Immolation Arrow
         case 30:  // Fend
-        case 31:  // Immolation Arrow (Hellrack)
+        case 31:  // Freezing Arrow (Hellrack)
         case 34:  // Lightning Strike
-        case 35:  // Freezing Arrow
+        case 35:  // Lightning Fury
         case 36:  // Fire Bolt
         case 38:  // Charged Bolt
         case 39:  // Ice Bolt
@@ -300,10 +303,55 @@ inline uint64_t GetTacticalCooldownMs(TacticalSkillKind kind) noexcept {
     }
 }
 
+// Identifies passive skills and masteries across all character classes that cannot be cast actively.
+inline constexpr bool IsSkillPassive(uint16_t skillId) noexcept {
+    switch (skillId) {
+        // Amazon passives
+        case 13:  // Dodge
+        case 18:  // Avoid
+        case 23:  // Penetrate
+        case 29:  // Evade
+        case 33:  // Pierce
+        // Sorceress passives
+        case 37:  // Warmth
+        case 61:  // Fire Mastery
+        case 63:  // Lightning Mastery
+        case 65:  // Cold Mastery
+        // Necromancer passives
+        case 69:  // Skeleton Mastery
+        case 79:  // Golem Mastery
+        case 89:  // Summon Resist
+        // Barbarian combat masteries & passives
+        case 127: // Sword Mastery
+        case 128: // Axe Mastery
+        case 129: // Mace Mastery
+        case 134: // Polearm Mastery
+        case 135: // Throwing Mastery
+        case 136: // Spear Mastery
+        case 141: // Increased Stamina
+        case 145: // Iron Skin
+        case 148: // Increased Speed
+        case 153: // Natural Resistance
+        // Druid passives
+        case 224: // Lycanthropy
+        // Assassin passives
+        case 252: // Claw Mastery
+        case 258: // Weapon Block
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Verifies that the companion model and animation system can execute the skill safely
 // without missing animation tokens or skeletal glitches.
 inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId) noexcept {
     if (vclass == VirtualPlayerClass::None) {
+        return false;
+    }
+
+    // Passive skills and weapon masteries cannot be cast actively as spells
+    if (IsSkillPassive(skillId)) {
         return false;
     }
 
@@ -325,15 +373,16 @@ inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId
     // Amazon bow/crossbow exclusive skills:
     switch (skillId) {
         case 6:  // Magic Arrow
+        case 7:  // Fire Arrow
         case 11: // Cold Arrow
         case 12: // Multiple Shot
-        case 16: // Fire Arrow
+        case 16: // Exploding Arrow
         case 21: // Ice Arrow
         case 22: // Guided Arrow
-        case 26: // Exploding Arrow
-        case 27: // Strafe
-        case 31: // Immolation Arrow
-        case 35: // Freezing Arrow
+        case 26: // Strafe
+        case 27: // Immolation Arrow
+        case 31: // Freezing Arrow
+        case 35: // Lightning Fury / bow token
             // Only Rogue archers (Amazon virtual class) have bow casting tokens
             return vclass == VirtualPlayerClass::Amazon;
     }
@@ -379,22 +428,56 @@ std::vector<CompanionChargedSkill> ScanCompanionChargedSkills(
         if (!item.itemUnit) continue;
 
         extractStats(item, [&](uint16_t statId, uint16_t param, int32_t value) {
-            if (statId != ItemStat::ChargedSkill) {
+            if (statId == ItemStat::ChargedSkill) {
+                CompanionChargedSkill skill = UnpackChargedSkill(item.itemId, item.bodyLocation, param, value);
+                if (skill.skillId == 0 || skill.maxCharges == 0) {
+                    return;
+                }
+
+                // Usability validation by virtual class
+                if (!IsSkillUsableByCompanion(vclass, skill.skillId)) {
+                    return;
+                }
+
+                skill.kind = GetTacticalSkillKind(skill.skillId);
+                result.push_back(skill);
                 return;
             }
 
-            CompanionChargedSkill skill = UnpackChargedSkill(item.itemId, item.bodyLocation, param, value);
-            if (skill.skillId == 0 || skill.maxCharges == 0) {
+            if (statId == ItemStat::SingleSkill) {
+                const uint16_t skillId = param;
+                if (skillId > 0 && IsSkillMatchingVirtualClass(vclass, skillId) &&
+                    !IsSkillPassive(skillId) && IsSkillUsableByCompanion(vclass, skillId)) {
+                    CompanionChargedSkill skill{};
+                    skill.itemId = item.itemId;
+                    skill.bodyLocation = item.bodyLocation;
+                    skill.skillId = skillId;
+                    skill.level = static_cast<uint8_t>(value > 0 ? value : 1);
+                    skill.currentCharges = 255;
+                    skill.maxCharges = 0;
+                    skill.isEquipmentSkill = true;
+                    skill.kind = GetTacticalSkillKind(skillId);
+                    result.push_back(skill);
+                }
                 return;
             }
 
-            // Usability validation by virtual class
-            if (!IsSkillUsableByCompanion(vclass, skill.skillId)) {
+            if (statId == ItemStat::NonClassSkill) {
+                const uint16_t skillId = param;
+                if (skillId > 0 && !IsSkillPassive(skillId) && IsSkillUsableByCompanion(vclass, skillId)) {
+                    CompanionChargedSkill skill{};
+                    skill.itemId = item.itemId;
+                    skill.bodyLocation = item.bodyLocation;
+                    skill.skillId = skillId;
+                    skill.level = static_cast<uint8_t>(value > 0 ? value : 1);
+                    skill.currentCharges = 255;
+                    skill.maxCharges = 0;
+                    skill.isEquipmentSkill = true;
+                    skill.kind = GetTacticalSkillKind(skillId);
+                    result.push_back(skill);
+                }
                 return;
             }
-
-            skill.kind = GetTacticalSkillKind(skill.skillId);
-            result.push_back(skill);
         });
     }
 
@@ -405,8 +488,8 @@ std::vector<CompanionChargedSkill> ScanCompanionChargedSkills(
 inline bool DecrementChargedSkill(
     CompanionChargedSkill& skill,
     bool consumeCharges) noexcept {
-    if (!consumeCharges) {
-        // Zero-Wear Dev Mode: charges remain intact
+    if (!consumeCharges || skill.isEquipmentSkill || skill.maxCharges == 0) {
+        // Zero-Wear Dev Mode or equipment-granted skills: charges remain intact
         return true;
     }
 
@@ -426,8 +509,8 @@ inline bool EvaluateTacticalCharge(
     const char*& outReason) noexcept {
     outReason = "";
 
-    // Charge check
-    if (consumeCharges && skill.currentCharges == 0) {
+    // Charge check (only applies to finite item charges, never to equipment skills)
+    if (!skill.isEquipmentSkill && skill.maxCharges > 0 && consumeCharges && skill.currentCharges == 0) {
         return false;
     }
 

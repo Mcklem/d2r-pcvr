@@ -278,6 +278,25 @@ Si por cualquier factor dinámico del motor (como un cadáver consumido en el mi
 
 ---
 
+### 4.7. Integración de Habilidades Activas de Equipamiento (Staffmods e Oskills)
+
+Más allá de las cargas (Stat 204), los mercenarios pueden portar objetos que confieren habilidades directas de clase (Stat 107, *single skill* / *staffmod*, como +3 a Bombardeo en arcos de Amazona) u otorgadas para todas las clases (Stat 97, *oskill*, como +1 a Teletransporte de Enigma o +1 a Ráfaga de Fuego).
+
+En el juego original, la IA de los mercenarios ignora completamente estas habilidades porque solo ejecuta la lista prefijada en hireling.txt.
+
+#### Mecánica de Integración en la Rotación de Combate:
+1. **Detección y Clasificación (ScanCompanionChargedSkills & CollectMercenarySkillBadges):**
+   * El escáner detecta Stat 107 y Stat 97, instanciando un descriptor de habilidad con la bandera isEquipmentSkill = true, maxCharges = 0 y currentCharges = 255 (ilimitado).
+   * **Filtro Estricto de Pasivas (IsSkillPassive):** Las habilidades pasivas (como *Golpe Crítico*, *Esquivar*, *Calor*, o *Maestrías de Armas*) quedan excluidas del despachador activo para evitar intentos anómalos de lanzamiento, operando pasivamente en el motor de combate.
+   * **Compatibilidad de Clase Virtual (IsSkillUsableByCompanion):** Para Stat 107, solo se autorizan habilidades compatibles con la clase virtual del mercenario y su conjunto de animaciones nativas (e.g. *Bombardeo / Strafe* (ID 26), *Disparo Múltiple* (ID 12) o *Flecha Inmoladora* (ID 27) para la Pícara del Acto 1 / Amazona).
+2. **Rotación Táctica y Cooldowns:**
+   * Al ser habilidades ilimitadas de equipo, su uso no se agota por cargas, sino que se gobierna mediante la cadencia táctica (DamageSpell cooldown de ~4.0 s para hechizos/flechas ofensivas).
+   * Esto previene el spam continuo de animaciones y permite intercalar ataques básicos de arma con ráfagas devastadoras de *Bombardeo* (*Strafe*).
+3. **Exención de Desgaste (companion_consume_item_charges):**
+   * La rutina de descuento comprueba if (consumeCharges && !s.isEquipmentSkill && s.maxCharges > 0), asegurando que las habilidades de equipo jamás decrementen estadísticas ni requieran reparaciones.
+
+---
+
 ## 5. Integración y Modificaciones en la Arquitectura de IA Existente
 
 La incorporación de clases virtuales y lanzamiento de cargas/habilidades no es un sistema aislado: **se inserta de forma armónica dentro de la Arquitectura Unificada de 3 Capas de [`docs/VR_COMPANION_AI.md`](../VR_COMPANION_AI.md)** y en la **Máquina de Estados de Órdenes Tácticas de [`docs/VR_COMPANION_TACTICAL_COMMANDS.md`](../VR_COMPANION_TACTICAL_COMMANDS.md)**.

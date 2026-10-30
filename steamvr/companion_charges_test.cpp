@@ -470,6 +470,87 @@ void TestCorpseSkillsIndexingAndTriggering() {
 
     std::puts("TestCorpseSkillsIndexingAndTriggering: OK");
 }
+void TestEquipmentSkillsAndStrafe() {
+    // 1. Passive skill check
+    assert(IsSkillPassive(13));  // Dodge
+    assert(IsSkillPassive(23));  // Penetrate
+    assert(IsSkillPassive(33));  // Pierce
+    assert(IsSkillPassive(37));  // Warmth
+    assert(IsSkillPassive(61));  // Fire Mastery
+    assert(IsSkillPassive(127)); // Sword Mastery
+    assert(IsSkillPassive(258)); // Weapon Block
+    assert(!IsSkillPassive(26)); // Strafe is NOT passive!
+    assert(!IsSkillPassive(12)); // Multiple Shot is NOT passive!
+    assert(!IsSkillPassive(62)); // Hydra is NOT passive!
+    assert(!IsSkillPassive(74)); // Corpse Explosion is NOT passive!
+
+    // 2. Usability check
+    assert(IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 26)); // Rogue can use Strafe!
+    assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, 26)); // Desert guard cannot use Strafe
+    assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 13)); // Dodge cannot be cast actively
+
+    // 3. Scanning item with +3 Strafe (Stat 107 single skill / staffmod)
+    struct MockItemStat {
+        uint16_t statId;
+        uint16_t param;
+        int32_t value;
+    };
+    std::vector<MockItemStat> weaponStats = {
+        { ItemStat::SingleSkill, 26, 3 } // +3 to Strafe
+    };
+    std::vector<MockItemStat> headStats = {
+        { ItemStat::ChargedSkill, PackChargedSkillParam(54, 1), PackChargedSkillValue(20, 20) } // Teleport
+    };
+
+    std::array<EquippedItemSlot, 2> slots = {{
+        { 2001, 4, 0x4000 },
+        { 2002, 1, 0x1000 }
+    }};
+
+    auto extractor = [&](const EquippedItemSlot& slot, auto&& cb) {
+        if (slot.bodyLocation == 4) {
+            for (const auto& s : weaponStats) cb(s.statId, s.param, s.value);
+        } else if (slot.bodyLocation == 1) {
+            for (const auto& s : headStats) cb(s.statId, s.param, s.value);
+        }
+    };
+
+    auto skills = ScanCompanionChargedSkills(VirtualPlayerClass::Amazon, slots, extractor);
+    assert(skills.size() == 2);
+
+    // Verify Strafe equipment skill properties
+    const auto* strafe = (skills[0].skillId == 26) ? &skills[0] : &skills[1];
+    assert(strafe != nullptr);
+    assert(strafe->skillId == 26);
+    assert(strafe->level == 3);
+    assert(strafe->isEquipmentSkill == true);
+    assert(strafe->maxCharges == 0);
+    assert(strafe->currentCharges == 255);
+    assert(strafe->kind == TacticalSkillKind::DamageSpell);
+
+    // 4. Charge accounting: equipment skills never deplete
+    CompanionChargedSkill strafeCopy = *strafe;
+    assert(DecrementChargedSkill(strafeCopy, true) == true);
+    assert(strafeCopy.currentCharges == 255);
+
+    // 5. Tactical evaluation and selection in combat
+    TacticalCombatSensors sensors{};
+    sensors.nowMs = 50000;
+    sensors.isCombatActive = true;
+    sensors.nearbyHostilesCount = 3;
+
+    const char* reason = "";
+    assert(EvaluateTacticalCharge(*strafe, sensors, true, reason));
+    assert(std::string(reason).find("Elemental Damage Burst") != std::string::npos);
+
+    auto decision = SelectBestTacticalCharge(skills, sensors, true, true);
+    assert(decision.shouldCast);
+    assert(decision.skillId == 26);
+    assert(decision.level == 3);
+
+    std::puts("TestEquipmentSkillsAndStrafe: OK");
+}
+
 
 } // namespace
 
@@ -482,6 +563,7 @@ int main() {
     TestTacticalPriorityArbitration();
     TestChargeAccounting();
     TestCorpseSkillsIndexingAndTriggering();
+    TestEquipmentSkillsAndStrafe();
     std::puts("All companion_charges_test checks passed successfully!");
     return 0;
 }

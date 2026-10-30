@@ -313,6 +313,22 @@ inline std::vector<MercenarySkillBadge> CollectMercenarySkillBadges(
         }
     }
 
+    // Compute effective skill level for virtual class skills including class (Stat 83) and tab (Stat 188) bonuses
+    std::array<uintptr_t, 4> itemUnits{};
+    size_t uCount = 0;
+    for (const auto& s : slots) {
+        if (s.itemUnit && uCount < itemUnits.size()) itemUnits[uCount++] = s.itemUnit;
+    }
+    for (auto& b : badges) {
+        if (b.type == SkillBadgeType::VirtualClassSkill) {
+            const int totalLvl = companionai::ComputeCompanionEquipmentSkillBonus(
+                vclass, b.skillId, std::span<const uintptr_t>(itemUnits.data(), uCount), getStat);
+            if (totalLvl > b.level) {
+                b.level = static_cast<uint8_t>(std::min(60, totalLvl));
+            }
+        }
+    }
+
     return badges;
 }
 

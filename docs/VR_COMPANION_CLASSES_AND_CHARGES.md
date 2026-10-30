@@ -249,6 +249,38 @@ companion_consume_item_charges = 0
 
 ---
 
+### 4.6. Corpse Recognition and Detonation Skills (Corpse Skills)
+
+In *Diablo II*, certain Necromancer and Barbarian skills require a valid monster corpse on the ground (`TargetCorpse`). If `SKILLS_StartSkill` (RVA `0x43b3e0`) is called without a valid corpse unit (`dwMode == 12`), the native check `srvstfunc` rejects the cast with `startRes = 0`.
+
+1. **Corpse Skill Indexing (`SkillRequiresCorpse`):**
+   * Skills 74 (*Corpse Explosion*), 83 (*Poison Explosion*), 95 (*Revive*), 131 (*Find Potion*), 138 (*Find Item*), and 150 (*Grim Ward*).
+   * Guarded by `HasCorpseSkills(skills)` so non-corpse loadouts incur 0 CPU overhead.
+2. **Corpse Scanning (`melee::CorpsesAround`):**
+   * Traverses local server unit buckets filtering for dead monsters (`dwType == 1`, `MONMODE_DEATH == 12`), skipping NPCs and already-consumed corpses (`STATE_CORPSE_NODRAW`, `STATE_REVIVE`, `STATE_CORPSE_EXPLODE`).
+   * Selects the corpse closest to the active hostile target for maximum explosive coverage.
+3. **Target Override & Backoff:**
+   * Overrides `g_commandedActionTargetUnit` with the corpse unit pointer and sets `(destX, destY)` to the corpse coordinates.
+   * If casting fails due to race conditions, `lastCastMs` is stamped immediately to avoid spam retries.
+
+### 4.7. Integration of Equipment-Granted Active Skills (Staffmods and Oskills)
+
+Beyond item charges (`Stat 204`), companions can equip gear conferring direct single skills (`Stat 107`, e.g. `+3 to Strafe` on Amazon bows) or all-class skills (`Stat 97`, oskills, e.g. `+1 to Teleport` or `+1 to Fire Blast`).
+
+In vanilla D2R, hireling AI strictly ignores these skills because it only executes abilities hardcoded in `hireling.txt`.
+
+#### Mechanics of Combat Integration:
+1. **Detection and Identification (`ScanCompanionChargedSkills` & `CollectMercenarySkillBadges`):**
+   * Detects `Stat 107` and `Stat 97`, instantiating skill entries with `isEquipmentSkill = true`, `maxCharges = 0`, and `currentCharges = 255` (unlimited).
+   * **Passive Skill Filter (`IsSkillPassive`):** Passive masteries (e.g. Critical Strike, Dodge, Penetrate, Warmth, Weapon Masteries) are excluded from active spellcasting, remaining as passive modifiers.
+   * **Virtual Class Usability (`IsSkillUsableByCompanion`):** For `Stat 107`, only skills matching the companion's virtual class and native animation tokens are enabled (e.g. *Strafe* (ID 26), *Multiple Shot* (ID 12), *Immolation Arrow* (ID 27) for Act 1 Rogue / Amazon).
+2. **Tactical Pacing and Cooldowns:**
+   * Handled by tactical cooldowns (`DamageSpell` ~4.0s cooldown) rather than charge depletion, preventing animation lock while blending basic attacks with heavy Strafe volleys.
+3. **Wear Exemption (`companion_consume_item_charges`):**
+   * Excluded from charge depletion (`if (consumeCharges && !s.isEquipmentSkill && s.maxCharges > 0)`), ensuring equipment skills never degrade or require repair.
+
+---
+
 ## 5. Integration with Existing Companion AI Architecture
 
 This feature is not an isolated subsystem: **it integrates directly into the Unified 3-Layer Companion AI Architecture** ([`docs/VR_COMPANION_AI.md`](VR_COMPANION_AI.md)) and the **Gesture Tactical Command State Machine** ([`docs/VR_COMPANION_TACTICAL_COMMANDS.md`](VR_COMPANION_TACTICAL_COMMANDS.md)):

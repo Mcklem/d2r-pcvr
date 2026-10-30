@@ -1026,6 +1026,48 @@ void ExecuteCompanionTacticalChargesInternal(
             },
             s_cachedCharges
         );
+
+        // Integrate active non-passive equipment skills (VirtualClassSkill STAT 107 & Oskill STAT 97)
+        // into tactical casting rotation with unlimited charges and natural tactical cooldowns
+        for (const auto& b : newBadges) {
+            if (b.type != framevr::companionui::SkillBadgeType::VirtualClassSkill &&
+                b.type != framevr::companionui::SkillBadgeType::Oskill) {
+                continue;
+            }
+            if (framevr::companionai::IsSkillPassive(b.skillId) ||
+                !framevr::companionai::IsSkillUsableByCompanion(vclass, b.skillId)) {
+                continue;
+            }
+
+            bool already = false;
+            for (const auto& cs : s_cachedCharges) {
+                if (cs.skillId == b.skillId) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already) {
+                framevr::companionai::CompanionChargedSkill eqSkill{};
+                eqSkill.itemId = b.itemId;
+                eqSkill.bodyLocation = b.bodyLocation;
+                eqSkill.skillId = b.skillId;
+                eqSkill.level = b.level > 0 ? b.level : 1;
+                eqSkill.currentCharges = 255;
+                eqSkill.maxCharges = 0;
+                eqSkill.isEquipmentSkill = true;
+                eqSkill.kind = framevr::companionai::GetTacticalSkillKind(b.skillId);
+
+                // Preserve previous cast timestamp across scans
+                for (const auto& prev : prevCharges) {
+                    if (prev.itemId == eqSkill.itemId && prev.skillId == eqSkill.skillId) {
+                        eqSkill.lastCastMs = prev.lastCastMs;
+                        break;
+                    }
+                }
+                s_cachedCharges.push_back(eqSkill);
+            }
+        }
+
         AcquireSRWLockExclusive(&s_badgesLock);
         s_cachedBadges = std::move(newBadges);
         s_badgesRevision.fetch_add(1, std::memory_order_release);
@@ -1038,15 +1080,17 @@ void ExecuteCompanionTacticalChargesInternal(
 
             char scanBuf[256];
             std::snprintf(scanBuf, sizeof scanBuf,
-                "Frame companion AI: scanned equipped items (%zu slots), detected %zu charged skill(s)",
+                "Frame companion AI: scanned equipped items (%zu slots), detected %zu tactical skill(s)",
                 slotCount, s_cachedCharges.size());
             framevr::logging::Write(scanBuf);
 
             for (const auto& cs : s_cachedCharges) {
                 char skillBuf[256];
                 std::snprintf(skillBuf, sizeof skillBuf,
-                    "Frame companion AI:   charge skillId=%u lvl=%u (%u/%u charges) kind=%u loc=%d",
-                    cs.skillId, cs.level, cs.currentCharges, cs.maxCharges, static_cast<unsigned>(cs.kind), cs.bodyLocation);
+                    "Frame companion AI:   skillId=%u lvl=%u (%s, %u/%u) kind=%u loc=%d",
+                    cs.skillId, cs.level,
+                    cs.isEquipmentSkill ? "unlimited equipment" : "item charges",
+                    cs.currentCharges, cs.maxCharges, static_cast<unsigned>(cs.kind), cs.bodyLocation);
                 framevr::logging::Write(skillBuf);
             }
         }
@@ -1222,7 +1266,7 @@ void ExecuteCompanionTacticalChargesInternal(
             for (auto& s : s_cachedCharges) {
                 if (s.itemId == decision.itemId && s.skillId == decision.skillId) {
                     s.lastCastMs = nowMs;
-                    if (consumeCharges) {
+                    if (consumeCharges && !s.isEquipmentSkill && s.maxCharges > 0) {
                         framevr::companionai::DecrementChargedSkill(s, true);
                         const auto setStatFn = reinterpret_cast<void(__fastcall*)(uintptr_t, int, int, int)>(d2rsig::Addr(abi::SetStatRva));
                         if (setStatFn) {
