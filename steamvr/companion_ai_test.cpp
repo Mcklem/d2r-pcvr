@@ -252,6 +252,12 @@ static uintptr_t __fastcall FakeOriginalSkillLookup(uintptr_t, int, int) {
     return 0;
 }
 
+static int g_fakeMissilesCreated = 0;
+static uintptr_t __fastcall FakeCreateMissile(uintptr_t, uintptr_t) {
+    g_fakeMissilesCreated++;
+    return 1;
+}
+
 namespace d2rsig {
 bool Check(uint64_t rva, const void*, uint32_t) {
     if (rva == companionai::abi::ModeRva ||
@@ -270,7 +276,8 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::StartRva ||
         rva == companionai::abi::DispatchRva ||
         rva == companionai::abi::SetStatRva ||
-        rva == companionai::abi::SkillRva) {
+        rva == companionai::abi::SkillRva ||
+        rva == companionai::abi::CreateMissileRva) {
         return signatures;
     }
     return false;
@@ -292,6 +299,7 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::DispatchRva) return reinterpret_cast<uintptr_t>(&FakeDispatchSkill);
     if (rva == companionai::abi::SetStatRva) return reinterpret_cast<uintptr_t>(&FakeSetStat);
     if (rva == companionai::abi::SkillRva) return reinterpret_cast<uintptr_t>(&FakeOriginalSkillLookup);
+    if (rva == companionai::abi::CreateMissileRva) return reinterpret_cast<uintptr_t>(&FakeCreateMissile);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
@@ -1949,11 +1957,13 @@ int main() {
                 uint64_t tickMs = 300000;
 
                 // Step 1: Scan and execute (Strafe lvl 4 fires min(4+4, 10) = 8 arrows in volley)
+                g_fakeMissilesCreated = 0;
                 companionai::ExecuteCompanionTacticalCharges(
                     1, mercUnitPtr, 271, 100.0f, 100.0f,
                     compP, plyrP, tickMs, true, true);
 
                 assert(g_dispatchCount == 8);
+                assert(g_fakeMissilesCreated == 8);
                 assert(g_lastDispatchedSkill == 26);
                 assert(g_lastDispatchedLevel == 4);
 
@@ -1970,11 +1980,13 @@ int main() {
                 // On the next tick with the same items on the revived merc,
                 // cacheEmpty is true, forcing re-scan and execution
                 tickMs += 10000;
+                g_fakeMissilesCreated = 0;
                 companionai::ExecuteCompanionTacticalCharges(
                     1, mercUnitPtr, 271, 100.0f, 100.0f,
                     compP, plyrP, tickMs, true, true);
 
                 assert(g_dispatchCount == 16);
+                assert(g_fakeMissilesCreated == 8);
                 assert(g_lastDispatchedSkill == 26);
 
                 g_testEquippedSlots.clear();

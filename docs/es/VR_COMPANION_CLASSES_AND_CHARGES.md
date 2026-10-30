@@ -676,3 +676,26 @@ Para habilitar la ejecución completa de habilidades de equipo sin alterar el bi
 - **Hechizos de casteo individual (ej. Bola de Fuego, Teletransporte, Ventisca, Nova, Decrepitud):** Se lanzan en una sola invocación de `dispatchFn`. Al estar corregido el offset `0x40`, el motor calcula su daño y radio con su nivel real (ej. nivel 4 o 5 en lugar de nivel 0).
 - **Habilidades pasivas (ej. Golpe Crítico, Penetrar, Perforar):** No se envían al motor vía `dispatchFn`; sus bonos se consultan dinámicamente mediante `DetourSkillLevel` / `ComputeEffectiveCompanionSkillLevel` y aplican sus efectos estadísticos automáticamente en cada ataque.
 - **Habilidades de ráfaga y ataques múltiples (ej. Strafe, Fervor/Zeal, Furia/Fury):** Quedan perfectamente operativas gracias al nuevo bucle multidisparo secuencial.
+
+---
+
+### 11.4 Animación de Ataque en Servidor/Cliente y Generación Directa de Proyectiles (`CreateMissile`)
+
+#### La Causa Raíz Oculta de `srvdofunc 12`:
+1. **La comprobación de carcaj de flechas en el motor nativo:**
+   - En *Diablo II: Resurrected*, los hechizos comunes (`srvdofunc == 0`) leen directamente `srvmissile` desde `skills.txt` y generan el proyectil elemental sin requerir inventario.
+   - Sin embargo, *Strafe* utiliza la función de servidor especializada `srvdofunc = 12`. Esta rutina fue concebida exclusivamente para personajes jugadores de clase Amazona: internamente busca en el inventario (`pInventory`) el objeto equipado en la ranura de munición (el carcaj de flechas / virotes) para descontar cantidad y determinar el misil.
+   - Dado que los mercenarios (`UNIT_MONSTER`, `dwType == 1`) **carecen de ranura de carcaj en su inventario**, la función `srvdofunc 12` abortaba silenciosamente sin invocar a `MISSILES_CreateMissile` (RVA `0x5371a0`), devolviendo éxito a `SKILLS_Cast` pero sin crear ningún proyectil físico en el mundo.
+2. **Inexistencia de transición de modo de animación en invocaciones internas de servidor:**
+   - La llamada directa a `StartRva` y `DispatchRva` ejecuta la lógica de cálculo en el servidor, pero no actualiza el modo de animación del mercenario (`compHeader[3] = dwMode`). La Pícara permanecía estática en `MONMODE_NEUTRAL` (1) y el servidor no transmitía ningún paquete de evento de ataque a los clientes.
+
+#### La Solución Completa Implementada:
+1. **Activación de la Animación Nativa de Ataque (`MONMODE_ATTACK1` / Modo 4):**
+   - Antes de iniciar el ciclo de disparo, se invoca `originalServerMoveUnit(game, hireling, targetUnit, animMode, destX, destY, 1, 0)`.
+   - Para habilidades de proyectiles de arco (Strafe y ataques físicos), se despacha `moveMode = 4` (`MONMODE_ATTACK1`), lo que hace que la Pícara encare al enemigo, tense su arco y reproduzca la animación visual y el sonido de disparo completos tanto en servidor como en cliente.
+   - Para conjuros mágicos (Teletransporte, Maldiciones, Auras), se despacha `moveMode = 7` (`MONMODE_CAST`), activando el gesto de invocación con las manos alzadas.
+2. **Inyección Nativa de Proyectiles vía `MISSILES_CreateMissile` (RVA `0x5371a0`):**
+   - Se registró y validó la firma de `CreateMissileRva` en `companion_ai_signatures.h`.
+   - Para cada flecha de la salva de *Strafe*, se construye el búfer de parámetros nativo de 0x98 bytes con origen en las coordenadas del mercenario, destino en el hostil correspondiente (`hostiles[a % hCount]`), identificador de misil 0 (`arrow`), habilidad 26 (*Strafe*) y su nivel efectivo.
+   - En situaciones de objetivo único, se añade una dispersión perpendicular angular de ±0.25 sub-tiles para que las flechas formen un cono de disparo claramente distinguible y visible.
+   - `MISSILES_CreateMissile` genera la entidad de proyectil del servidor, calcula el vuelo y emite el paquete `D2GS_CREATEMISSILE` hacia el cliente, haciendo que las flechas vuelen visiblemente por la pantalla, impacten con sonido y apliquen el daño físico potenciado de Strafe.

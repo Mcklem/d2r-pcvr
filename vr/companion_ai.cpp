@@ -845,6 +845,11 @@ static_assert(offsetof(SyntheticCompanionSkillNode, owner) == 0x4c);
 static SyntheticCompanionSkillNode s_companionSyntheticNode{};
 using SkillLookupFn = uintptr_t(*)(uintptr_t unit, int skillId, int owner);
 
+template <class T>
+static void SetMissileParam(std::array<uint8_t, 0x98>& p, size_t offset, T value) noexcept {
+    std::memcpy(p.data() + offset, &value, sizeof(value));
+}
+
 void EnsureServerMoveInstalled() noexcept {
     if (!serverMoveToCoordFn && d2rsig::Check(abi::ServerMoveToCoordRva, abi::ServerMoveToCoordSig, sizeof(abi::ServerMoveToCoordSig))) {
         serverMoveToCoordFn = reinterpret_cast<ServerMoveToCoordFn>(d2rsig::Addr(abi::ServerMoveToCoordRva));
@@ -1344,6 +1349,14 @@ void ExecuteCompanionTacticalChargesInternal(
         };
         CommandedActionScope actionScope(targetUnit);
 
+        // 1. Dispatch native hireling animation via originalServerMoveUnit:
+        // Physical bow skills (e.g. Strafe 26) use MONMODE_ATTACK1 (mode 4)
+        // Spells, curses and buffs use MONMODE_CAST (mode 7)
+        if (originalServerMoveUnit) {
+            const int animMode = (decision.skillId == 26 || framevr::weaponskills::Bow(decision.skillId)) ? 4 : 7;
+            (void)originalServerMoveUnit(game, hireling, targetUnit, animMode, destX, destY, 1, 0);
+        }
+
         const int arrowCount = (decision.skillId == 26)
             ? std::clamp(static_cast<int>(decision.level) + 4, 4, 10)
             : 1;
@@ -1371,6 +1384,45 @@ void ExecuteCompanionTacticalChargesInternal(
             if (res != 0) {
                 successfulDispatches++;
                 castRes = res;
+            }
+
+            // For bow attack skills (e.g. Strafe 26), vanilla D2R srvdofunc 12 requires player ammunition/quiver
+            // which hirelings do not have, so it skips spawning missiles.
+            // Create the physical arrow missiles natively via CreateMissile (0x5371a0) with Strafe skill context:
+            if (decision.skillId == 26 || framevr::weaponskills::Bow(decision.skillId)) {
+                using CreateMissileFn = uintptr_t(*)(uintptr_t game, uintptr_t params);
+                const auto createMissileFn = reinterpret_cast<CreateMissileFn>(d2rsig::Addr(abi::CreateMissileRva));
+                if (createMissileFn) {
+                    float offsetX = 0.0f;
+                    float offsetY = 0.0f;
+                    if (hCount <= 1 && arrowCount > 1) {
+                        const float angle = std::atan2(static_cast<float>(destY) - compPos.y, static_cast<float>(destX) - compPos.x);
+                        const float perpAngle = angle + 1.5707963f;
+                        const float spread = (static_cast<float>(a) - (arrowCount - 1) * 0.5f) * 0.25f;
+                        offsetX = std::cos(perpAngle) * spread;
+                        offsetY = std::sin(perpAngle) * spread;
+                    }
+                    const int finalDestX = int(std::round(arrowDestX + offsetX));
+                    const int finalDestY = int(std::round(arrowDestY + offsetY));
+
+                    std::array<uint8_t, 0x98> missileParams{};
+                    SetMissileParam(missileParams, 0x00, uint32_t(0x21));                         // Flags: directed + unit owner
+                    SetMissileParam(missileParams, 0x08, hireling);                               // Owner unit
+                    SetMissileParam(missileParams, 0x10, hireling);                               // Source unit
+                    SetMissileParam(missileParams, 0x20, uint32_t(0));                            // Missile ID: 0 (arrow)
+                    SetMissileParam(missileParams, 0x24, int(std::round(compPos.x)));             // Origin X (sub-tiles)
+                    SetMissileParam(missileParams, 0x28, int(std::round(compPos.y)));             // Origin Y (sub-tiles)
+                    SetMissileParam(missileParams, 0x2c, finalDestX);                             // Target X (sub-tiles)
+                    SetMissileParam(missileParams, 0x30, finalDestY);                             // Target Y (sub-tiles)
+                    SetMissileParam(missileParams, 0x3c, int(decision.skillId));                  // Skill ID (26 = Strafe)
+                    SetMissileParam(missileParams, 0x40, int(decision.level));                    // Skill Level
+
+                    const uintptr_t mUnit = createMissileFn(game, reinterpret_cast<uintptr_t>(missileParams.data()));
+                    if (mUnit) {
+                        successfulDispatches++;
+                        castRes = 1;
+                    }
+                }
             }
         }
 
