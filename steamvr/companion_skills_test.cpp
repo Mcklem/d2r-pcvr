@@ -59,7 +59,7 @@ int main() {
 
     assert(GetSkillTab(10) == 2); // Jab -> Javelin & Spear (tab 2)
 
-    // Sorceress: Class 1
+    // Sorceress: Class 1 (tabs 8, 9, 10: 1*8 + page)
     assert(GetSkillClass(36) == 1); // Fire Bolt
     assert(GetSkillClass(37) == 1); // Warmth
     assert(GetSkillClass(47) == 1); // Fire Ball
@@ -68,40 +68,66 @@ int main() {
     assert(GetSkillClass(61) == 1); // Fire Mastery
     assert(GetSkillClass(65) == 1); // Cold Mastery
 
-    assert(GetSkillTab(36) == 3); // Fire Bolt -> Fire (tab 3)
-    assert(GetSkillTab(37) == 3); // Warmth -> Fire (tab 3)
-    assert(GetSkillTab(47) == 3); // Fire Ball -> Fire (tab 3)
-    assert(GetSkillTab(61) == 3); // Fire Mastery -> Fire (tab 3)
+    assert(GetSkillTab(36) == 8); // Fire Bolt -> Fire (tab 8)
+    assert(GetSkillTab(37) == 8); // Warmth -> Fire (tab 8)
+    assert(GetSkillTab(47) == 8); // Fire Ball -> Fire (tab 8)
+    assert(GetSkillTab(61) == 8); // Fire Mastery -> Fire (tab 8)
 
-    assert(GetSkillTab(38) == 4); // Charged Bolt -> Lightning (tab 4)
-    assert(GetSkillTab(48) == 4); // Nova -> Lightning (tab 4)
-    assert(GetSkillTab(49) == 4); // Lightning -> Lightning (tab 4)
-    assert(GetSkillTab(53) == 4); // Chain Lightning -> Lightning (tab 4)
-    assert(GetSkillTab(54) == 4); // Teleport -> Lightning (tab 4)
+    assert(GetSkillTab(38) == 9); // Charged Bolt -> Lightning (tab 9)
+    assert(GetSkillTab(48) == 9); // Nova -> Lightning (tab 9)
+    assert(GetSkillTab(49) == 9); // Lightning -> Lightning (tab 9)
+    assert(GetSkillTab(53) == 9); // Chain Lightning -> Lightning (tab 9)
+    assert(GetSkillTab(54) == 9); // Teleport -> Lightning (tab 9)
 
-    assert(GetSkillTab(40) == 5); // Frozen Armor -> Cold (tab 5)
-    assert(GetSkillTab(45) == 5); // Ice Blast -> Cold (tab 5)
-    assert(GetSkillTab(55) == 5); // Glacial Spike -> Cold (tab 5)
-    assert(GetSkillTab(59) == 5); // Blizzard -> Cold (tab 5)
-    assert(GetSkillTab(65) == 5); // Cold Mastery -> Cold (tab 5)
+    assert(GetSkillTab(40) == 10); // Frozen Armor -> Cold (tab 10)
+    assert(GetSkillTab(45) == 10); // Ice Blast -> Cold (tab 10)
+    assert(GetSkillTab(55) == 10); // Glacial Spike -> Cold (tab 10)
+    assert(GetSkillTab(59) == 10); // Blizzard -> Cold (tab 10)
+    assert(GetSkillTab(65) == 10); // Cold Mastery -> Cold (tab 10)
 
-    // Paladin: Class 3
+    // Necromancer: Class 2 (tabs 16, 17, 18: 2*8 + page)
+    assert(GetSkillClass(66) == 2); // Amplify Damage
+    assert(GetSkillClass(84) == 2); // Bone Spear
+    assert(GetSkillClass(75) == 2); // Clay Golem
+    assert(GetSkillTab(66) == 16);  // Amplify Damage -> Curses (tab 16)
+    assert(GetSkillTab(84) == 17);  // Bone Spear -> Poison & Bone (tab 17)
+    assert(GetSkillTab(75) == 18);  // Clay Golem -> Summoning (tab 18)
+
+    // Paladin: Class 3 (tabs 24, 25, 26: 3*8 + page)
     assert(GetSkillClass(98) == 3);  // Might
     assert(GetSkillClass(99) == 3);  // Prayer
     assert(GetSkillClass(104) == 3); // Defiance
-    assert(GetSkillTab(98) == 10);   // Might -> Offensive Auras (tab 10)
-    assert(GetSkillTab(99) == 11);   // Prayer -> Defensive Auras (tab 11)
-    assert(GetSkillTab(104) == 11);  // Defiance -> Defensive Auras (tab 11)
+    assert(GetSkillClass(121) == 3); // Fist of the Heavens
+    assert(GetSkillTab(121) == 24);  // Fist of the Heavens -> Combat (tab 24)
+    assert(GetSkillTab(98) == 25);   // Might -> Offensive Auras (tab 25)
+    assert(GetSkillTab(99) == 26);   // Prayer -> Defensive Auras (tab 26)
+    assert(GetSkillTab(104) == 26);  // Defiance -> Defensive Auras (tab 26)
 
-    // Barbarian: Class 4
+    // Barbarian: Class 4 (tabs 32, 33, 34: 4*8 + page)
     assert(GetSkillClass(126) == 4); // Bash
     assert(GetSkillClass(138) == 4); // Shout
     assert(GetSkillClass(145) == 4); // Iron Skin
     assert(GetSkillClass(147) == 4); // Frenzy
-    assert(GetSkillTab(126) == 12);  // Bash -> Combat (tab 12)
-    assert(GetSkillTab(138) == 14);  // Shout -> Warcries (tab 14)
-    assert(GetSkillTab(145) == 13);  // Iron Skin -> Masteries (tab 13)
-    assert(GetSkillTab(147) == 12);  // Frenzy -> Combat (tab 12)
+    assert(GetSkillTab(126) == 32);  // Bash -> Combat (tab 32)
+    assert(GetSkillTab(147) == 32);  // Frenzy -> Combat (tab 32)
+    assert(GetSkillTab(145) == 33);  // Iron Skin -> Masteries (tab 33)
+    assert(GetSkillTab(138) == 34);  // Shout -> Warcries (tab 34)
+
+    // Druid: Class 5 (tabs 40, 41, 42: 5*8 + page)
+    assert(GetSkillClass(221) == 5); // Raven
+    assert(GetSkillClass(223) == 5); // Werewolf
+    assert(GetSkillClass(225) == 5); // Firestorm
+    assert(GetSkillTab(221) == 40);  // Raven -> Summoning (tab 40)
+    assert(GetSkillTab(223) == 41);  // Werewolf -> Shape Shifting (tab 41)
+    assert(GetSkillTab(225) == 42);  // Firestorm -> Elemental (tab 42)
+
+    // Assassin: Class 6 (tabs 48, 49, 50: 6*8 + page)
+    assert(GetSkillClass(251) == 6); // Fire Blast
+    assert(GetSkillClass(258) == 6); // Burst of Speed
+    assert(GetSkillClass(254) == 6); // Tiger Strike
+    assert(GetSkillTab(251) == 48);  // Fire Blast -> Traps (tab 48)
+    assert(GetSkillTab(258) == 49);  // Burst of Speed -> Shadow Disciplines (tab 49)
+    assert(GetSkillTab(254) == 50);  // Tiger Strike -> Martial Arts (tab 50)
 
     // 3. Skill Matching Virtual Class
     assert(IsSkillMatchingVirtualClass(VirtualPlayerClass::Amazon, 7));   // Fire Arrow
@@ -151,10 +177,11 @@ int main() {
     mockItems[1].SetStat(ItemStat::ClassSkills, 0, 1);
 
     // Test Fire Arrow (ID 7, base level 15):
-    // Total bonus should be: Class (+2 from bow +1 from circlet = 3) + Tab (+3 from bow) + Single (+1 from bow) = +7!
+    // Native monster bonus-level calculation already incorporates Stat 107 / Stat 97.
+    // Detour bonus adds Class (+2 from bow +1 from circlet = 3) + Tab (+3 from bow) = +6!
     const int rogueFireBonus = ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Amazon, 7, equipSpan, getStatLambda);
-    assert(rogueFireBonus == 7);
-    assert(ComputeEffectiveCompanionSkillLevel(15, VirtualPlayerClass::Amazon, 7, equipSpan, getStatLambda, true) == 22);
+    assert(rogueFireBonus == 6);
+    assert(ComputeEffectiveCompanionSkillLevel(15, VirtualPlayerClass::Amazon, 7, equipSpan, getStatLambda, true) == 21);
 
     // Test Critical Strike (ID 9, Passive tab 1, base level 4):
     // Bow has tab 0 (Bow & Crossbow), so tab bonus does NOT apply. Single bonus is for skill 7, so it does NOT apply.
@@ -173,26 +200,26 @@ int main() {
 
     // Item 0 (Sword): +2 to All Sorceress Skills (Stat 83, param 1)
     mockItems[0].SetStat(ItemStat::ClassSkills, 1, 2);
-    // Item 1 (Shield): +1 to Fire Skills (Stat 188, param 3)
-    mockItems[1].SetStat(ItemStat::TabSkills, 3, 1);
+    // Item 1 (Shield): +1 to Fire Skills (Stat 188, param 8: 1*8 + 0)
+    mockItems[1].SetStat(ItemStat::TabSkills, 8, 1);
     // Item 2 (Armor): Ormus' Robes with +3 to Fire Ball (Stat 107, param 47)
     mockItems[2].SetStat(ItemStat::SingleSkill, 47, 3);
-    // Item 3 (Helm): +1 to Cold Skills (Stat 188, param 5)
-    mockItems[3].SetStat(ItemStat::TabSkills, 5, 1);
+    // Item 3 (Helm): +1 to Cold Skills (Stat 188, param 10: 1*8 + 2)
+    mockItems[3].SetStat(ItemStat::TabSkills, 10, 1);
 
-    // Fire Ball (47, Fire tab 3):
-    // Bonus = +2 (Sorc class) + 1 (Fire tab) + 3 (Fire Ball staffmod) = +6!
+    // Fire Ball (47, Fire tab 8):
+    // Bonus = +2 (Sorc class) + 1 (Fire tab) = +3! (Stat 107 is native base)
     const int wolfFireBonus = ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Sorceress, 47, equipSpan, getStatLambda);
-    assert(wolfFireBonus == 6);
-    assert(ComputeEffectiveCompanionSkillLevel(12, VirtualPlayerClass::Sorceress, 47, equipSpan, getStatLambda, true) == 18);
+    assert(wolfFireBonus == 3);
+    assert(ComputeEffectiveCompanionSkillLevel(12, VirtualPlayerClass::Sorceress, 47, equipSpan, getStatLambda, true) == 15);
 
-    // Glacial Spike (55, Cold tab 5):
-    // Bonus = +2 (Sorc class) + 1 (Cold tab from helm) + 0 (Fire tab does not apply, Fire Ball staffmod does not apply) = +3!
+    // Glacial Spike (55, Cold tab 10):
+    // Bonus = +2 (Sorc class) + 1 (Cold tab from helm) + 0 (Fire tab does not apply) = +3!
     const int wolfColdBonus = ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Sorceress, 55, equipSpan, getStatLambda);
     assert(wolfColdBonus == 3);
     assert(ComputeEffectiveCompanionSkillLevel(8, VirtualPlayerClass::Sorceress, 55, equipSpan, getStatLambda, true) == 11);
 
-    // Warmth (37, Fire tab 3, passive):
+    // Warmth (37, Fire tab 8, passive):
     // Bonus = +2 (Sorc class) + 1 (Fire tab) = +3!
     const int wolfWarmthBonus = ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Sorceress, 37, equipSpan, getStatLambda);
     assert(wolfWarmthBonus == 3);
@@ -212,19 +239,22 @@ int main() {
     // Scenario E: Desert Guard (Paladin) using Jab (skill 10) with Amazon and Paladin gear
     for (auto& item : mockItems) item.stats.clear();
     mockItems[0].SetStat(ItemStat::ClassSkills, 3, 2);  // +2 Paladin Skills
-    mockItems[0].SetStat(ItemStat::TabSkills, 10, 3);   // +3 Offensive Auras (Might tab 10)
+    mockItems[0].SetStat(ItemStat::TabSkills, 25, 3);  // +3 Offensive Auras (Might tab 25: 3*8 + 1)
     mockItems[1].SetStat(ItemStat::SingleSkill, 10, 2); // +2 to Jab
     mockItems[2].SetStat(ItemStat::ClassSkills, 0, 1);  // +1 to Amazon Skills
 
-    // Might (98, Paladin tab 10):
+    // Might (98, Paladin tab 25):
     // Bonus = +2 (Paladin class) + 3 (Offensive Auras tab) = +5!
     assert(ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Paladin, 98, equipSpan, getStatLambda) == 5);
     assert(ComputeEffectiveCompanionSkillLevel(10, VirtualPlayerClass::Paladin, 98, equipSpan, getStatLambda, true) == 15);
 
     // Jab (10):
-    // Bonus = +2 (single skill) + 1 (Amazon class gear on Desert Guard special case) = +3!
-    assert(ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Paladin, 10, equipSpan, getStatLambda) == 3);
-    assert(ComputeEffectiveCompanionSkillLevel(8, VirtualPlayerClass::Paladin, 10, equipSpan, getStatLambda, true) == 11);
+    // Bonus = +1 (Amazon class gear on Desert Guard special case) = +1! (Single skill Stat 107 is in baseLevel)
+    assert(ComputeCompanionEquipmentSkillBonus(VirtualPlayerClass::Paladin, 10, equipSpan, getStatLambda) == 1);
+    assert(ComputeEffectiveCompanionSkillLevel(8, VirtualPlayerClass::Paladin, 10, equipSpan, getStatLambda, true) == 9);
+
+    // Scenario F: Max Skill Level Clamp (99)
+    assert(ComputeEffectiveCompanionSkillLevel(95, VirtualPlayerClass::Paladin, 98, equipSpan, getStatLambda, true) == 99);
 
     return 0;
 }

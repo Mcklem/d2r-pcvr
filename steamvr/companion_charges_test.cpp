@@ -117,7 +117,8 @@ void TestTacticalSkillKindClassification() {
     assert(GetTacticalSkillKind(82) == TacticalSkillKind::Curse);        // Life Tap
     assert(GetTacticalSkillKind(87) == TacticalSkillKind::Curse);        // Decrepify
     assert(GetTacticalSkillKind(91) == TacticalSkillKind::Curse);        // Lower Resist
-    assert(GetTacticalSkillKind(9)  == TacticalSkillKind::Suppression);  // Slow Missiles
+    assert(GetTacticalSkillKind(8)  == TacticalSkillKind::Suppression);  // Inner Sight
+    assert(GetTacticalSkillKind(17) == TacticalSkillKind::Suppression);  // Slow Missiles
     assert(GetTacticalSkillKind(264) == TacticalSkillKind::Suppression); // Cloak of Shadows
     assert(GetTacticalSkillKind(44) == TacticalSkillKind::CrowdControl); // Frost Nova
     assert(GetTacticalSkillKind(55) == TacticalSkillKind::CrowdControl); // Glacial Spike
@@ -125,10 +126,16 @@ void TestTacticalSkillKindClassification() {
     assert(GetTacticalSkillKind(253) == TacticalSkillKind::CrowdControl); // Psychic Hammer
     assert(GetTacticalSkillKind(246) == TacticalSkillKind::Summon);      // Heart of Wolverine
     assert(GetTacticalSkillKind(226) == TacticalSkillKind::Summon);      // Oak Sage
+    assert(GetTacticalSkillKind(231) == TacticalSkillKind::Summon);      // Carrion Vine
+    assert(GetTacticalSkillKind(241) == TacticalSkillKind::Summon);      // Solar Creeper
     assert(GetTacticalSkillKind(47) == TacticalSkillKind::DamageSpell);  // Fire Ball
     assert(GetTacticalSkillKind(56) == TacticalSkillKind::DamageSpell);  // Meteor
     assert(GetTacticalSkillKind(83) == TacticalSkillKind::DamageSpell);  // Poison Explosion (Radament's Sphere)
-    assert(GetTacticalSkillKind(31) == TacticalSkillKind::DamageSpell);  // Immolation Arrow (Hellrack)
+    assert(GetTacticalSkillKind(26) == TacticalSkillKind::DamageSpell);  // Strafe
+    assert(GetTacticalSkillKind(31) == TacticalSkillKind::DamageSpell);  // Freezing Arrow (Hellrack)
+    assert(GetTacticalSkillKind(230) == TacticalSkillKind::DamageSpell); // Arctic Blast
+    assert(GetTacticalSkillKind(232) == TacticalSkillKind::DamageSpell); // Feral Rage
+    assert(GetTacticalSkillKind(242) == TacticalSkillKind::DamageSpell); // Hunger
     assert(GetTacticalSkillKind(261) == TacticalSkillKind::DamageSpell); // Charged Bolt Sentry (User's Helm charge)
     assert(GetTacticalSkillKind(251) == TacticalSkillKind::DamageSpell); // Fire Blast
     assert(GetTacticalSkillKind(271) == TacticalSkillKind::DamageSpell); // Lightning Sentry
@@ -147,7 +154,7 @@ void TestTacticalSkillKindClassification() {
 
 void TestCompanionSkillUsability() {
     // Bow skills only usable by Rogue (Amazon)
-    for (uint16_t bowSkill : {6, 11, 12, 16, 21, 22, 26, 27, 31, 35}) {
+    for (uint16_t bowSkill : {6, 7, 11, 12, 16, 21, 22, 26, 27, 31}) {
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, bowSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, bowSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Sorceress, bowSkill));
@@ -155,8 +162,14 @@ void TestCompanionSkillUsability() {
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::None, bowSkill));
     }
 
-    // Incompatible player-locked animations rejected for ALL
-    for (uint16_t bannedSkill : {97, 100, 106, 132, 144, 151, 255, 260, 270, 275}) {
+    // Passives are never usable actively
+    assert(IsSkillPassive(9));  // Critical Strike
+    assert(IsSkillPassive(89)); // Summon Resist
+    assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 9));
+    assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 89));
+
+    // Incompatible player-locked animations and shapeshifts rejected for ALL
+    for (uint16_t bannedSkill : {97, 106, 107, 132, 143, 151, 223, 228, 255, 260, 270, 275}) {
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, bannedSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, bannedSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Sorceress, bannedSkill));
@@ -164,7 +177,7 @@ void TestCompanionSkillUsability() {
     }
 
     // Standard spells/curses/summons usable by ALL
-    for (uint16_t universalSkill : {54 /*Teleport*/, 82 /*Life Tap*/, 9 /*Slow Missiles*/, 44 /*Frost Nova*/, 246 /*Wolverine*/}) {
+    for (uint16_t universalSkill : {54 /*Teleport*/, 82 /*Life Tap*/, 17 /*Slow Missiles*/, 44 /*Frost Nova*/, 246 /*Wolverine*/}) {
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, universalSkill));
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, universalSkill));
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Sorceress, universalSkill));
@@ -182,12 +195,12 @@ void TestEquipmentScanning() {
     };
 
     // Simulate equipped items:
-    // Slot 1 (Head): Blackhorn's Face -> Slow Missiles (9, level 10, 20/20) + stat 72 durability
+    // Slot 1 (Head): Blackhorn's Face -> Slow Missiles (17, level 10, 20/20) + stat 72 durability
     // Slot 4 (Mainhand): Spellsteel -> Teleport (54, level 1, 20/20) + Decrepify (87, level 3, 30/30)
     // Slot 5 (Offhand): Shield with Bow skill (Multiple Shot 12, level 4, 15/15)
     std::vector<MockItemStat> headStats = {
         {72, 0, 20}, // Durability
-        {ItemStat::ChargedSkill, PackChargedSkillParam(9, 10), PackChargedSkillValue(20, 20)}
+        {ItemStat::ChargedSkill, PackChargedSkillParam(17, 10), PackChargedSkillValue(20, 20)}
     };
 
     std::vector<MockItemStat> weaponStats = {
@@ -223,7 +236,7 @@ void TestEquipmentScanning() {
     {
         auto charges = ScanCompanionChargedSkills(VirtualPlayerClass::Paladin, slots, extractor);
         assert(charges.size() == 3);
-        assert(charges[0].skillId == 9);  // Slow Missiles
+        assert(charges[0].skillId == 17); // Slow Missiles
         assert(charges[1].skillId == 54); // Teleport
         assert(charges[2].skillId == 87); // Decrepify
     }
@@ -232,7 +245,7 @@ void TestEquipmentScanning() {
     {
         auto charges = ScanCompanionChargedSkills(VirtualPlayerClass::Amazon, slots, extractor);
         assert(charges.size() == 4);
-        assert(charges[0].skillId == 9);  // Slow Missiles
+        assert(charges[0].skillId == 17); // Slow Missiles
         assert(charges[1].skillId == 54); // Teleport
         assert(charges[2].skillId == 87); // Decrepify
         assert(charges[3].skillId == 12); // Multiple Shot
@@ -246,13 +259,13 @@ void TestTacticalPriorityArbitration() {
 
     // Equip companion with:
     // 1. Teleport (54)
-    // 2. Slow Missiles (9)
+    // 2. Slow Missiles (17)
     // 3. Life Tap (82)
     // 4. Frost Nova (44)
     // 5. Heart of Wolverine (246)
     // 6. Fire Ball (47)
     skills.push_back({1001, 4, 54, 1, 20, 20, 0, TacticalSkillKind::Teleport});
-    skills.push_back({1002, 1, 9, 10, 20, 20, 0, TacticalSkillKind::Suppression});
+    skills.push_back({1002, 1, 17, 10, 20, 20, 0, TacticalSkillKind::Suppression});
     skills.push_back({1003, 4, 82, 5, 30, 30, 0, TacticalSkillKind::Curse});
     skills.push_back({1004, 3, 44, 3, 25, 25, 0, TacticalSkillKind::CrowdControl});
     skills.push_back({1005, 1, 246, 5, 13, 13, 0, TacticalSkillKind::Summon});
@@ -286,7 +299,7 @@ void TestTacticalPriorityArbitration() {
         auto decision = SelectBestTacticalCharge(skills, sensors, true, true);
         assert(decision.shouldCast);
         assert(decision.kind == TacticalSkillKind::Suppression);
-        assert(decision.skillId == 9);
+        assert(decision.skillId == 17);
     }
 
     // Test P3: Boss present, no distant shooters, safe health -> MUST select Life Tap
@@ -424,11 +437,12 @@ void TestCorpseSkillsIndexingAndTriggering() {
     assert(SkillRequiresCorpse(83));  // Poison Explosion
     assert(SkillRequiresCorpse(95));  // Revive
     assert(SkillRequiresCorpse(131)); // Find Potion
-    assert(SkillRequiresCorpse(138)); // Find Item
+    assert(SkillRequiresCorpse(142)); // Find Item
     assert(SkillRequiresCorpse(150)); // Grim Ward
 
     assert(!SkillRequiresCorpse(54));  // Teleport
     assert(!SkillRequiresCorpse(62));  // Hydra
+    assert(!SkillRequiresCorpse(138)); // Shout (Buff, not corpse!)
     assert(!SkillRequiresCorpse(264)); // Cloak of Shadows
     assert(!SkillRequiresCorpse(64));  // Frozen Orb
 
@@ -472,13 +486,15 @@ void TestCorpseSkillsIndexingAndTriggering() {
 }
 void TestEquipmentSkillsAndStrafe() {
     // 1. Passive skill check
+    assert(IsSkillPassive(9));   // Critical Strike
     assert(IsSkillPassive(13));  // Dodge
     assert(IsSkillPassive(23));  // Penetrate
     assert(IsSkillPassive(33));  // Pierce
     assert(IsSkillPassive(37));  // Warmth
     assert(IsSkillPassive(61));  // Fire Mastery
+    assert(IsSkillPassive(89));  // Summon Resist
     assert(IsSkillPassive(127)); // Sword Mastery
-    assert(IsSkillPassive(258)); // Weapon Block
+    assert(IsSkillPassive(263)); // Weapon Block
     assert(!IsSkillPassive(26)); // Strafe is NOT passive!
     assert(!IsSkillPassive(12)); // Multiple Shot is NOT passive!
     assert(!IsSkillPassive(62)); // Hydra is NOT passive!

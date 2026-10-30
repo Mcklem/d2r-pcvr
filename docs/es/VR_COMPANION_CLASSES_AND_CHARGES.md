@@ -83,33 +83,23 @@ Al interceptar esta llamada para unidades mercenarias:
 4. Si el mercenario tiene equipados objetos con `Stat 83` para su clase virtual, `Stat 188` para la rama de dicha habilidad o `Stat 107` para la habilidad concreta, sumamos dichos bonos al nivel efectivo devuelto.
 5. **Resultado:** Un arco con `+2 a habilidades de Amazona` incrementa inmediatamente el nivel de *Flecha de Fuego* o *Flecha de Hielo* de la Pícara; una espada con `+3 a habilidades de Fuego` potencia directamente la *Bola de Fuego* del Lobo de Hierro.
 
-### 3.3. Habilidades Pasivas y Activas Coincidentes Otorgadas por Objetos
+### 3.3. Habilidades de Equipamiento e Integración con la IA
 
-Cuando un objeto equipado otorga una habilidad que coincide con la clase virtual del mercenario:
+Cuando un objeto equipado otorga habilidades o bonificadores coincidentes con la clase virtual del mercenario:
 
-#### A. Habilidades Pasivas (Passives)
-Las habilidades pasivas poseen el flag `passive = 1` en `Skills.txt`. Al vincularlas en memoria en la lista de habilidades del mercenario (`hireling + 0x100`), el motor nativo del juego aplica automáticamente sus efectos durante los cálculos de daño y defensa:
-
-| Mercenario / Clase Virtual | Habilidad Pasiva Otorgada | Efecto Mecánico Nativo en Combate |
-| :--- | :--- | :--- |
-| **Pícara (Amazona)** | *Critical Strike* (ID 9) | Comprobación en `SUnitDmg.cpp`: probabilidad de **duplicar el daño físico total** de sus flechas. |
-| **Pícara (Amazona)** | *Penetrate* (ID 23) | Otorga un bono pasivo de Attack Rating porcentual masivo (`tohit_percent`). |
-| **Pícara (Amazona)** | *Pierce* (ID 33) | Comprobación en `MissileDmg.cpp`: las flechas físicas y mágicas atraviesan grupos enteros de enemigos. |
-| **Lobo de Hierro (Hechicera)** | *Warmth* (ID 37) | Regeneración acelerada de maná nativo (`mana_recovery_bonus`). |
-| **Lobo de Hierro (Hechicera)** | *Fire Mastery* (ID 61) | Bonificación porcentual directa al daño de sus ataques y hechizos de fuego. |
-| **Lobo de Hierro (Hechicera)** | *Cold Mastery* (ID 65) | Perforación porcentual de la resistencia al frío de los enemigos. |
-| **Lobo de Hierro (Hechicera)** | *Lightning Mastery* (ID 63) | Aumento porcentual masivo del daño de sus rayos y relámpagos. |
-| **Guardia (Paladín)** | Auras Pasivas Adicionales | Activación de auras secundarias en combate al portar escudos o armas de Paladín. |
-| **Bárbaro (Bárbaro)** | *Iron Skin* / *Masteries* | Incremento pasivo de defensa base y probabilidad de impacto crítico con espadas. |
+#### A. Bonificaciones de Nivel de Habilidad (Clase y Rama)
+* **Escalado de Habilidades Nativas:** El `Stat 83` (`item_addclassskills`) y el `Stat 188` (`item_addskill_tab`) en el equipo escalan las habilidades nativas del mercenario (por ejemplo, habilidades de arco de Amazona en la Pícara del Acto 1, habilidades de frío/fuego/rayo de Hechicera en el Lobo de Hierro del Acto 3, o auras de Paladín en el Guardia del Acto 2).
+* **Gestión Nativa de Stat 107 y 97:** Las habilidades individuales en bastones/armas (Stat 107) y las habilidades oskills (Stat 97) ya son evaluadas de forma nativa por el motor del juego; el detour las respeta sin contarlas dos veces.
+* *Nota sobre Pasivas y Auras Adicionales:* La inyección directa de nodos pasivos adicionales (p. ej. Golpe Crítico, Perforación, maestrías) o auras adicionales en la lista de habilidades nativa (`hireling + 0x100`) queda reservada para futuras versiones y no está activa en código en este PR.
 
 #### B. Habilidades Activas y Compatibilidad de Animaciones
-Para ejecutar habilidades activas, el modelo 3D del mercenario debe disponer de los fotogramas de animación requeridos en `MonStats2.txt`:
+Las habilidades activas otorgadas por objetos (oskills Stat 97, staffmods Stat 107 y habilidades cargadas Stat 204) son detectadas por el escáner del mercenario y ejecutadas dinámicamente mediante la rotación táctica de la IA:
 * **Pícara del Acto 1 (Modo `A1` - Disparo con Arco):**
   * Habilidades 100% compatibles: *Multiple Shot* (ID 12), *Guided Arrow* (ID 22), *Strafe* (ID 26), *Immolation Arrow* (ID 27).
-  * Todas disparan la animación `A1` ya existente en su rig, permitiendo lanzar ráfagas de flechas o proyectiles teledirigidos.
+  * Disparan la animación `A1` de disparo y crean los proyectiles nativos correspondientes.
 * **Lobo de Hierro del Acto 3 (Modo `SC` - Special Cast):**
   * Habilidades 100% compatibles: *Blizzard* (ID 59), *Meteor* (ID 56), *Nova* (ID 48), *Chain Lightning* (ID 53), *Hydra* (ID 62).
-  * Todos estos hechizos utilizan el modo de lanzamiento `SC` que el Lobo de Hierro ya utiliza para lanzar sus bolas de fuego y picos glaciares.
+  * Utilizan la animación `SC` ya disponible en su rig para bolas de fuego y picos glaciares.
 
 ---
 

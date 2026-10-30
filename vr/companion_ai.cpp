@@ -588,6 +588,7 @@ int DetourServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, i
     const auto arch = framevr::companionai::GetHirelingArchetype(uint16_t(header[1]));
 
     framevr::companionai::TacticalOrder order{};
+#ifndef NDEBUG
     static uint64_t s_lastMoveUnitLogMs = 0;
     const uint64_t logNow = GetTickCount64();
     if (logNow - s_lastMoveUnitLogMs >= 1000) {
@@ -598,6 +599,7 @@ int DetourServerMoveUnit(uintptr_t game, uintptr_t unit, uintptr_t targetUnit, i
             moveMode, reinterpret_cast<void*>(targetUnit), x, y);
         framevr::logging::Write(logLine);
     }
+#endif
     framevr::companionai::TacticalCommandState state = framevr::companionai::TacticalCommandState::Idle;
     framevr::companionai::Vec2 effTarget{};
     bool active = false;
@@ -1062,15 +1064,15 @@ void ExecuteCompanionTacticalChargesInternal(
         }
 
         // Update live mercenary UI badges (passing preDiscoveredCharges to avoid re-scanning)
+        // Localized skill name resolution (nativeui::SkillName) is performed on the UI thread
+        // when the mercenary inventory panel is open, preserving thread safety.
         auto newBadges = framevr::companionui::CollectMercenarySkillBadges(
             vclass,
             std::span<const framevr::companionai::EquippedItemSlot>(slots.data(), slotCount),
             [&](uintptr_t itm, int st, int pr) {
                 return statFn(itm, st, pr);
             },
-            [](int id) {
-                return nativeui::SkillName(id);
-            },
+            nullptr,
             s_cachedCharges
         );
 
@@ -2246,14 +2248,22 @@ void Report() {
     const unsigned tactical = g_tacticalMoveEvents.exchange(0);
     const unsigned peels = g_peelEvents.exchange(0);
 
-    if (applied != reportedRange || unstuck > 0 || tactical > 0 || peels > 0) {
+    if (applied != reportedRange) {
         char line[180];
         std::snprintf(line, sizeof line,
-            "Frame companion AI: detect_range=%d sub-tiles unstuck_relocations=%u tactical_moves=%u bodyguard_peels=%u",
-            applied, unstuck, tactical, peels);
+            "Frame companion AI: detect_range=%d sub-tiles", applied);
         framevr::logging::Write(line);
         reportedRange = applied;
     }
+#ifndef NDEBUG
+    if (unstuck > 0 || tactical > 0 || peels > 0) {
+        char line[180];
+        std::snprintf(line, sizeof line,
+            "Frame companion AI: unstuck_relocations=%u tactical_moves=%u bodyguard_peels=%u",
+            unstuck, tactical, peels);
+        framevr::logging::Write(line);
+    }
+#endif
 }
 
 void Shutdown() {
@@ -2412,6 +2422,7 @@ bool TryOverrideCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t& outTarge
     if (!Read(unit, header) || header[0] != 1 || header[2] != hirelingId) return false;
 
     static uint64_t s_lastTryLogMs = 0;
+#ifndef NDEBUG
     const uint64_t tryNowMs = GetTickCount64();
     if (tryNowMs - s_lastTryLogMs >= 1000) {
         s_lastTryLogMs = tryNowMs;
@@ -2421,6 +2432,7 @@ bool TryOverrideCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t& outTarge
             _ReturnAddress());
         framevr::logging::Write(tryLine);
     }
+#endif
 
     // 0. Commanded Action Target Override (e.g. Corpse target for corpse skills)
     if (g_inCommandedAction && g_commandedActionTargetUnit) {
@@ -2522,6 +2534,7 @@ uintptr_t FilterNativeCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t can
     uint32_t header[4]{};
     if (!Read(unit, header) || header[0] != 1 || header[2] != hirelingId) return candidateTarget;
 
+#ifndef NDEBUG
     static uint64_t s_lastFilterLogMs = 0;
     const uint64_t filterNowMs = GetTickCount64();
     if (filterNowMs - s_lastFilterLogMs >= 1000) {
@@ -2532,6 +2545,7 @@ uintptr_t FilterNativeCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t can
             _ReturnAddress(), reinterpret_cast<void*>(candidateTarget));
         framevr::logging::Write(filterLine);
     }
+#endif
 
     framevr::companionai::TacticalOrder order{};
     bool active = false;

@@ -121,8 +121,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
 
         // Projectile Suppression & Vision
         case 8:   // Inner Sight
-        case 9:   // Slow Missiles
-        case 17:  // Slow Missiles (variant)
+        case 17:  // Slow Missiles
         case 264: // Cloak of Shadows
             return TacticalSkillKind::Suppression;
 
@@ -149,7 +148,6 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 59:  // Blizzard
         case 78:  // Bone Wall
         case 88:  // Bone Prison
-        case 89:  // Bone Prison (variant ID)
         case 116: // Conversion
         case 130: // Howl
         case 139: // Stun
@@ -172,11 +170,11 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 222: // Poison Creeper
         case 226: // Oak Sage
         case 227: // Spirit Wolf
-        case 232: // Carrion Vine
-        case 236: // Spirit of Barbs
+        case 231: // Carrion Vine (Cycle of Life)
+        case 236: // Heart of Wolverine
         case 237: // Dire Wolf
-        case 242: // Solar Creeper
-        case 246: // Heart of Wolverine
+        case 241: // Solar Creeper (Vines)
+        case 246: // Spirit of Barbs
         case 247: // Grizzly
         case 268: // Shadow Warrior
         case 279: // Shadow Master
@@ -230,14 +228,24 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 112: // Blessed Hammer
         case 121: // Fist of the Heavens
         case 126: // Bash
-        case 140: // Double Swing
+        case 133: // Double Swing
+        case 140: // Double Throw
+        case 144: // Concentrate
+        case 147: // Frenzy
         case 152: // Berserk
-        case 223: // Arctic Blast
         case 225: // Firestorm
         case 229: // Molten Boulder
+        case 230: // Arctic Blast
+        case 232: // Feral Rage
+        case 233: // Maul
         case 234: // Fissure
+        case 238: // Rabies
+        case 239: // Fire Claws
+        case 242: // Hunger
+        case 243: // Shock Wave
         case 244: // Volcano
         case 245: // Tornado
+        case 248: // Fury
         case 249: // Armageddon
         case 250: // Hurricane
         case 251: // Fire Blast
@@ -308,6 +316,7 @@ inline uint64_t GetTacticalCooldownMs(TacticalSkillKind kind) noexcept {
 inline constexpr bool IsSkillPassive(uint16_t skillId) noexcept {
     switch (skillId) {
         // Amazon passives
+        case 9:   // Critical Strike
         case 13:  // Dodge
         case 18:  // Avoid
         case 23:  // Penetrate
@@ -337,7 +346,7 @@ inline constexpr bool IsSkillPassive(uint16_t skillId) noexcept {
         case 224: // Lycanthropy
         // Assassin passives
         case 252: // Claw Mastery
-        case 258: // Weapon Block
+        case 263: // Weapon Block
             return true;
         default:
             return false;
@@ -359,11 +368,13 @@ inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId
     // Hardcoded player-locked animations and complex state machines that hireling skeletons lack:
     switch (skillId) {
         case 97:  // Smite
-        case 100: // Charge
         case 106: // Zeal
+        case 107: // Charge
         case 132: // Leap
-        case 144: // Leap Attack
+        case 143: // Leap Attack
         case 151: // Whirlwind
+        case 223: // Werewolf (Shapeshift)
+        case 228: // Werebear (Shapeshift)
         case 255: // Dragon Talon
         case 260: // Dragon Claw
         case 270: // Dragon Tail
@@ -383,7 +394,6 @@ inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId
         case 26: // Strafe
         case 27: // Immolation Arrow
         case 31: // Freezing Arrow
-        case 35: // Lightning Fury / bow token
             // Only Rogue archers (Amazon virtual class) have bow casting tokens
             return vclass == VirtualPlayerClass::Amazon;
     }
@@ -400,7 +410,7 @@ inline constexpr bool SkillRequiresCorpse(uint16_t skillId) noexcept {
         case 83:  // Poison Explosion (Necromancer)
         case 95:  // Revive (Necromancer)
         case 131: // Find Potion (Barbarian)
-        case 138: // Find Item (Barbarian)
+        case 142: // Find Item (Barbarian)
         case 150: // Grim Ward (Barbarian)
             return true;
         default:

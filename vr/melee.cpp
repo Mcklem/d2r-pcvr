@@ -1249,9 +1249,21 @@ int HostilesAround(Hostile* out,int max,float range,float centerX,float centerY,
             unit=next;
         }
     }
+    // Sort candidate hostiles by distance ascending so closest hostiles are tested first
+    for(int i=0;i<n-1;++i) {
+        int best=i;
+        for(int j=i+1;j<n;++j)if(distance[j]<distance[best])best=j;
+        if(best!=i){
+            std::swap(distance[i],distance[best]);
+            std::swap(units[i],units[best]);
+            std::swap(out[i],out[best]);
+        }
+    }
     const auto lineFn=reinterpret_cast<int(*)(uintptr_t,uintptr_t,int)>(d2rsig::Addr(LineRva));
-    constexpr int MaxLineChecks = 8;
-    const int checks = std::min(n, MaxLineChecks);
+    // Apply 8-check performance budget only for companion AI scans (viewerUnit != self).
+    // The player's target-lock scanning (viewerUnit == self) evaluates all candidates up to max.
+    const bool isPlayerScan = (viewerUnit == self);
+    const int checks = isPlayerScan ? n : std::min(n, 8);
     for(int i=0;i<checks;++i)out[i].clear=lineFn&&lineFn(viewerUnit,units[i],0x804)==0;
     for(int i=checks;i<n;++i)out[i].clear=false;
     return n;
@@ -1292,13 +1304,15 @@ int Hostiles(Hostile* out,int max,float range,float& heroX,float& heroY) {
     if(!LocalServer(game,self)||!Position(self,selfPos))return -1;
     heroX=selfPos.x*.5f;heroY=selfPos.z*.5f;
     const int n = HostilesAround(out,max,range,heroX,heroY,self);
-    // Telemetry: a crowd bigger than the list, at most every 5 s.
+#ifndef NDEBUG
+    // Telemetry: a crowd bigger than the list, at most every 5 s in dev/debug builds.
     static ULONGLONG crowdLogged=0;
-    if(n>0&&GetTickCount64()-crowdLogged>5000) {
+    if(n>=max&&GetTickCount64()-crowdLogged>5000) {
         crowdLogged=GetTickCount64();
         char line[128];snprintf(line,sizeof line,"Frame target lock: scanned %d hostiles in range",n);
         framevr::logging::Write(line);
     }
+#endif
     return n;
 }
 // The creature a cast's next hit goes to (strike_skills.h Sequence), as native

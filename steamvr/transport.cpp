@@ -32,6 +32,7 @@
 #include "../vr/bow.h"
 #include "../vr/crossbow.h"
 #include "../vr/melee.h"
+#include "../vr/native_ui.h"
 #include "frame_math.h"
 #include "composition_layers.h"
 #include "swapchain_format.h"
@@ -2454,6 +2455,36 @@ void StepCompanionTacticalGestures(uint64_t now, float rightTrigger, float leftT
         }
 
         // 2. Gesture: Select Companion First -> Hold Grip & Aim -> Release Grip to Execute
+        // Exclude hands armed for Paladin grip body gestures (Blessed Hammer pump or Charge punch)
+        // to prevent accidental companion command latching during combat fists/punches.
+        bool gripGestureArmed = false;
+        if (interactionInput.active) {
+            const auto& quickSnapshot = interactionInput.snapshot;
+            const bool quickFresh = interaction::Fresh(quickSnapshot, interactionInput.session, interactionInput.at);
+            const auto gestureSettings = vrsettings::Read().values;
+            if (quickFresh && gestureSettings[settings::SkillGestures] > 0.5f) {
+                for (int i = 0; i < skills::Count; ++i) {
+                    if (quickSnapshot.skills[i].known && quickSnapshot.skills[i].available) {
+                        if (quickSnapshot.skills[i].id == weaponskills::BlessedHammer) {
+                            gripGestureArmed = true;
+                            break;
+                        }
+                        if (quickSnapshot.skills[i].id == weaponskills::Charge && h == 0) {
+                            gripGestureArmed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (gripGestureArmed) {
+            if (g_tacticalGrabHand == h) {
+                framevr::telegraph::Current().ClearSkill(-2);
+                g_tacticalGrabHand = -1;
+            }
+            continue;
+        }
+
         if ((gripClick || g_tacticalGrabHand == h) && (handAimTracked[h] || interactionInput.tracked[h])) {
             const auto headP = interactionInput.head.p;
             const auto handP = interactionInput.hand[h].p;
@@ -3350,6 +3381,12 @@ void Input() {
 
             if((badgesChanged || iconsChanged || hoverChanged || !hirelingSkillsImageReady) && !hirelingSkillsAtlasPending && atlasUploads.size() < 3) {
                 hirelingBadges = std::move(liveBadges);
+                for(auto& b : hirelingBadges) {
+                    if(b.skillName[0] == '\0' || std::strncmp(b.skillName, "Skill ", 6) == 0) {
+                        const auto name = nativeui::SkillName(b.skillId);
+                        if(!name.empty()) std::snprintf(b.skillName, sizeof(b.skillName), "%s", name.c_str());
+                    }
+                }
                 hirelingSkillsPaintedRev = rev;
                 hirelingSkillsPaintedIconsRev = iconsRev;
                 hirelingSkillsPaintedHover = hirelingSkillsHoverIndex;

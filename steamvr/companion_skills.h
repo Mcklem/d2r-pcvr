@@ -59,7 +59,8 @@ inline constexpr int GetSkillClass(int skillId) {
     return -1;
 }
 
-// Resolves global tab index (0..20) for item_addskill_tab (Stat 188)
+// Resolves global tab index (0..55) for item_addskill_tab (Stat 188)
+// D2 stores tab skills as (class * 8) + tabOffset (3 bits for page 0..2).
 inline int GetSkillTab(int skillId) {
     const int cls = GetSkillClass(skillId);
     if (cls < 0 || !skillcategories::ValidClass(cls)) return -1;
@@ -68,7 +69,7 @@ inline int GetSkillTab(int skillId) {
     if (cat < 1 || cat > 3) return -1;
 
     const int tabOffset = cat - 1; // 0, 1, or 2
-    return (cls * 3) + tabOffset;
+    return (cls * 8) + tabOffset;
 }
 
 // Determines if a skill matches a companion's virtual class
@@ -102,14 +103,12 @@ inline int ComputeCompanionEquipmentSkillBonus(
     for (uintptr_t item : equippedItems) {
         if (!item) continue;
 
-        // 1. Single skill bonus (Staffmod, Stat 107) and Oskills (Stat 97)
-        const int singleBonus = getStat(item, ItemStat::SingleSkill, skillId);
-        if (singleBonus > 0) totalBonus += singleBonus;
+        // Note: For monsters, the game's native bonus-level calculation (SKILLS_GetBonusSkillLevel)
+        // already includes Stat 107 (SingleSkill) and Stat 97 (NonClassSkill). The detour
+        // receives baseLevel with those included, so we only add class (Stat 83) and tab (Stat 188)
+        // bonuses on top to avoid double-counting.
 
-        const int nonClassBonus = getStat(item, ItemStat::NonClassSkill, skillId);
-        if (nonClassBonus > 0) totalBonus += nonClassBonus;
-
-        // 2. Class skill bonus (Stat 83: item_addclassskills)
+        // 1. Class skill bonus (Stat 83: item_addclassskills)
         if (skillCls == vclsInt) {
             const int classBonus = getStat(item, ItemStat::ClassSkills, vclsInt);
             if (classBonus > 0) totalBonus += classBonus;
@@ -119,7 +118,7 @@ inline int ComputeCompanionEquipmentSkillBonus(
             if (amaBonus > 0) totalBonus += amaBonus;
         }
 
-        // 3. Tab skill bonus (Stat 188: item_addskill_tab)
+        // 2. Tab skill bonus (Stat 188: item_addskill_tab)
         if (tabId >= 0) {
             const int tabBonus = getStat(item, ItemStat::TabSkills, tabId);
             if (tabBonus > 0) totalBonus += tabBonus;
@@ -160,7 +159,7 @@ inline int ComputeEffectiveCompanionSkillLevel(
     }
 
     const int bonus = ComputeCompanionEquipmentSkillBonus(vclass, skillId, equippedItems, getStat);
-    return baseLevel + bonus;
+    return std::clamp(baseLevel + bonus, 1, 99);
 }
 
 } // namespace framevr::companionai

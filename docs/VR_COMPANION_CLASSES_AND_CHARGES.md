@@ -86,30 +86,20 @@ When detouring this entry point for mercenary units:
 5. Scan equipped items for `Stat 83` matching the virtual class, `Stat 188` matching the skill's tab, or `Stat 107` matching the specific skill ID, and add these bonuses to the effective skill level returned.
 6. **Result:** A bow with `+2 to Amazon Skill Levels` immediately scales the Rogue's *Fire Arrow* or *Cold Arrow*; a sword or shield with `+3 to Fire Skills` directly scales the Iron Wolf's *Fire Ball*.
 
-### 3.3. Matching Passive and Active Skills Granted by Equipment
+### 3.3. Equipment Skills and AI Integration
 
-When an equipped item grants a skill matching the companion's virtual class:
+When an equipped item grants skills or skill bonuses matching the companion's virtual class:
 
-#### A. Passive Skills
-Passive skills possess `passive = 1` in `Skills.txt`. When linked into the companion's skill list (`hireling + 0x100`), the native engine automatically evaluates their passive stats during combat damage and defense routines:
-
-| Companion / Virtual Class | Granted Passive Skill | Native Combat Effect |
-| :--- | :--- | :--- |
-| **Rogue (Amazon)** | *Critical Strike* (ID 9) | Evaluated in `SUnitDmg.cpp`: chance to **double total physical arrow damage**. |
-| **Rogue (Amazon)** | *Penetrate* (ID 23) | Grants massive passive percentage Attack Rating bonus (`tohit_percent`). |
-| **Rogue (Amazon)** | *Pierce* (ID 33) | Evaluated in `MissileDmg.cpp`: arrows pierce cleanly through lines of enemies. |
-| **Iron Wolf (Sorceress)** | *Warmth* (ID 37) | Accelerated native mana regeneration (`mana_recovery_bonus`). |
-| **Iron Wolf (Sorceress)** | *Fire Mastery* (ID 61) | Direct percentage scaling to fire attack and spell damage. |
-| **Iron Wolf (Sorceress)** | *Cold Mastery* (ID 65) | Percentage pierce against enemy cold resistance. |
-| **Iron Wolf (Sorceress)** | *Lightning Mastery* (ID 63) | Massive percentage scaling to lightning damage. |
-| **Desert Guard (Paladin)** | Additional Passive Auras | Secondary auras activated while wielding Paladin shields or polearms. |
-| **Barbarian (Barbarian)** | *Iron Skin* / *Masteries* | Passive defense multipliers and critical strike chance with swords. |
+#### A. Class & Tab Skill Level Bonuses
+* **Native Skills Scaling:** Stat 83 (`item_addclassskills`) and Stat 188 (`item_addskill_tab`) on equipped gear scale the companion's baseline native skills (e.g. Amazon bow skills on Act 1 Rogue, Sorceress cold/fire/lightning skills on Act 3 Iron Wolf, Paladin offensive/defensive auras on Act 2 Desert Guard).
+* **Native Stat 107/97:** Single-skill staffmods (107) and oskills (97) already get evaluated by native engine routines. The detour preserves them without double-counting.
+* *Note on Passives & Extra Auras:* Native injection of new passive skill nodes (e.g. Critical Strike, Pierce, masteries) or auxiliary aura state machines into the hireling's native skill list (`hireling + 0x100`) is intentionally out of scope for this PR and not active in code.
 
 #### B. Active Skills & Animation Compatibility
-To execute active skills, the companion's 3D rig must possess the required animation mode in `MonStats2.txt`:
+Active skills granted by items (oskills Stat 97, single-skill staffmods Stat 107, and charged skills Stat 204) are detected by the companion scanner and executed dynamically through the Tactical AI rotation:
 * **Act 1 Rogue Scout (`A1` Mode - Bow Attack):**
   * Fully compatible: *Multiple Shot* (ID 12), *Guided Arrow* (ID 22), *Strafe* (ID 26), *Immolation Arrow* (ID 27).
-  * Dispatches standard `A1` arrow launch animations without skeletal hitching.
+  * Dispatches standard `A1` arrow launch animations and native missile creation without skeletal hitching.
 * **Act 3 Iron Wolf (`SC` Mode - Special Cast):**
   * Fully compatible: *Blizzard* (ID 59), *Meteor* (ID 56), *Nova* (ID 48), *Chain Lightning* (ID 53), *Hydra* (ID 62).
   * Uses the existing `SC` casting animation already used for vanilla *Fire Ball* and *Glacial Spike*.
