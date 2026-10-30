@@ -157,6 +157,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
             return TacticalSkillKind::Summon;
 
         // Targeted Damage Spells & AoE
+        case 31:  // Immolation Arrow (Hellrack)
         case 36:  // Fire Bolt
         case 38:  // Charged Bolt
         case 39:  // Ice Bolt
@@ -171,6 +172,7 @@ inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept {
         case 64:  // Frozen Orb
         case 67:  // Teeth
         case 74:  // Corpse Explosion
+        case 83:  // Poison Explosion (Radament's Sphere)
         case 84:  // Bone Spear
         case 92:  // Poison Nova
         case 93:  // Bone Spirit

@@ -847,14 +847,8 @@ void ExecuteCompanionTacticalChargesInternal(
         return;
     }
 
-    const uint32_t hirelingMode = compHeader[3];
-    const bool inActiveAttack = (hirelingMode == 4 || hirelingMode == 5 || hirelingMode == 7 || (hirelingMode >= 8 && hirelingMode <= 11));
-    if (inActiveAttack || hirelingMode == 3 /* MONMODE_GETHIT */) {
-        return;
-    }
-
-    static uint64_t s_lastTacticalCastMs = 0;
-    if (nowMs - s_lastTacticalCastMs < 400) {
+    const auto vclass = framevr::companionai::GetVirtualPlayerClass(static_cast<uint16_t>(classId));
+    if (vclass == framevr::companionai::VirtualPlayerClass::None) {
         return;
     }
 
@@ -863,6 +857,7 @@ void ExecuteCompanionTacticalChargesInternal(
     static std::array<uint32_t, 4> s_lastItemIds{};
     static size_t s_lastSlotCount = 0;
     static uint64_t s_lastDiagScanLogMs = 0;
+    static uint64_t s_lastTacticalCastMs = 0;
 
     const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
     const auto eqFn = reinterpret_cast<EquippedFn>(d2rsig::Addr(abi::EquippedRva));
@@ -873,11 +868,6 @@ void ExecuteCompanionTacticalChargesInternal(
 
     const uintptr_t inv = invFn(hireling, nullptr, 0);
     if (!inv) {
-        return;
-    }
-
-    const auto vclass = framevr::companionai::GetVirtualPlayerClass(static_cast<uint16_t>(classId));
-    if (vclass == framevr::companionai::VirtualPlayerClass::None) {
         return;
     }
 
@@ -906,14 +896,15 @@ void ExecuteCompanionTacticalChargesInternal(
         auto prevCharges = std::move(s_cachedCharges);
         s_cachedCharges.clear();
 
-        // 59 verified candidate charged skills in Diablo II
+        // 61 verified candidate charged skills in Diablo II (including Radament's Sphere and Hellrack)
         static constexpr uint16_t CandidateSkills[] = {
             54,  // Teleport
             7, 9, 264, // Inner Sight, Slow Missiles, Cloak of Shadows
             66, 69, 71, 72, 76, 77, 82, 86, 87, 91, // Curses
             44, 45, 55, 59, 78, 89, 240, // Crowd Control
             75, 85, 90, 94, 95, 221, 222, 226, 227, 232, 236, 237, 242, 246, 247, // Summons
-            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
+            36, 38, 39, 42, 47, 48, 49, 51, 53, 56, 62, 64, 67, 74, 83, 84, 92, 93, 101, 121, 223, 225, 229, 234, 244, 245, 249, 250, // Damage Spells
+            31, // Immolation Arrow (Hellrack)
             52, 68, 235 // Buffs
         };
 
@@ -977,7 +968,7 @@ void ExecuteCompanionTacticalChargesInternal(
                 }
             };
 
-            // Phase 1: Targeted candidate skill probe (Levels 1..25 with both D2 standard and 10-bit packing)
+            // Phase 1: Targeted candidate skill probe (Levels 1..25 and 30,33 with both D2 standard and 10-bit packing)
             for (uint16_t cSkill : CandidateSkills) {
                 // Direct skill
                 int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, cSkill);
@@ -994,13 +985,23 @@ void ExecuteCompanionTacticalChargesInternal(
                         if (v > 0) processHit(p10, v);
                     }
                 }
+                for (uint8_t lvl : {30, 33}) {
+                    const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
+                    v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
+                    if (v > 0) processHit(pStd, v);
+                }
             }
 
-            // Phase 2: If no charge found via candidates, probe general skill IDs 1..350 direct
+            // Phase 2: If no charge found via candidates, probe general skill IDs 1..350 for levels 1..10
             if (!foundChargeOnItem) {
                 for (uint16_t sk = 1; sk <= 350; ++sk) {
                     int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, sk);
                     if (v > 0) processHit(sk, v);
+                    for (uint8_t lvl = 1; lvl <= 10; ++lvl) {
+                        const uint16_t pStd = framevr::companionai::PackChargedSkillParam(sk, lvl);
+                        v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
+                        if (v > 0) processHit(pStd, v);
+                    }
                 }
             }
 
@@ -1069,6 +1070,17 @@ void ExecuteCompanionTacticalChargesInternal(
         }
     }
     if (s_cachedCharges.empty()) {
+        return;
+    }
+
+    // Gate actual skill execution behind animation readiness and casting interval
+    const uint32_t hirelingMode = compHeader[3];
+    const bool inActiveAttack = (hirelingMode == 4 || hirelingMode == 5 || hirelingMode == 7 || (hirelingMode >= 8 && hirelingMode <= 11));
+    if (inActiveAttack || hirelingMode == 3 /* MONMODE_GETHIT */) {
+        return;
+    }
+
+    if (nowMs - s_lastTacticalCastMs < 400) {
         return;
     }
 

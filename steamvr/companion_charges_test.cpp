@@ -86,6 +86,8 @@ void TestTacticalSkillKindClassification() {
     assert(GetTacticalSkillKind(226) == TacticalSkillKind::Summon);      // Oak Sage
     assert(GetTacticalSkillKind(47) == TacticalSkillKind::DamageSpell);  // Fire Ball
     assert(GetTacticalSkillKind(56) == TacticalSkillKind::DamageSpell);  // Meteor
+    assert(GetTacticalSkillKind(83) == TacticalSkillKind::DamageSpell);  // Poison Explosion (Radament's Sphere)
+    assert(GetTacticalSkillKind(31) == TacticalSkillKind::DamageSpell);  // Immolation Arrow (Hellrack)
     assert(GetTacticalSkillKind(52) == TacticalSkillKind::Buff);         // Enchant
     assert(GetTacticalSkillKind(999) == TacticalSkillKind::None);
 
