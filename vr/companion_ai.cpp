@@ -61,6 +61,7 @@ std::atomic<bool> g_nativeMoveBlockedWhileMoving{false};
 std::atomic<bool> g_pendingRegroupMove{false};
 thread_local bool g_inCommandedMove = false;
 thread_local bool g_inCommandedAction = false;
+thread_local uintptr_t g_commandedActionTargetUnit = 0;
 
 std::atomic<bool> g_enabled{true};
 std::atomic<bool> g_installed{false};
@@ -1149,6 +1150,30 @@ void ExecuteCompanionTacticalChargesInternal(
         sensors.isCombatActive = true;
     }
 
+    melee::Corpse corpses[16]{};
+    int corpseCount = 0;
+    if (framevr::companionai::HasCorpseSkills(s_cachedCharges)) {
+        corpseCount = melee::CorpsesAround(corpses, 16, 24.0f, compPos.x, compPos.y, hireling);
+    }
+    if (corpseCount > 0) {
+        sensors.nearbyCorpsesCount = corpseCount;
+        int bestCIdx = 0;
+        float bestCDist = 9999.0f;
+        const float refX = (hCount > 0) ? primaryTargetX : compPos.x;
+        const float refY = (hCount > 0) ? primaryTargetY : compPos.y;
+        for (int c = 0; c < corpseCount; ++c) {
+            const float d = std::hypot(corpses[c].x - refX, corpses[c].y - refY);
+            if (d < bestCDist) {
+                bestCDist = d;
+                bestCIdx = c;
+            }
+        }
+        sensors.closestCorpseX = corpses[bestCIdx].x;
+        sensors.closestCorpseY = corpses[bestCIdx].y;
+        sensors.closestCorpseId = corpses[bestCIdx].id;
+        sensors.closestCorpseUnit = corpses[bestCIdx].unit;
+    }
+
     const bool consumeCharges = g_companionConsumeItemCharges.load(std::memory_order_relaxed);
     const auto decision = framevr::companionai::SelectBestTacticalCharge(
         s_cachedCharges, sensors, true, consumeCharges);
@@ -1172,6 +1197,9 @@ void ExecuteCompanionTacticalChargesInternal(
     if (decision.kind == framevr::companionai::TacticalSkillKind::Teleport) {
         destX = int(std::round(plyrPos.x));
         destY = int(std::round(plyrPos.y));
+    } else if (framevr::companionai::SkillRequiresCorpse(decision.skillId)) {
+        destX = int(std::round(sensors.closestCorpseX));
+        destY = int(std::round(sensors.closestCorpseY));
     } else if (decision.kind == framevr::companionai::TacticalSkillKind::Suppression ||
                decision.kind == framevr::companionai::TacticalSkillKind::Summon ||
                decision.kind == framevr::companionai::TacticalSkillKind::Buff) {
@@ -1184,9 +1212,13 @@ void ExecuteCompanionTacticalChargesInternal(
 
     if (startFn && dispatchFn) {
         struct CommandedActionScope {
-            CommandedActionScope() noexcept { g_inCommandedAction = true; }
-            ~CommandedActionScope() noexcept { g_inCommandedAction = false; }
-        } actionScope;
+            CommandedActionScope(uintptr_t targetUnit = 0) noexcept { g_inCommandedAction = true; g_commandedActionTargetUnit = targetUnit; }
+            ~CommandedActionScope() noexcept { g_inCommandedAction = false; g_commandedActionTargetUnit = 0; }
+        };
+        CommandedActionScope actionScope(framevr::companionai::SkillRequiresCorpse(decision.skillId) ? sensors.closestCorpseUnit : 0);
+
+
+
 
         const int startRes = startFn(game, hireling, decision.skillId, decision.level, 0);
         const int castRes = dispatchFn(game, hireling, decision.skillId, decision.level, 1, destX, destY);
@@ -1214,6 +1246,15 @@ void ExecuteCompanionTacticalChargesInternal(
                             }
                         }
                     }
+                    break;
+                }
+            }
+        } else {
+            // Failed cast backoff: apply cooldown penalty so the AI does not spam attempts every frame
+            s_lastTacticalCastMs = nowMs;
+            for (auto& s : s_cachedCharges) {
+                if (s.itemId == decision.itemId && s.skillId == decision.skillId) {
+                    s.lastCastMs = nowMs;
                     break;
                 }
             }
@@ -2166,6 +2207,12 @@ bool TryOverrideCombatTarget(uintptr_t game, uintptr_t unit, uintptr_t& outTarge
             "Frame companion AI: TryOverrideCombatTarget queried for hireling (caller=%p)",
             _ReturnAddress());
         framevr::logging::Write(tryLine);
+    }
+
+    // 0. Commanded Action Target Override (e.g. Corpse target for corpse skills)
+    if (g_inCommandedAction && g_commandedActionTargetUnit) {
+        outTarget = g_commandedActionTargetUnit;
+        return true;
     }
 
     // 1. Tactical Retreat: disengage completely from combat targets

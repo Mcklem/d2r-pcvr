@@ -418,6 +418,59 @@ void TestChargeAccounting() {
     std::puts("TestChargeAccounting: OK");
 }
 
+void TestCorpseSkillsIndexingAndTriggering() {
+    // 1. Indexing check
+    assert(SkillRequiresCorpse(74));  // Corpse Explosion
+    assert(SkillRequiresCorpse(83));  // Poison Explosion
+    assert(SkillRequiresCorpse(95));  // Revive
+    assert(SkillRequiresCorpse(131)); // Find Potion
+    assert(SkillRequiresCorpse(138)); // Find Item
+    assert(SkillRequiresCorpse(150)); // Grim Ward
+
+    assert(!SkillRequiresCorpse(54));  // Teleport
+    assert(!SkillRequiresCorpse(62));  // Hydra
+    assert(!SkillRequiresCorpse(264)); // Cloak of Shadows
+    assert(!SkillRequiresCorpse(64));  // Frozen Orb
+
+    // 2. HasCorpseSkills helper
+    std::vector<CompanionChargedSkill> skills;
+    skills.push_back({ 1, 4, 62, 6, 30, 36, 0, TacticalSkillKind::DamageSpell });
+    assert(!HasCorpseSkills(skills));
+
+    skills.push_back({ 2, 5, 83, 6, 9, 40, 0, TacticalSkillKind::DamageSpell });
+    assert(HasCorpseSkills(skills));
+
+    // 3. Evaluation gating: blocked when no corpses
+    TacticalCombatSensors sensors{};
+    sensors.isCombatActive = true;
+    sensors.nearbyHostilesCount = 3;
+    sensors.nearbyCorpsesCount = 0; // No corpses!
+
+    const char* reason = "";
+    assert(!EvaluateTacticalCharge(skills[1], sensors, false, reason));
+
+    // 4. Evaluation trigger: permitted when corpses exist
+    sensors.nearbyCorpsesCount = 2;
+    sensors.closestCorpseX = 120.0f;
+    sensors.closestCorpseY = 130.0f;
+    assert(EvaluateTacticalCharge(skills[1], sensors, false, reason));
+    assert(std::string(reason).find("Corpse Detonation") != std::string::npos);
+
+    // 5. Arbitration: when Hydra is on cooldown, corpse skill triggers if corpses exist
+    skills[0].lastCastMs = 1000;
+    sensors.nowMs = 1500; // Hydra (4s cd) on cooldown
+    sensors.nearbyCorpsesCount = 0;
+    auto decision = SelectBestTacticalCharge(skills, sensors, true, false);
+    assert(!decision.shouldCast); // Both blocked (Hydra on cd, Poison Exp lacks corpse)
+
+    sensors.nearbyCorpsesCount = 1;
+    decision = SelectBestTacticalCharge(skills, sensors, true, false);
+    assert(decision.shouldCast);
+    assert(decision.skillId == 83); // Poison Explosion selected!
+
+    std::puts("TestCorpseSkillsIndexingAndTriggering: OK");
+}
+
 } // namespace
 
 int main() {
@@ -428,6 +481,7 @@ int main() {
     TestEquipmentScanning();
     TestTacticalPriorityArbitration();
     TestChargeAccounting();
+    TestCorpseSkillsIndexingAndTriggering();
     std::puts("All companion_charges_test checks passed successfully!");
     return 0;
 }

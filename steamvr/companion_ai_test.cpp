@@ -298,6 +298,9 @@ int AppliedPercent() {
 }
 } // namespace enemysight
 
+static int g_mockCorpseCount = 0;
+static melee::Corpse g_mockCorpses[16]{};
+
 namespace melee {
 uintptr_t g_testServerUnit = 0;
 bool LocalServer(uintptr_t& game, uintptr_t& player) {
@@ -317,6 +320,15 @@ bool HirelingVitals(uint32_t hint, float& health, float& maxHealth, uint32_t& cl
     unitId = 12345;
     return true;
 }
+int CorpsesAround(Corpse* out, int max, float range, float centerX, float centerY, uintptr_t viewerUnit) {
+    (void)range; (void)centerX; (void)centerY; (void)viewerUnit;
+    const int count = std::min(max, g_mockCorpseCount);
+    for (int i = 0; i < count; ++i) {
+        if (out) out[i] = g_mockCorpses[i];
+    }
+    return count;
+}
+
 int HostilesAround(Hostile* out, int max, float range, float centerX, float centerY, uintptr_t viewerUnit) {
     (void)out; (void)max; (void)range; (void)centerX; (void)centerY; (void)viewerUnit;
     return 0;
@@ -1844,6 +1856,49 @@ int main() {
                 // Re-enable for clean state
                 companionai::ConfigureItemSkills(true);
                 companionai::ConfigureConsumeItemCharges(false);
+                g_testEquippedSlots.clear();
+            }
+
+            // Test 7: Corpse Skill (Poison Explosion 83) prerequisite and targeting validation
+            {
+                g_dispatchCount = 0;
+                g_setStatCount = 0;
+                g_mockCorpseCount = 0;
+                g_testEquippedSlots.clear();
+
+                const uint16_t peParam = framevr::companionai::PackChargedSkillParam(83, 6); // Poison Explosion lvl 6
+                const int32_t peVal = framevr::companionai::PackChargedSkillValue(40, 40);   // 40 charges
+                g_testEquippedSlots[5].header[2] = 205; // Distinct item ID
+                g_testEquippedSlots[5].stats = { { static_cast<int>(ItemStat::ChargedSkill), peParam, peVal } };
+
+                const framevr::companionai::Vec2 compP{ 100.0f, 100.0f };
+                const framevr::companionai::Vec2 plyrP{ 100.0f, 100.0f };
+                uint64_t tickMs = 200000;
+
+                // Case A: In combat but NO corpses (g_mockCorpseCount == 0)
+                // Poison Explosion must NOT cast because no corpses exist
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 100.0f, 100.0f,
+                    compP, plyrP, tickMs, true, true);
+                assert(g_dispatchCount == 0);
+
+                // Case B: A corpse appears at (112, 115)
+                g_mockCorpseCount = 1;
+                g_mockCorpses[0] = { 777, 10, 112.0f, 115.0f, 0x60000 };
+                tickMs += 500;
+
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 100.0f, 100.0f,
+                    compP, plyrP, tickMs, true, true);
+
+                // Poison Explosion should trigger and target corpse coordinates!
+                assert(g_dispatchCount == 1);
+                assert(g_lastDispatchedSkill == 83);
+                assert(g_lastDispatchedLevel == 6);
+                assert(g_lastDispatchedDestX == 112);
+                assert(g_lastDispatchedDestY == 115);
+
+                g_mockCorpseCount = 0;
                 g_testEquippedSlots.clear();
             }
 

@@ -241,6 +241,41 @@ companion_item_skills = 1
 companion_consume_item_charges = 0
 ```
 
+### 4.6. Reconocimiento de Cadáveres y Habilidades de Detonación (*Corpse Skills*)
+
+En *Diablo II*, ciertas habilidades de daño y soporte del Nigromante y del Bárbaro no operan sobre coordenadas arbitrarias ni sobre monstruos vivos, sino que **exigen estrictamente un cadáver de monstruo válido en el suelo** (`TargetCorpse`). Si el motor nativo del juego (`SKILLS_StartSkill` en RVA `0x43b3e0`) recibe una petición de lanzamiento sin un objetivo que sea un cadáver en estado válido (`dwMode == 12`), la comprobación nativa `srvstfunc` aborta de inmediato con código de rechazo `startRes = 0`.
+
+Para garantizar que objetos con cargas como la *Esfera de Radament* (*Explosión de Veneno*), *Mortaja de Cadáveres* / *Corpsemourn* (*Explosión de Cadáveres*), *Tótem Nefasto*, etc., funcionen de manera orgánica:
+
+#### 1. Indexación de Habilidades Dependientes de Cadáveres
+En [`steamvr/companion_charges.h`](../../steamvr/companion_charges.h) se incorpora la función `SkillRequiresCorpse(skillId)`:
+* **Skill 74:** *Corpse Explosion* (Explosión de Cadáveres - Nigromante).
+* **Skill 83:** *Poison Explosion* (Explosión de Veneno - Nigromante, ej. *Radament's Sphere*).
+* **Skill 95:** *Revive* (Revivir - Nigromante, ej. *Tomb Reaver*).
+* **Skill 131:** *Find Potion* (Buscar Pociones - Bárbaro).
+* **Skill 138:** *Find Item* (Buscar Objeto - Bárbaro).
+* **Skill 150:** *Grim Ward* (Tótem Nefasto - Bárbaro).
+
+El predicado auxiliar `HasCorpseSkills(skills)` evalúa si el conjunto de cargas equipadas contiene alguna de estas habilidades. Si el mercenario no tiene equipada ninguna habilidad de cadáver, el escaneo de cadáveres se omite por completo (cero sobrecoste de CPU en combate ordinario).
+
+#### 2. Sensor y Escaneo de Cadáveres Válidos (`melee::CorpsesAround`)
+En [`vr/melee.h`](../../vr/melee.h) y [`vr/melee.cpp`](../../vr/melee.cpp), la función `melee::CorpsesAround` recorre las 128 cubetas de unidades del servidor local (`game + 0x4c6*8`) identificando cuerpos que cumplan:
+1. `dwType == 1` (`UNIT_MONSTER`) y `dwMode == 12` (`MONMODE_DEATH`).
+2. Descarte de residentes de ciudad y PNJs (`MonsterFlags & (kMonNpc | kMonInTown)`).
+3. Descarte de cadáveres ya consumidos o explotados comprobando estados de unidad nativos vía `CheckStateRva (0x3351b0)`:
+   * `STATE_CORPSE_NODRAW (102)` (cadáver consumido o destrozado).
+   * `STATE_REVIVE (103)` (resucitado).
+   * `STATE_CORPSE_EXPLODE (108)` (previamente detonado).
+4. **Selección Óptima del Cadáver:** De entre los cadáveres válidos dentro de un radio de 24 sub-casillas, la IA selecciona el cadáver **más próximo al grupo enemigo o al objetivo principal hostil**, garantizando que la nube de veneno o la explosión física impacte de lleno sobre los monstruos vivos.
+
+#### 3. Ejecución Transaccional con Sobreescritura de Objetivo Cadáver
+Al lanzar una habilidad indexada en `SkillRequiresCorpse`:
+* **Coordenadas de Destino:** `(destX, destY)` se fijan exactamente en la posición del cadáver elegido (`closestCorpseX`, `closestCorpseY`), en lugar de la posición del enemigo vivo.
+* **Sobreescritura de Unidad Objetivo (`Target(game, unit)`):** Durante la ejecución de `CommandedActionScope`, el puntero de unidad del cadáver se asigna a `g_commandedActionTargetUnit`. Cuando `SKILLS_StartSkill` consulta el objetivo del mercenario a través del hook `0x48fe20` (`TryOverrideCombatTarget`), este devuelve la unidad cadáver. El motor valida el prerrequisito satisfactoriamente (`startRes = 1`) y ejecuta el daño en el área.
+
+#### 4. Penalización de Enfriamiento por Fallo (*Failed Cast Backoff*)
+Si por cualquier factor dinámico del motor (como un cadáver consumido en el mismo fotograma o línea de visión bloqueada) una habilidad devuelve `startRes == 0 && castRes == 0`, la IA actualiza inmediatamente `s.lastCastMs = nowMs`. Esto evita que la máquina de estados entre en un bucle repetitivo de reintentos cada 400 ms, aplicando el tiempo de enfriamiento táctico y permitiendo que otras habilidades ofensivas (como *Hidra*) sigan rotando sin demoras.
+
 ---
 
 ## 5. Integración y Modificaciones en la Arquitectura de IA Existente

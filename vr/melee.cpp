@@ -1252,6 +1252,37 @@ int HostilesAround(Hostile* out,int max,float range,float centerX,float centerY,
     for(int i=0;i<n;++i)out[i].clear=reinterpret_cast<int(*)(uintptr_t,uintptr_t,int)>(d2rsig::Addr(LineRva))(viewerUnit,units[i],0x804)==0;
     return n;
 }
+int CorpsesAround(Corpse* out,int max,float range,float centerX,float centerY,uintptr_t viewerUnit) {
+    uintptr_t game=0,self=0;
+    if(!out||max<=0||!LocalServer(game,self))return -1;
+    if(!viewerUnit) viewerUnit = self;
+    uintptr_t buckets[128]{};
+    if(!Read(game+0x4c6*8,buckets))return -1;
+    constexpr int Cap=128;
+    max=std::min(max,Cap);
+    uintptr_t units[Cap]{};float distance[Cap]{};
+    int n=0;unsigned visited=0;
+    const auto checkState=reinterpret_cast<int(*)(uintptr_t,int)>(d2rsig::Addr(CheckStateRva));
+    for(uintptr_t unit:buckets) {
+        for(unsigned chain=0;unit&&chain<256&&visited++<4096;++chain) {
+            uintptr_t next=0;uint32_t header[4]{};Vec pos{};
+            if(!Read(unit+0x158,next)||!Read(unit,header))break;
+            if(header[0]==1&&header[3]==12&&Position(unit,pos)) {
+                const bool inTown=(MonsterFlags(unit)&(kMonNpc|kMonInTown))!=0;
+                const bool consumed=checkState&&(checkState(unit,102)||checkState(unit,108)||checkState(unit,103));
+                if(!inTown&&!consumed) {
+                    const float d=std::hypot(pos.x*.5f-centerX,pos.z*.5f-centerY);
+                    if(d>=0&&d<=range) {
+                        const int slot=framevr::targetcone::NearestSlot(distance,n,max,d);
+                        if(slot>=0){units[slot]=unit;distance[slot]=d;out[slot]={header[2],header[1],pos.x*.5f,pos.z*.5f,unit};if(slot==n)++n;}
+                    }
+                }
+            }
+            unit=next;
+        }
+    }
+    return n;
+}
 int Hostiles(Hostile* out,int max,float range,float& heroX,float& heroY) {
     uintptr_t game=0,self=0;Vec selfPos{};
     if(!LocalServer(game,self)||!Position(self,selfPos))return -1;

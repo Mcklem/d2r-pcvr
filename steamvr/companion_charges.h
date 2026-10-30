@@ -37,6 +37,11 @@ struct TacticalCombatSensors {
     int nearbyHostilesCount = 0;     // Hostiles within 8 sub-tiles
     int meleeAttackersCount = 0;     // Hostiles within 2.5 sub-tiles
     int rangedShootersCount = 0;     // Missile shooters (gloams/archers) > 12 sub-tiles
+    int nearbyCorpsesCount = 0;      // Dead monster bodies in tactical reach
+    float closestCorpseX = 0.0f;     // Subtile X of prioritized corpse
+    float closestCorpseY = 0.0f;     // Subtile Y of prioritized corpse
+    uint32_t closestCorpseId = 0;    // Unit ID of prioritized corpse
+    uintptr_t closestCorpseUnit = 0; // Server unit pointer of prioritized corpse
     bool hasActiveBoss = false;       // Target is Boss/Champion/Unique
     bool targetHasCurse = false;     // Target already afflicted by curse
     bool hasAlliedSummon = false;    // Squad already has active Oak Sage / Wolverine
@@ -338,6 +343,30 @@ inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId
     return true;
 }
 
+// Returns true if the skill requires a dead monster corpse as its execution target.
+inline constexpr bool SkillRequiresCorpse(uint16_t skillId) noexcept {
+    switch (skillId) {
+        case 74:  // Corpse Explosion (Necromancer)
+        case 83:  // Poison Explosion (Necromancer)
+        case 95:  // Revive (Necromancer)
+        case 131: // Find Potion (Barbarian)
+        case 138: // Find Item (Barbarian)
+        case 150: // Grim Ward (Barbarian)
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Helper checking if a collection of charged skills contains any corpse-requiring skills.
+template <typename Range>
+inline bool HasCorpseSkills(const Range& skills) noexcept {
+    for (const auto& s : skills) {
+        if (SkillRequiresCorpse(s.skillId)) return true;
+    }
+    return false;
+}
+
 // Scans equipped items and extracts usable charged skills matching the companion archetype.
 template <typename StatExtractor>
 std::vector<CompanionChargedSkill> ScanCompanionChargedSkills(
@@ -405,6 +434,18 @@ inline bool EvaluateTacticalCharge(
     // Cooldown check
     const uint64_t cooldown = GetTacticalCooldownMs(skill.kind);
     if (skill.lastCastMs > 0 && sensors.nowMs < skill.lastCastMs + cooldown) {
+        return false;
+    }
+
+    // Corpse skill prerequisite check: require at least one valid corpse nearby
+    if (SkillRequiresCorpse(skill.skillId)) {
+        if (sensors.nearbyCorpsesCount == 0) {
+            return false;
+        }
+        if (sensors.hasActiveBoss || sensors.nearbyHostilesCount >= 1 || sensors.isCombatActive) {
+            outReason = "P6 Corpse Detonation (Poison / Corpse Explosion)";
+            return true;
+        }
         return false;
     }
 
