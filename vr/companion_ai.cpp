@@ -796,6 +796,8 @@ int DetourSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, i
         });
 }
 
+static uint64_t s_lastHookAttemptMs = 0;
+
 void EnsureSkillLevelInstalled() noexcept {
     if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) return;
     if (g_skillLevelHooked.load(std::memory_order_relaxed)) return;
@@ -804,6 +806,9 @@ void EnsureSkillLevelInstalled() noexcept {
         d2rsig::Check(abi::InventoryRva, abi::InventorySig, sizeof(abi::InventorySig)) &&
         d2rsig::Check(abi::EquippedRva, abi::EquippedSig, sizeof(abi::EquippedSig)) &&
         d2rsig::Check(abi::GetStatRva, abi::GetStatSig, sizeof(abi::GetStatSig))) {
+        const uint64_t now = GetTickCount64();
+        if (s_lastHookAttemptMs != 0 && (now - s_lastHookAttemptMs < 10000)) return;
+        s_lastHookAttemptMs = now;
         if (d2rsig::Hook(
                 abi::SkillLevelRva,
                 abi::SkillLevelSig,
@@ -1301,9 +1306,9 @@ void ExecuteCompanionTacticalChargesInternal(
         uintptr_t activeSkillNode = lookupFn ? lookupFn(hireling, decision.skillId, -1) : 0;
 
         // If the skill is not in the hireling's native list (vanilla D2R ITEM_EquipItem skips
-        // inserting STAT 107 single skills for non-player units), construct synthetic node
-        // pointing to the compiled in-memory Skills.txt row.
-        if (!activeSkillNode && decision.isEquipmentSkill) {
+        // inserting STAT 107 single skills and STAT 204 charged skills for non-player units),
+        // construct synthetic node pointing to the compiled in-memory Skills.txt row.
+        if (!activeSkillNode) {
             const void* skillRow = nativeui::GetSkillRow(decision.skillId);
             if (skillRow) {
                 s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
@@ -1318,6 +1323,13 @@ void ExecuteCompanionTacticalChargesInternal(
                 s_companionSyntheticNode.owner = -1;
                 activeSkillNode = reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
             }
+        }
+
+        // Safety invariant: NEVER dispatch a skill without a valid skill node in the caster's list.
+        // Native SrvDo routines (such as SkillSor.cpp:148) perform BC_ASSERT(pSkill) on list+0x18.
+        if (!activeSkillNode) {
+            framevr::logging::Write("Frame companion AI: aborted skill cast - no active skill node could be resolved or constructed");
+            return;
         }
 
         // Temporarily supply THIS skill node to the hireling's used skill slot (list + 0x18),
@@ -2659,6 +2671,7 @@ bool IsInTacticalRetreat() {
 
 void ConfigureItemSkills(bool enabled) {
     g_companionItemSkillsEnabled.store(enabled);
+    s_lastHookAttemptMs = 0;
 }
 
 bool IsItemSkillsEnabled() {
