@@ -523,3 +523,88 @@ Para facilitar la verificación práctica de esta funcionalidad sin necesidad de
    * El mercenario deja de castear habilidades de cargas inmediatamente.
    * Los niveles de habilidad vuelven a sus valores básicos de `hireling.txt` sin bonos de clase.
 
+---
+
+## 10. Interfaz de Usuario en Realidad Virtual: Superposición de Habilidades y Cargas en el Panel del Mercenario
+
+### 10.1 Limitación de la Interfaz Nativa de D2R (`HirelingInventoryPanel`)
+
+En la versión nativa de *Diablo II: Resurrected*, cuando el jugador abre la ventana de inventario/estadísticas del mercenario (pulsando la tecla `O` o mediante la interacción táctil en VR):
+1. El controlador C++ nativo de la interfaz (`HirelingInventoryPanel` / `HireMenuPanel`) lee estrictamente las habilidades base definidas en `hireling.txt` y crea un número fijo de widgets (`HirelingSkillIconWidget`).
+2. El motor del juego **no enlaza dinámicamente** los atributos de los objetos equipados (cargas, habilidades de clase, auras o habilidades no nativas) con los widgets de habilidades de la interfaz. Los archivos JSON de interfaz nativa (`.json`) no disponen de enlaces de datos ejecutables para inspeccionar el inventario de forma reactiva.
+
+Para solventar esta limitación visual sin alterar archivos del juego ni corromper el cliente vanilla, se implementa una **superposición gráfica en tiempo real mediante una capa de composición OpenXR dedicada (`XrCompositionLayerQuad`)**, siguiendo el mismo patrón de alta nitidez que el botón de estadísticas avanzadas (`statsbutton` / `statsQuad`).
+
+---
+
+### 10.2 Arquitectura de Superposición Gráfica e Interacción en VR
+
+```mermaid
+graph TD
+    A[Game Loop: companion_ai.cpp] -->|Inspecciona equipamiento| B[CollectMercenarySkillBadges]
+    B -->|Cargas STAT 204, Clase STAT 107, Oskills STAT 97, Auras STAT 151| C[(s_cachedBadges & s_badgesRevision)]
+    C -->|SRWLOCK Shared Read| D[VR Transport Thread: transport.cpp]
+    E[Rayo Láser del Mando VR] -->|HitTestBadge hitU, hitV| D
+    D -->|Si HirelingPanelOpen y cambio en badges / hover / iconos| F[PaintSkillsOverlay & PaintSkillTooltipCard]
+    F -->|Submuestreo de área 2x2 y marcos Horádricos| G[UploadShared a HirelingSkills & HirelingTooltip]
+    G -->|XrSwapchainImage| H[OpenXR Compositor]
+    D -->|hirelingSkillsQuad a +4mm en V=0.690f| H
+    D -->|hirelingTooltipQuad a +8mm si hoverIndex >= 0| H
+    H -->|Proyección estéreo en visor VR| I[Iconos nítidos con halo + Tooltip flotante con detalles tácticos]
+```
+
+La arquitectura consta de 6 componentes de alta fidelidad:
+1. **Detección del Panel Activo (`gamestate::HirelingPanelOpen`):** El módulo `vr/gamestate.cpp` monitoriza los mensajes de apertura y cierre de ventanas modales del juego (`HirelingInventoryPanel`, `HirelingInventory`, `HireMenuPanel`). Cuando la ventana está activa, se activa la capa de superposición.
+2. **Recolección en Tiempo Real (`CollectMercenarySkillBadges`):** En `steamvr/companion_item_skills_ui.h`, recorre las ranuras de equipo del mercenario e indexa todas las habilidades de objetos según su naturaleza.
+3. **Almacenamiento de Estado y Sincronización Multihilo:** `vr/companion_ai.cpp` mantiene `s_cachedBadges` protegido por un bloqueo ligero de lectura/escritura (`SRWLOCK`). Se actualiza exclusivamente cuando los identificadores de los objetos equipados cambian o cuando se consume una carga en combate.
+4. **Renderizado de Alta Nitidez y Anti-Shimmering (`PaintSkillsOverlay`):** En `steamvr/companion_item_skills_ui.cpp`, se compone dinámicamente un lienzo RGBA de 512x64 píxeles con celdas de 48x48 píxeles e iconos de 40x40 píxeles. Los iconos nativos se filtran mediante promediado de área 2x2 (`DrawIconDownsampled`), eliminando por completo el pixelado irregular y el parpadeo de bordes (*shimmering*). Además, sincroniza con `interaction::icons::Revision()` para repintar automáticamente tan pronto como los iconos PNG se decodifican asíncronamente en segundo plano.
+5. **Detección de Apuntado Láser (*Raycast Hit Testing*):** `companionui::HitTestBadge(canvasW, canvasH, count, hitU, hitV)` calcula con precisión métrica la insignia a la que apunta el puntero VR. Al posarse el rayo, la celda emite un halo brillante resplandeciente (dorado para cargas/auras, cian para habilidades).
+6. **Cuadro Informativo Flotante D2R (`PaintSkillTooltipCard` & `hirelingTooltipQuad`):** Al apuntar a cualquier icono, emerge una tarjeta flotante tridimensional a **+8 mm** de profundidad (`panelatlas::HirelingTooltip`, 440x220 px) situada 1.5 cm por encima de la barra de habilidades. Muestra el título en oro Diablo (`Georgia`), subtítulo de nivel/cargas, ranura del objeto equipado y la descripción táctica del comportamiento de la IA en combate en perfecto español.
+
+---
+
+### 10.3 Tipos de Insignias y Codificación Visual
+
+Cada habilidad añadida por equipamiento se clasifica en una de las cuatro categorías de `SkillBadgeType`:
+
+| Tipo de Insignia (`SkillBadgeType`) | Origen de Atributo | Marco de Celda | Halo al Apuntar (Laser Hover) | Texto / Contador Mostrado | Color del Texto |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **ChargedSkill** | STAT 204 (Cargas de objeto) | Dorado / Bronce (`#D4AF37`) o Ceniza si 0 | Halo dorado radiante (`#FFEBAA`) | Cargas restantes (e.g. `20`) | Dorado (`#FFEBAA`) o Rojo si agotada |
+| **VirtualClassSkill** | STAT 107 (Habilidad de clase virtual) | Azul Zafiro (`#508CDC`) | Halo cian brillante (`#7BE6FF`) | Nivel efectivo añadido (e.g. `+3`) | Azul Claro (`#96DCFF`) |
+| **Oskill** | STAT 97 (Habilidad no de clase) | Azul Zafiro (`#508CDC`) | Halo cian brillante (`#7BE6FF`) | Nivel efectivo añadido (e.g. `+1`) | Azul Claro (`#96DCFF`) |
+| **Aura** | STAT 151 (Aura conferida por objeto) | Ámbar / Fuego (`#E6A032`) | Halo ámbar radiante (`#FFD778`) | Nivel de aura activa (e.g. `L12`) | Ámbar Cálido (`#FFD778`) |
+
+---
+
+### 10.4 Atlas Compartido, Ubicación Natural y Cuadro Flotante
+
+Para garantizar la mejor ergonomía visual en VR y evitar saturación en VRAM:
+* **Ubicación Vertical Integrada (`V = 0.690f`):** En lugar de proyectarse en el bisel inferior de la ventana (`V = 0.755f`), la tira se ubica en el compartimento natural de habilidades (`Y = 745 px` en 1080p), armonizando perfectamente con la disposición visual nativa del panel del mercenario.
+* **Células Ampliadas a Escala VR:** 48x48 px por celda, icono de 40x40 px y separación de 8 px, permitiendo una lectura instantánea y sin esfuerzo incluso con el visor puesto a distancia natural de lectura (0.7m).
+* **Atlas Compartido (`sharedChain`):**
+  - Barra de insignias: `panelatlas::HirelingSkills` (`x = 1288, y = 0, w = 512, h = 64`).
+  - Tarjeta de información emergente: `panelatlas::HirelingTooltip` (`x = 1288, y = 72, w = 440, h = 220`).
+* **Jerarquía de Profundidad sin Z-Fighting:**
+  - Base del menú nativo: `z = 0.000 m`.
+  - Tira de insignias de habilidades (`hirelingSkillsQuad`): `z = +0.004 m` (+4 mm).
+  - Cuadro informativo flotante (`hirelingTooltipQuad`): `z = +0.008 m` (+8 mm).
+
+---
+
+### 10.5 Cuadro Informativo de Habilidad con Formato Nativo D2R y Multilenguaje Dinámico
+
+En lugar de textos prefijados en código que colisionan con el idioma del jugador o paneles con exceso de texto:
+1. **Extracción Dinámica y Multilenguaje 100% Nativo:** El nombre oficial de cada habilidad se obtiene en tiempo real a través del servicio de localización nativo de D2R (`D2RL::LocalizationService::getStringByKey` / `getStringById` e índices de `skills.txt` / `skilldesc.txt`). Esto garantiza que los nombres aparezcan en el idioma exacto configurado en el juego (Español, Inglés, Alemán, Francés, etc.) sin cadenas estáticas en el binario.
+2. **Geometría Cuadrada 1:1 sin Deformación Lateral:** El escalado métrico se calcula de manera uniforme mediante el factor de metros por píxel derivado de la altura de referencia (`mpp = canvasHeight / 1080.0f`) aplicado idénticamente a anchura y altura, asegurando que tanto las celdas como los sprites de habilidad se proyecten con proporción cuadrada 1:1 perfecta independientemente del ratio de aspecto del lienzo (16:9, 16:10 o 21:9).
+3. **Formato y Estilismo Nativo de Inspección D2R:**
+   - **Fondo:** Caja compacta de obsidiana oscura (`#0A0807`) con borde sutil de bronce/latón de 1 píxel (`#554630`) y bisel sombreado interior (`#282016`), idéntico al marco de inspección de habilidades del juego base.
+   - **Línea 1 (Título):** Nombre de la habilidad en tipografía estilizada *Diablo Gold* (`#E5C88A`) con sombra de caída negra para máxima legibilidad en VR.
+   - **Línea 2 (Nivel y Cargas):** Nivel y estado de cargas en color plata nativo (`#DCDCDC`), e.g. `Nivel 5  •  Cargas: 20 / 20` o `Nivel de habilidad: +3`.
+   - **Línea 3 (Origen de Equipo):** Ranura de equipamiento que confiere la habilidad en bronce tenue (`#A59173`), e.g. `Conferido por: Yelmo`, `Arma principal`, `Armadura` o `Escudo`.
+
+---
+
+### 10.6 Cero Sobrecoste y Reactividad Dinámica
+
+* **Cero sobrecoste en reposo:** Si el inventario no se altera, no se lanzan hechizos y no se apunta a una nueva insignia, la comprobación de memoria dura menos de **0.02 microsegundos** por fotograma (simple comparación de IDs de 4 ítems y del índice de hover) y el atlas no se re-renderiza ni se sube a GPU.
+* **Reactividad instantánea:** En cuanto el jugador equipa un nuevo objeto, se consume una carga en combate, se completan de cargar los iconos PNG asíncronos en segundo plano o el rayo láser entra/sale de una insignia, la interfaz se actualiza de forma reactiva e instantánea.

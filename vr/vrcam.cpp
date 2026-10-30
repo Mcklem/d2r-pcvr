@@ -3755,7 +3755,7 @@ bool RulesAimCast() {
 namespace mobaim {
 bool Wanted() {
     const bool tacticalActive = companionai::IsTacticalCommandsEnabled();
-    return g_enabled.load() && g_inWorld.load() &&
+    return g_enabled.load() && g_inWorld.load() && d2rcam::InWorld() &&
         (TargetHighlightOn() || SpellsLocked() || BowSkillsLocked() ||
          GroundAimMode() == 2 || tacticalActive);
 }
@@ -8799,7 +8799,7 @@ bool OutlineWanted() {
     aimtargets::Shown shown[2];
     const bool tacticalActive = companionai::IsTacticalCommandsEnabled() &&
         (companionai::GetActiveTacticalOrder().type == framevr::companionai::TacticalOrderType::PrioritizeEnemy);
-    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() &&
+    return g_enabled.load() && g_inWorld.load() && d2rcam::InWorld() && !gamestate::MenuOpen() &&
         (TargetHighlightOn() || tacticalActive) && aimtargets::ShownTargets(shown) > 0;
 #else
     return false;
@@ -8809,7 +8809,7 @@ bool OutlineWanted() {
 bool RingWanted() {
     const bool tacticalActive = companionai::IsTacticalCommandsEnabled() &&
         (companionai::GetActiveTacticalOrder().type == framevr::companionai::TacticalOrderType::MoveAndHold);
-    return g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() &&
+    return g_enabled.load() && g_inWorld.load() && d2rcam::InWorld() && !gamestate::MenuOpen() &&
         (AimOn(framevr::settings::LandingCircles) || tacticalActive) &&
         framevr::telegraph::AnyOn(framevr::telegraph::Current().Get(), GetTickCount64());
 }
@@ -9975,7 +9975,7 @@ DWORD WINAPI UpdateThread(void*) {
         AfrQuietWhenOff();
         if (nowMs >= nextState) {   // what the hero holds, 5 times a second
             nextState = nowMs + 200;
-            gamestate::Tick();
+            if (g_inWorld.load() && d2rcam::InWorld()) gamestate::Tick();
             // A weapon change rebuilds the hero's model: the matrix the facing was
             // read from stays where it was and reads yaw 0 (log 2026-10-04: "model
             // 0.0", "8.00 above the look-at"), and the doll stopped following the

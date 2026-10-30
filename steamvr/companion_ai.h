@@ -6,6 +6,7 @@
 #include <cstring>
 #include <span>
 #include <vector>
+#include "companion_item_skills_ui.h"
 
 namespace framevr::companionai {
 
@@ -1296,6 +1297,8 @@ inline bool RestoreHirelingBaselines(std::span<uint8_t> table, size_t rowCount, 
     }
     return true;
 }
+
+void GetLiveMercenarySkillBadges(std::vector<companionui::MercenarySkillBadge>& out, uint64_t& rev);
 
 } // namespace framevr::companionai
 

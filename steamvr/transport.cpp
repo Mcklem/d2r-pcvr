@@ -72,6 +72,8 @@
 #include "../vr/prop_scan.h"
 #include "elemental_hands_renderer.h"
 #include "../vr/companion_ai.h"
+#include "companion_ai.h"
+#include "companion_item_skills_ui.h"
 #include "telegraph.h"
 #include "../vr/target_lock.h" 
 #include "vr_settings_ui.h"
@@ -108,6 +110,7 @@
 #include "aim_rules.h"
 #include "toss.h"
 
+namespace gamestate {bool HirelingPanelOpen();}
 namespace gamestate {uint32_t WeaponType();uint32_t HandsKey();uint32_t WeaponSet();uint32_t WeaponClass();uint32_t TwoHanded();uint64_t LocalPlayer();uint32_t MenuEpoch();}
 namespace gamecmd {void RequestPotion(int slot);void CancelPotion();}
 namespace gamestate {void MenuMap(bool wanted);uint32_t QuestNotices();bool NoticePanelOpen();bool NoticeText(int kind,char* out,uint32_t size);}
@@ -391,6 +394,11 @@ settings::InputGate settingsInputGate;
 settings::Hit settingsHover;
 std::atomic<bool> settingsOpen{false};
 bool settingsAtlasPending=false,settingsImageReady=false;
+bool hirelingSkillsAtlasPending=false,hirelingSkillsImageReady=false;
+bool hirelingTooltipAtlasPending=false,hirelingTooltipImageReady=false;
+int hirelingSkillsHoverIndex=-1,hirelingSkillsPaintedHover=-1;
+uint64_t hirelingSkillsPaintedRev=~0ull,hirelingSkillsPaintedIconsRev=~0ull;
+std::vector<framevr::companionui::MercenarySkillBadge> hirelingBadges;
 uint64_t settingsSession=0;
 // The redesign's pointing: the filter turns the laser and the right trigger
 // into hover, pressed and clicks; the card focus picks the help card's
@@ -1867,6 +1875,11 @@ void MenuPointer(const menus::Pad& controls) {
     const bool onStats=statsShown&&aimTracked&&pointerHit&&!(mouseDown||rightMouseDown)&&
         statsbutton::Hit(statsSpot,surface.width,surface.height,hit.u,hit.v);
     statsLit=onStats;
+    // Mercenary skill badges hover detection
+    hirelingSkillsHoverIndex = -1;
+    if(spatialReady && pointerHit && gamestate::HirelingPanelOpen() && !hirelingBadges.empty()) {
+        hirelingSkillsHoverIndex = companionui::HitTestBadge(surface.width, surface.height, static_cast<int>(hirelingBadges.size()), hit.u, hit.v);
+    }
     if(statsPress.Step(onStats&&uiActive,pressed,GetTickCount64()))
         Say(focused?"Frame panels: Advanced Stats button - View sent to the game":"Frame panels: Advanced Stats button - View sent (game window not focused)");
     const bool wasNative=menuNavigation.Native();
@@ -3325,6 +3338,41 @@ void Input() {
         }
         if(strainOutput.clearedNow)Say("Frame guard strain: cleared");
         StepCompanionTacticalGestures(now, Float(trigger, 0), Float(trigger, 1));
+        // Mercenary item skills overlay upload to panelatlas::HirelingSkills and tooltip
+        if(sharedChain && gamestate::HirelingPanelOpen()) {
+            std::vector<companionui::MercenarySkillBadge> liveBadges;
+            uint64_t rev = 0;
+            framevr::companionai::GetLiveMercenarySkillBadges(liveBadges, rev);
+            const uint64_t iconsRev = interaction::icons::Revision();
+            const bool badgesChanged = (rev != hirelingSkillsPaintedRev);
+            const bool iconsChanged = (iconsRev != hirelingSkillsPaintedIconsRev);
+            const bool hoverChanged = (hirelingSkillsHoverIndex != hirelingSkillsPaintedHover);
+
+            if((badgesChanged || iconsChanged || hoverChanged || !hirelingSkillsImageReady) && !hirelingSkillsAtlasPending && atlasUploads.size() < 3) {
+                hirelingBadges = std::move(liveBadges);
+                hirelingSkillsPaintedRev = rev;
+                hirelingSkillsPaintedIconsRev = iconsRev;
+                hirelingSkillsPaintedHover = hirelingSkillsHoverIndex;
+                const auto pixels = companionui::PaintSkillsOverlay(hirelingBadges, panelatlas::HirelingSkillsWidth, panelatlas::HirelingSkillsHeight, hirelingSkillsHoverIndex);
+                if(!pixels.empty() && UploadShared(panelatlas::HirelingSkills, pixels, &hirelingSkillsAtlasPending)) {
+                    // Overlay scheduled
+                }
+            }
+
+            // Update tooltip card if a badge is hovered
+            if(hirelingSkillsHoverIndex >= 0 && hirelingSkillsHoverIndex < static_cast<int>(hirelingBadges.size())) {
+                static int lastTooltipIndex = -1;
+                static uint64_t lastTooltipRev = ~0ull;
+                if((hirelingSkillsHoverIndex != lastTooltipIndex || rev != lastTooltipRev || !hirelingTooltipImageReady) && !hirelingTooltipAtlasPending && atlasUploads.size() < 3) {
+                    lastTooltipIndex = hirelingSkillsHoverIndex;
+                    lastTooltipRev = rev;
+                    const auto tooltipPixels = companionui::PaintSkillTooltipCard(hirelingBadges[hirelingSkillsHoverIndex], panelatlas::HirelingTooltipWidth, panelatlas::HirelingTooltipHeight);
+                    if(!tooltipPixels.empty() && UploadShared(panelatlas::HirelingTooltip, tooltipPixels, &hirelingTooltipAtlasPending)) {
+                        // Tooltip scheduled
+                    }
+                }
+            }
+        }
         // Consume completed images before scheduling more work. Never replace an
         // in-flight request: at <=25 FPS that discarded every animated result.
         if(in.session!=strainPaintSession||!strainOutput.visible) {
@@ -5274,10 +5322,10 @@ void EndPair() {
     // The shared panels' pictures uploaded this frame, all in one copy (panelatlas).
     if(sharedDirty) {
         const bool flushed=FlushShared();
-        for(auto* p:{&settingsAtlasPending,&bloodAtlasPending,&strainAtlasPending,&bowLaserAtlasPending,&noticeAtlasPending})if(*p) {
+        for(auto* p:{&settingsAtlasPending,&bloodAtlasPending,&strainAtlasPending,&bowLaserAtlasPending,&noticeAtlasPending,&hirelingSkillsAtlasPending,&hirelingTooltipAtlasPending})if(*p) {
             *p=false;
             if(p==&settingsAtlasPending)settingsImageReady=flushed;else if(p==&bloodAtlasPending)bloodImageReady=flushed;
-            else if(p==&strainAtlasPending)strainImageReady=flushed;else if(p==&bowLaserAtlasPending)bowLaserImageReady=flushed;else noticeImageReady=flushed;
+            else if(p==&strainAtlasPending)strainImageReady=flushed;else if(p==&bowLaserAtlasPending)bowLaserImageReady=flushed;else if(p==&hirelingSkillsAtlasPending)hirelingSkillsImageReady=flushed;else if(p==&hirelingTooltipAtlasPending)hirelingTooltipImageReady=flushed;else noticeImageReady=flushed;
         }
     }
     // The native menus closed short of swapchains: their surface goes back for the map.
@@ -5524,6 +5572,24 @@ void EndPair() {
         const auto p=V(at.position)+math::Rotate(q,{spot.x,spot.y,.004f});
         motionQuad(statsQuad,XrPose({p,q}),spot.size,spot.size,Rect(statsLit?panelatlas::StatsLit:panelatlas::Stats),staticChain);
         statsQuad.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied (SetupStatic)
+    }
+    XrCompositionLayerQuad hirelingSkillsQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad hirelingTooltipQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    if(book.subImage.swapchain && sharedChain && hirelingSkillsImageReady && gamestate::HirelingPanelOpen() && !hirelingBadges.empty()) {
+        const auto size = UiSurfaceSize();
+        const auto spot = companionui::PlaceOverlay(size.width, size.height, static_cast<int>(hirelingBadges.size()));
+        const auto at = UiSurfacePose();
+        const auto q = Q(at.orientation);
+        const auto p = V(at.position) + math::Rotate(q, {spot.x, spot.y, .004f});
+        const auto sub = companionui::SubImageRegion(panelatlas::HirelingSkills, static_cast<int>(hirelingBadges.size()));
+        motionQuad(hirelingSkillsQuad, XrPose({p, q}), spot.width, spot.height, {{sub.x, sub.y}, {sub.width, sub.height}}, sharedChain);
+
+        if(hirelingSkillsHoverIndex >= 0 && hirelingSkillsHoverIndex < static_cast<int>(hirelingBadges.size()) && hirelingTooltipImageReady) {
+            const auto tSpot = companionui::PlaceTooltip(size.width, size.height, spot);
+            const auto tP = V(at.position) + math::Rotate(q, {tSpot.x, tSpot.y, .008f});
+            const auto tSub = companionui::TooltipSubImageRegion(panelatlas::HirelingTooltip);
+            motionQuad(hirelingTooltipQuad, XrPose({tP, q}), tSpot.width, tSpot.height, {{tSub.x, tSub.y}, {tSub.width, tSub.height}}, sharedChain);
+        }
     }
     XrCompositionLayerQuad settingsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};
     if(layer&&(settingsModel.open||bodyCalibration.Active())&&settingsImageReady){
@@ -6143,6 +6209,7 @@ void Shutdown(bool preserveResolution) {
     noticeWatch={};noticeCards.Clear();noticeCard={};noticePaintRequest=noticeRequestedSequence=noticePaintedSequence=0;noticeAtlasPending=noticeImageReady=false;
     heartStream.Stop();heartPlaying=false;heartLevel.Reset();heartAt=0;heartHush.Reset();heartHealth=-1;
     guardStrain.Reset();strainOutput={};strainPaintKey=~0ull;strainPaintSession=0;strainPaintAt=0;strainAtlasPending=strainImageReady=strainSlotReported=false;
+    hirelingSkillsAtlasPending=hirelingSkillsImageReady=false;hirelingTooltipAtlasPending=hirelingTooltipImageReady=false;hirelingSkillsPaintedRev=hirelingSkillsPaintedIconsRev=~0ull;hirelingSkillsHoverIndex=hirelingSkillsPaintedHover=-1;hirelingBadges.clear();
     if(staticChain&&pDestroySwapchain)pDestroySwapchain(staticChain);staticChain=pointerChain=leatherChain=XR_NULL_HANDLE;statsIconReady=statsShown=statsLit=false;
     if(aimSpace&&pDestroySpace)pDestroySpace(aimSpace);aimSpace=XR_NULL_HANDLE;
     if(leftAimSpace&&pDestroySpace)pDestroySpace(leftAimSpace);leftAimSpace=XR_NULL_HANDLE;

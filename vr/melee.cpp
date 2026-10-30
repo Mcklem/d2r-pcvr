@@ -1249,7 +1249,11 @@ int HostilesAround(Hostile* out,int max,float range,float centerX,float centerY,
             unit=next;
         }
     }
-    for(int i=0;i<n;++i)out[i].clear=reinterpret_cast<int(*)(uintptr_t,uintptr_t,int)>(d2rsig::Addr(LineRva))(viewerUnit,units[i],0x804)==0;
+    const auto lineFn=reinterpret_cast<int(*)(uintptr_t,uintptr_t,int)>(d2rsig::Addr(LineRva));
+    constexpr int MaxLineChecks = 8;
+    const int checks = std::min(n, MaxLineChecks);
+    for(int i=0;i<checks;++i)out[i].clear=lineFn&&lineFn(viewerUnit,units[i],0x804)==0;
+    for(int i=checks;i<n;++i)out[i].clear=false;
     return n;
 }
 int CorpsesAround(Corpse* out,int max,float range,float centerX,float centerY,uintptr_t viewerUnit) {

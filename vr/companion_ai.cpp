@@ -9,6 +9,7 @@
 #include "../steamvr/companion_ai.h"
 #include "../steamvr/companion_skills.h"
 #include "../steamvr/companion_charges.h"
+#include "../steamvr/companion_item_skills_ui.h"
 #include "../steamvr/telegraph.h"
 #include "../steamvr/callback_ticket.h"
 #include "../steamvr/logging.h"
@@ -18,6 +19,7 @@
 #include "melee.h"
 #include "memory.h"
 #include "sigscan.h"
+#include "native_ui.h"
 
 namespace companionai {
 namespace {
@@ -58,6 +60,18 @@ std::atomic<bool> g_skillLevelHooked{false};
 std::atomic<bool> g_companionItemSkillsEnabled{true};
 std::atomic<bool> g_companionConsumeItemCharges{false};
 std::atomic<bool> g_nativeMoveBlockedWhileMoving{false};
+static SRWLOCK s_badgesLock = SRWLOCK_INIT;
+static std::vector<framevr::companionui::MercenarySkillBadge> s_cachedBadges;
+static std::atomic<uint64_t> s_badgesRevision{1};
+
+void ClearCachedSkillBadges() {
+    AcquireSRWLockExclusive(&s_badgesLock);
+    if (!s_cachedBadges.empty()) {
+        s_cachedBadges.clear();
+        s_badgesRevision.fetch_add(1, std::memory_order_release);
+    }
+    ReleaseSRWLockExclusive(&s_badgesLock);
+}
 std::atomic<bool> g_pendingRegroupMove{false};
 thread_local bool g_inCommandedMove = false;
 thread_local bool g_inCommandedAction = false;
@@ -272,6 +286,7 @@ void LogTacticalTransition(
 }
 
 void InvalidateTacticalContextOnMissingUnit(uintptr_t playerRoom) noexcept {
+    ClearCachedSkillBadges();
     const auto nowMs = GetTickCount64();
     framevr::companionai::TacticalVoiceCue unusedCue = framevr::companionai::TacticalVoiceCue::None;
     framevr::companionai::TacticalCommandState prevState{};
@@ -914,10 +929,8 @@ void ExecuteCompanionTacticalChargesInternal(
 
         for (size_t sIdx = 0; sIdx < slotCount; ++sIdx) {
             const auto& slot = slots[sIdx];
-            bool foundChargeOnItem = false;
 
             auto processHit = [&](uint16_t p, int32_t statVal) {
-                foundChargeOnItem = true;
                 char hitBuf[256];
                 std::snprintf(hitBuf, sizeof hitBuf,
                     "Frame companion AI: [STAT 204 ITEM HIT] loc=%d itemId=%u param=%u (0x%04X) val=%d (0x%08X)",
@@ -968,82 +981,55 @@ void ExecuteCompanionTacticalChargesInternal(
                 }
             };
 
-            // Phase 1: Targeted candidate skill probe (Levels 1..25 and 30,33 with both D2 standard and 10-bit packing)
+            // Targeted candidate skill probe (Levels 1..25 and 30,33 with early exit per skill)
             for (uint16_t cSkill : CandidateSkills) {
+                if (!framevr::companionai::IsSkillUsableByCompanion(vclass, cSkill)) {
+                    continue;
+                }
+
                 // Direct skill
                 int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, cSkill);
                 if (v > 0) processHit(cSkill, v);
 
+                bool foundLevel = false;
                 for (uint8_t lvl = 1; lvl <= 25; ++lvl) {
                     const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
                     v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
-                    if (v > 0) processHit(pStd, v);
-
-
+                    if (v > 0) {
+                        processHit(pStd, v);
+                        foundLevel = true;
+                        break;
+                    }
                 }
-                for (uint8_t lvl : {30, 33}) {
-                    const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
-                    v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
-                    if (v > 0) processHit(pStd, v);
-                }
-            }
-
-            // Phase 2: If no charge found via candidates, probe general skill IDs 1..350 for levels 1..10
-            if (!foundChargeOnItem) {
-                for (uint16_t sk = 1; sk <= 350; ++sk) {
-                    int32_t v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, sk);
-                    if (v > 0) processHit(sk, v);
-                    for (uint8_t lvl = 1; lvl <= 20; ++lvl) {
-                        const uint16_t pStd = framevr::companionai::PackChargedSkillParam(sk, lvl);
+                if (!foundLevel) {
+                    for (uint8_t lvl : {30, 33}) {
+                        const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
                         v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
-                        if (v > 0) processHit(pStd, v);
+                        if (v > 0) {
+                            processHit(pStd, v);
+                            break;
+                        }
                     }
                 }
             }
-
-            // Phase 3: Diagnostic stat dump if item has no recognized charges
-            if (!foundChargeOnItem) {
-                const int def = statFn(slot.itemUnit, 31, 0);
-                const int dur = statFn(slot.itemUnit, 72, 0);
-                const int maxdur = statFn(slot.itemUnit, 73, 0);
-
-                char statDump[256];
-                int offset = std::snprintf(statDump, sizeof statDump,
-                    "Frame companion AI: [ITEM NO 204] loc=%d itemId=%u def=%d dur=%d/%d stats:",
-                    slot.bodyLocation, slot.itemId, def, dur, maxdur);
-
-                for (int s = 0; s < 360 && offset < (int)sizeof(statDump) - 20; ++s) {
-                    const int sv = statFn(slot.itemUnit, s, 0);
-                    if (sv != 0 && s != 31 && s != 72 && s != 73) {
-                        offset += std::snprintf(statDump + offset, sizeof(statDump) - offset, " %d=%d", s, sv);
-                    }
-                }
-                framevr::logging::Write(statDump);
-            }
         }
 
-        // Targeted probe on hireling unit as well (fast candidate check)
-        for (uint16_t cSkill : CandidateSkills) {
-            int32_t v = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, cSkill);
-            if (v > 0) {
-                char hitBuf[256];
-                std::snprintf(hitBuf, sizeof hitBuf,
-                    "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u val=%d",
-                    compHeader[2], cSkill, v);
-                framevr::logging::Write(hitBuf);
-            }
-            for (uint8_t lvl = 1; lvl <= 25; ++lvl) {
-                const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);
-                v = statFn(hireling, framevr::companionai::ItemStat::ChargedSkill, pStd);
-                if (v > 0) {
-                    char hitBuf[256];
-                    std::snprintf(hitBuf, sizeof hitBuf,
-                        "Frame companion AI: [STAT 204 HIRELING HIT] hireling=%u param=%u val=%d",
-                        compHeader[2], pStd, v);
-                    framevr::logging::Write(hitBuf);
-                }
-            }
-        }
+        // Update live mercenary UI badges (passing preDiscoveredCharges to avoid re-scanning)
+        auto newBadges = framevr::companionui::CollectMercenarySkillBadges(
+            vclass,
+            std::span<const framevr::companionai::EquippedItemSlot>(slots.data(), slotCount),
+            [&](uintptr_t itm, int st, int pr) {
+                return statFn(itm, st, pr);
+            },
+            [](int id) {
+                return nativeui::SkillName(id);
+            },
+            s_cachedCharges
+        );
+        AcquireSRWLockExclusive(&s_badgesLock);
+        s_cachedBadges = std::move(newBadges);
+        s_badgesRevision.fetch_add(1, std::memory_order_release);
+        ReleaseSRWLockExclusive(&s_badgesLock);
 
         static size_t s_lastLoggedChargeCount = 999;
         if (s_cachedCharges.size() != s_lastLoggedChargeCount || nowMs - s_lastDiagScanLogMs > 10000) {
@@ -1099,20 +1085,22 @@ void ExecuteCompanionTacticalChargesInternal(
             if (d > 12.0f) sensors.rangedShootersCount++;
 
             // Boss / Elite detection
-            const uint32_t clsId = hostiles[i].classId;
-            if (clsId == 156 || clsId == 211 || clsId == 242 || clsId == 243 || clsId == 544) {
-                sensors.hasActiveBoss = true;
-            } else if (game && hostiles[i].id) {
-                uintptr_t u = melee::ServerUnit(game, 1, hostiles[i].id);
-                uintptr_t mdata = 0;
-                if (u && Read(u + 0x10, mdata) && mdata) {
-                    uint8_t spec = 0;
-                    if (Read(mdata + 0x1a, spec) && (spec & (0x02 | 0x04 | 0x08))) {
-                        sensors.hasActiveBoss = true;
-                    }
-                    uintptr_t mrow = 0; uint32_t mflags = 0;
-                    if (Read(mdata, mrow) && mrow && Read(mrow + 0x3c, mflags) && (mflags & (1u << 7))) {
-                        sensors.hasActiveBoss = true;
+            if (!sensors.hasActiveBoss) {
+                const uint32_t clsId = hostiles[i].classId;
+                if (clsId == 156 || clsId == 211 || clsId == 242 || clsId == 243 || clsId == 544) {
+                    sensors.hasActiveBoss = true;
+                } else if (game && hostiles[i].id) {
+                    uintptr_t u = melee::ServerUnit(game, 1, hostiles[i].id);
+                    uintptr_t mdata = 0;
+                    if (u && Read(u + 0x10, mdata) && mdata) {
+                        uint8_t spec = 0;
+                        if (Read(mdata + 0x1a, spec) && (spec & (0x02 | 0x04 | 0x08))) {
+                            sensors.hasActiveBoss = true;
+                        }
+                        uintptr_t mrow = 0; uint32_t mflags = 0;
+                        if (Read(mdata, mrow) && mrow && Read(mrow + 0x3c, mflags) && (mflags & (1u << 7))) {
+                            sensors.hasActiveBoss = true;
+                        }
                     }
                 }
             }
@@ -1245,6 +1233,15 @@ void ExecuteCompanionTacticalChargesInternal(
                                 setStatFn(itmUnit, framevr::companionai::ItemStat::ChargedSkill, val, param);
                             }
                         }
+                        AcquireSRWLockExclusive(&s_badgesLock);
+                        for (auto& b : s_cachedBadges) {
+                            if (b.itemId == s.itemId && b.skillId == s.skillId && b.type == framevr::companionui::SkillBadgeType::ChargedSkill) {
+                                b.currentCharges = s.currentCharges;
+                                break;
+                            }
+                        }
+                        s_badgesRevision.fetch_add(1, std::memory_order_release);
+                        ReleaseSRWLockExclusive(&s_badgesLock);
                     }
                     break;
                 }
@@ -2463,4 +2460,17 @@ void ExecuteCompanionTacticalCharges(
         compPos, plyrPos, nowMs, inRetreat, isTacticalActive);
 }
 
+void GetLiveSkillBadges(std::vector<framevr::companionui::MercenarySkillBadge>& out, uint64_t& rev) {
+    AcquireSRWLockShared(&s_badgesLock);
+    rev = s_badgesRevision.load(std::memory_order_acquire);
+    out = s_cachedBadges;
+    ReleaseSRWLockShared(&s_badgesLock);
+}
+
 } // namespace companionai
+
+namespace framevr::companionai {
+void GetLiveMercenarySkillBadges(std::vector<companionui::MercenarySkillBadge>& out, uint64_t& rev) {
+    ::companionai::GetLiveSkillBadges(out, rev);
+}
+}

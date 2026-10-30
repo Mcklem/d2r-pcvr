@@ -118,6 +118,18 @@ uintptr_t FakeEquipped(uintptr_t inv, int bodyLoc) {
     return 0;
 }
 
+} // anonymous namespace
+
+namespace nativeui {
+std::string SkillName(int id) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "Skill %d", id);
+    return buf;
+}
+}
+
+namespace {
+
 int FakeGetStat(uintptr_t item, int stat, int param) {
     if (!item) return 0;
     const auto* itm = reinterpret_cast<const TestMockItem*>(item);
