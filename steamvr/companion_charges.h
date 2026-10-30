@@ -59,6 +59,7 @@ struct TacticalCastDecision {
     int bodyLocation = 0;
     TacticalSkillKind kind = TacticalSkillKind::None;
     const char* reason = "";
+    bool isEquipmentSkill = false;
 };
 
 // Slot metadata for inventory item traversal.
@@ -642,6 +643,7 @@ inline TacticalCastDecision SelectBestTacticalCharge(
                 decision.bodyLocation = skill.bodyLocation;
                 decision.kind = skill.kind;
                 decision.reason = reason;
+                decision.isEquipmentSkill = skill.isEquipmentSkill;
                 return decision;
             }
         }

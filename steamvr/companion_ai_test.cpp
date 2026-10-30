@@ -312,10 +312,7 @@ bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
         if (original) *original = reinterpret_cast<void*>(&FakeOriginalSkillLevel);
         return true;
     }
-    if (rva == companionai::abi::SkillRva) {
-        if (original) *original = reinterpret_cast<void*>(&FakeOriginalSkillLookup);
-        return true;
-    }
+
     return false;
 }
 uint64_t Rva(uint64_t rva) { return rva; }
@@ -1960,12 +1957,9 @@ int main() {
                 assert(g_lastDispatchedSkill == 26);
                 assert(g_lastDispatchedLevel == 4);
 
-                // Step 2: Test DetourSkill directly on unit
-                uintptr_t detourNode = companionai::DetourSkill(mercUnitPtr, 26, -1);
-                assert(detourNode != 0);
-                auto* synNode = reinterpret_cast<companionai::SyntheticCompanionSkillNode*>(detourNode);
-                assert(synNode->level == 4);
-                assert(synNode->row != 0);
+                // Step 2: Verify synthetic node was populated with Strafe row and level
+                assert(companionai::s_companionSyntheticNode.level == 4);
+                assert(companionai::s_companionSyntheticNode.row != 0);
 
                 // Step 3: Simulate mercenary death / revival:
                 // ClearCachedSkillBadges() is called when hireling disappears

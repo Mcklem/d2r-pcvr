@@ -835,57 +835,6 @@ struct alignas(16) SyntheticCompanionSkillNode {
 
 static SyntheticCompanionSkillNode s_companionSyntheticNode{};
 using SkillLookupFn = uintptr_t(*)(uintptr_t unit, int skillId, int owner);
-static SkillLookupFn originalSkill = nullptr;
-static std::atomic<bool> g_skillHooked{false};
-
-uintptr_t __fastcall DetourSkill(uintptr_t unit, int skillId, int owner) {
-    uintptr_t res = originalSkill ? originalSkill(unit, skillId, owner) : 0;
-    if (res) return res;
-
-    if (!unit || skillId <= 0) return 0;
-
-    uint32_t header[3]{};
-    if (!Read(unit, header) || header[0] != 1) return 0; // dwType == 1 (UNIT_MONSTER)
-
-    const uint16_t classId = static_cast<uint16_t>(header[1]);
-    const auto vclass = framevr::companionai::GetVirtualPlayerClass(classId);
-    if (vclass == framevr::companionai::VirtualPlayerClass::None) return 0;
-
-    for (const auto& s : s_cachedCharges) {
-        if (s.skillId == static_cast<uint16_t>(skillId) && s.isEquipmentSkill) {
-            const void* skillRow = nativeui::GetSkillRow(skillId);
-            if (skillRow) {
-                s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
-                s_companionSyntheticNode.next = 0;
-                s_companionSyntheticNode.flags = 1;
-                s_companionSyntheticNode.hitCount = 0;
-                s_companionSyntheticNode.targetType = 0;
-                s_companionSyntheticNode.targetId = 0;
-                s_companionSyntheticNode.level = s.level > 0 ? s.level : 1;
-                return reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
-            }
-            break;
-        }
-    }
-    return 0;
-}
-
-void EnsureSkillInstalled() noexcept {
-    if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) return;
-    if (g_skillHooked.load(std::memory_order_relaxed)) return;
-
-    if (d2rsig::Check(abi::SkillRva, abi::SkillSig, sizeof(abi::SkillSig))) {
-        if (d2rsig::Hook(
-                abi::SkillRva,
-                abi::SkillSig,
-                sizeof(abi::SkillSig),
-                reinterpret_cast<void*>(&DetourSkill),
-                reinterpret_cast<void**>(&originalSkill))) {
-            g_skillHooked.store(true, std::memory_order_relaxed);
-            framevr::logging::Write("Frame companion AI: verified and hooked native skill node lookup (0x33dcd0) for companion equipment skills");
-        }
-    }
-}
 
 void EnsureServerMoveInstalled() noexcept {
     if (!serverMoveToCoordFn && d2rsig::Check(abi::ServerMoveToCoordRva, abi::ServerMoveToCoordSig, sizeof(abi::ServerMoveToCoordSig))) {
@@ -1332,9 +1281,26 @@ void ExecuteCompanionTacticalChargesInternal(
     const auto dispatchFn = reinterpret_cast<int(__fastcall*)(uintptr_t, uintptr_t, int, int, int, int, int)>(d2rsig::Addr(abi::DispatchRva));
 
     if (startFn && dispatchFn) {
-        // Resolve skill node (either native charge node or synthetic equipment skill node via DetourSkill)
+        // Resolve skill node: check native hireling skill list first (charges / native skills)
         const auto lookupFn = reinterpret_cast<SkillLookupFn>(d2rsig::Addr(abi::SkillRva));
-        const uintptr_t activeSkillNode = lookupFn ? lookupFn(hireling, decision.skillId, -1) : 0;
+        uintptr_t activeSkillNode = lookupFn ? lookupFn(hireling, decision.skillId, -1) : 0;
+
+        // If the skill is not in the hireling's native list (vanilla D2R ITEM_EquipItem skips
+        // inserting STAT 107 single skills for non-player units), construct synthetic node
+        // pointing to the compiled in-memory Skills.txt row.
+        if (!activeSkillNode && decision.isEquipmentSkill) {
+            const void* skillRow = nativeui::GetSkillRow(decision.skillId);
+            if (skillRow) {
+                s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
+                s_companionSyntheticNode.next = 0;
+                s_companionSyntheticNode.flags = 1;
+                s_companionSyntheticNode.hitCount = 0;
+                s_companionSyntheticNode.targetType = 0;
+                s_companionSyntheticNode.targetId = 0;
+                s_companionSyntheticNode.level = decision.level > 0 ? decision.level : 1;
+                activeSkillNode = reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
+            }
+        }
 
         // Temporarily supply THIS skill node to the hireling's used skill slot (list + 0x18),
         // exactly matching how spells.cpp and melee.cpp prepare the caster for StartRva and DispatchRva
@@ -1426,7 +1392,6 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
 
     EnsureServerMoveInstalled();
     EnsureSkillLevelInstalled();
-    EnsureSkillInstalled();
     uintptr_t game = 0, player = 0;
     if (!melee::LocalServer(game, player)) {
         InvalidateTacticalContextOnMissingUnit(0);
@@ -2132,7 +2097,6 @@ void Install() {
     }
     EnsureServerMoveInstalled();
     EnsureSkillLevelInstalled();
-    EnsureSkillInstalled();
 
     if (mode && relocateFn && roomPointFn) {
         g_installed.store(true);
