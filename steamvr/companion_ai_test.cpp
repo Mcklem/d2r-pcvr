@@ -84,14 +84,6 @@ int FakeAttack(uintptr_t game, uintptr_t unit, int skillId, int arg4) {
     return 1;
 }
 
-int fakeOriginalSkillLevelCalls = 0;
-int fakeBaseSkillLevel = 10;
-int FakeOriginalSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, int unk) {
-    (void)unit; (void)skillNode; (void)bIncludeBonuses; (void)unk;
-    ++fakeOriginalSkillLevelCalls;
-    return fakeBaseSkillLevel;
-}
-
 struct TestMockItem {
     uint32_t header[3] = { 4, 0, 100 }; // dwType = 4 (UNIT_ITEM)
     std::vector<std::tuple<int, int, int>> stats; // stat, param, value
@@ -104,6 +96,34 @@ struct TestMockItem {
 };
 
 std::unordered_map<int, TestMockItem> g_testEquippedSlots;
+
+int fakeOriginalSkillLevelCalls = 0;
+int fakeBaseSkillLevel = 10;
+int FakeOriginalSkillLevel(uintptr_t unit, uintptr_t skillNode, int bIncludeBonuses, int unk) {
+    (void)unit; (void)unk;
+    ++fakeOriginalSkillLevelCalls;
+    if (!bIncludeBonuses) return fakeBaseSkillLevel;
+    int bonus = 0;
+    // Native D2 SKILLS_GetBonusSkillLevel already adds stat 107 (SingleSkill) for monster units
+    uint16_t skillId = 0;
+    if (skillNode) {
+        uintptr_t rowPtr = 0;
+        if (framevr::ReadMemory(&rowPtr, reinterpret_cast<const void*>(skillNode), sizeof(rowPtr)) && rowPtr) {
+            int16_t sid = 0;
+            if (framevr::ReadMemory(&sid, reinterpret_cast<const void*>(rowPtr), sizeof(sid))) {
+                skillId = static_cast<uint16_t>(sid);
+            }
+        }
+    }
+    for (const auto& [loc, item] : g_testEquippedSlots) {
+        for (const auto& [st, pr, val] : item.stats) {
+            if (st == framevr::companionai::ItemStat::SingleSkill && pr == skillId) {
+                bonus += val;
+            }
+        }
+    }
+    return fakeBaseSkillLevel + bonus;
+}
 
 uintptr_t FakeInventory(uintptr_t unit, const char*, int) {
     return unit ? 0x90000 : 0;
@@ -1748,7 +1768,7 @@ int main() {
 
             g_testEquippedSlots.clear();
             g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 1, 2 } }; // +2 Sorceress
-            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 5, 3 } };   // +3 Cold (tab 5)
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 10, 3 } };  // +3 Cold (tab key 10 = 1*8 + 2)
 
             // 12 + 2 + 3 = 17!
             assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 17);
@@ -1762,12 +1782,12 @@ int main() {
             const uint32_t desertHeader[4] = { 1, 338, 10003, 1 };
             std::memcpy(mercUnit, desertHeader, sizeof(desertHeader));
 
-            // Might (98, Paladin tab 10)
+            // Might (98, Paladin tab 25: 3*8 + 1)
             skillsRow[0] = 98;
             fakeBaseSkillLevel = 8;
             g_testEquippedSlots.clear();
             g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 3, 2 } }; // +2 Paladin
-            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 10, 3 } };  // +3 Offensive Auras
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 25, 3 } };  // +3 Offensive Auras (tab key 25 = 3*8 + 1)
             assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 13); // 8 + 2 + 3 = 13
 
             // Jab (10): Desert Guard special case with Amazon spear gear
@@ -1784,7 +1804,7 @@ int main() {
             fakeBaseSkillLevel = 15;
             g_testEquippedSlots.clear();
             g_testEquippedSlots[1].stats = { { ItemStat::ClassSkills, 4, 2 } }; // +2 Barbarian
-            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 12, 3 } };  // +3 Combat
+            g_testEquippedSlots[4].stats = { { ItemStat::TabSkills, 32, 3 } };  // +3 Combat (tab key 32 = 4*8 + 0)
             assert(companionai::DetourSkillLevel(mercUnitPtr, skillNodePtr, 1, 0) == 20); // 15 + 2 + 3 = 20
 
             // 7. Unlearned skills (baseLevel == 0):

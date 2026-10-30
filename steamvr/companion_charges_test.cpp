@@ -168,16 +168,16 @@ void TestCompanionSkillUsability() {
     assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 9));
     assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, 89));
 
-    // Incompatible player-locked animations and shapeshifts rejected for ALL
-    for (uint16_t bannedSkill : {97, 106, 107, 132, 143, 151, 223, 228, 255, 260, 270, 275}) {
+    // Incompatible player-locked animations, shapeshifts, and client-bound summons rejected for ALL
+    for (uint16_t bannedSkill : {97, 106, 107, 132, 143, 151, 223, 228, 255, 260, 270, 275, 85 /*Blood Golem*/, 246 /*Wolverine*/}) {
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, bannedSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, bannedSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Sorceress, bannedSkill));
         assert(!IsSkillUsableByCompanion(VirtualPlayerClass::Barbarian, bannedSkill));
     }
 
-    // Standard spells/curses/summons usable by ALL
-    for (uint16_t universalSkill : {54 /*Teleport*/, 82 /*Life Tap*/, 17 /*Slow Missiles*/, 44 /*Frost Nova*/, 246 /*Wolverine*/}) {
+    // Standard spells/curses/buffs usable by ALL
+    for (uint16_t universalSkill : {54 /*Teleport*/, 82 /*Life Tap*/, 17 /*Slow Missiles*/, 44 /*Frost Nova*/, 138 /*Shout*/}) {
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Amazon, universalSkill));
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Paladin, universalSkill));
         assert(IsSkillUsableByCompanion(VirtualPlayerClass::Sorceress, universalSkill));

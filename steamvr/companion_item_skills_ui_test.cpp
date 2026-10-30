@@ -131,7 +131,7 @@ int main() {
         mockStats[{itemArmor, 107, 98}] = 3;
 
         // Slot 4 (Weapon): Item with Level 5 Hydra charges (20/20 charges)
-        const uint16_t paramHydra = PackChargedSkillParam(221, 5);
+        const uint16_t paramHydra = PackChargedSkillParam(62, 5);
         const int32_t valHydra = PackChargedSkillValue(20, 20);
         mockStats[{itemWeapon, 204, static_cast<int>(paramHydra)}] = valHydra;
 
@@ -151,7 +151,7 @@ int main() {
         };
 
         auto getName = [](int id) -> std::string {
-            if (id == 221) return "Hidra";
+            if (id == 62) return "Hidra";
             if (id == 114) return "Frio Sagrado";
             if (id == 98) return "Poderio";
             if (id == 149) return "Ordenes de Batalla";
@@ -164,7 +164,7 @@ int main() {
 
         bool foundHydra = false, foundHolyFreeze = false, foundMight = false, foundBO = false;
         for (const auto& b : badges) {
-            if (b.skillId == 221) {
+            if (b.skillId == 62) {
                 assert(b.type == SkillBadgeType::ChargedSkill);
                 assert(b.level == 5);
                 assert(b.currentCharges == 20);
@@ -200,7 +200,7 @@ int main() {
         // Case B: Default fallback name when getName is omitted
         const auto badgesDefault = CollectMercenarySkillBadges(VirtualPlayerClass::Paladin, slots, getStat);
         assert(badgesDefault.size() == 4);
-        assert(std::strcmp(badgesDefault[0].skillName, "Skill 221") == 0);
+        assert(std::strcmp(badgesDefault[0].skillName, "Skill 62") == 0);
 
         // Case C: Amazon virtual class (Act 1 Rogue) -> Might (Paladin skill) should NOT match as virtual class skill
         const auto badgesZon = CollectMercenarySkillBadges(VirtualPlayerClass::Amazon, slots, getStat);
@@ -221,7 +221,7 @@ int main() {
         CompanionChargedSkill hydraCharge{};
         hydraCharge.itemId = 101;
         hydraCharge.bodyLocation = 4;
-        hydraCharge.skillId = 221;
+        hydraCharge.skillId = 62;
         hydraCharge.level = 5;
         hydraCharge.currentCharges = 18;
         hydraCharge.maxCharges = 20;
@@ -231,7 +231,7 @@ int main() {
         assert(badgesPre.size() == 4);
         bool foundPreHydra = false;
         for (const auto& b : badgesPre) {
-            if (b.skillId == 221) {
+            if (b.skillId == 62) {
                 assert(b.type == SkillBadgeType::ChargedSkill);
                 assert(b.currentCharges == 18);
                 foundPreHydra = true;

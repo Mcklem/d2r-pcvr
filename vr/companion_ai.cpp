@@ -1263,7 +1263,7 @@ void ExecuteCompanionTacticalChargesInternal(
     const auto decision = framevr::companionai::SelectBestTacticalCharge(
         s_cachedCharges, sensors, true, consumeCharges);
 
-    if (!decision.shouldCast) {
+    if (!decision.shouldCast || decision.kind == framevr::companionai::TacticalSkillKind::Summon) {
         static uint64_t s_lastNoCastLogMs = 0;
         if (sensors.isCombatActive && nowMs - s_lastNoCastLogMs > 5000) {
             s_lastNoCastLogMs = nowMs;

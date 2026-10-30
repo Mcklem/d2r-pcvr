@@ -382,6 +382,42 @@ inline bool IsSkillUsableByCompanion(VirtualPlayerClass vclass, uint16_t skillId
             return false;
     }
 
+    // Player pet and minion summoning skills require a human player client structure
+    // (ptClient / CLIENTS_GetClientFromUnit) to track pets in the player's pet management table.
+    // Monster/hireling caster units (UnitType 1) do not have a ptClient; dispatching native srvdofunc
+    // for pets triggers BC_ASSERT(ptClient) at Clients.cpp:303 and crashes with
+    // EXCEPTION_ACCESS_VIOLATION reading address 0x00000000000004e0:
+    switch (skillId) {
+        case 28:  // Decoy
+        case 32:  // Valkyrie
+        case 70:  // Raise Skeleton
+        case 75:  // Clay Golem
+        case 80:  // Raise Skeletal Mage
+        case 85:  // Blood Golem
+        case 90:  // Iron Golem
+        case 94:  // Fire Golem
+        case 95:  // Revive
+        case 218: // Town Portal
+        case 221: // Raven
+        case 222: // Poison Creeper
+        case 226: // Oak Sage
+        case 227: // Spirit Wolf
+        case 231: // Carrion Vine
+        case 236: // Dire Wolf
+        case 237: // Heart of Wolverine
+        case 241: // Solar Creeper
+        case 246: // Spirit of Barbs
+        case 247: // Grizzly
+        case 256: // Charged Bolt Sentry
+        case 261: // Lightning Sentry
+        case 262: // Wake of Fire
+        case 268: // Shadow Warrior
+        case 271: // Death Sentry
+        case 272: // Wake of Inferno
+        case 279: // Shadow Master
+            return false;
+    }
+
     // Amazon bow/crossbow exclusive skills:
     switch (skillId) {
         case 6:  // Magic Arrow
