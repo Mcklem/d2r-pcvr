@@ -70,6 +70,45 @@ void TestStat204Packing() {
         assert(skill.maxCharges == 45);
     }
 
+    // 6. Real D2R Unique Item: Hexfire (Hydra skill 62, lvl 6, 36 max charges, 30 current)
+    // In D2R runtime: param = 3974 (0x0F86), value = 9246 (0x0000241E)
+    {
+        assert(PackChargedSkillParam(62, 6) == 3974);
+        assert(PackChargedSkillValue(30, 36) == 9246);
+        const auto skill = UnpackChargedSkill(21, 4, 3974, 9246);
+        assert(skill.skillId == 62); // Hydra! NOT barbarian 134!
+        assert(skill.level == 6);
+        assert(skill.currentCharges == 30);
+        assert(skill.maxCharges == 36);
+        assert(skill.kind == TacticalSkillKind::DamageSpell);
+    }
+
+    // 7. Real D2R Unique Item: Darksight Helm (Cloak of Shadows skill 264, lvl 5, 30 max charges, 26 current)
+    // In D2R runtime: param = 16901 (0x4205), value = 7706 (0x00001E1A)
+    {
+        assert(PackChargedSkillParam(264, 5) == 16901);
+        assert(PackChargedSkillValue(26, 30) == 7706);
+        const auto skill = UnpackChargedSkill(20, 1, 16901, 7706);
+        assert(skill.skillId == 264); // Cloak of Shadows! NOT trap 261!
+        assert(skill.level == 5);
+        assert(skill.currentCharges == 26);
+        assert(skill.maxCharges == 30);
+        assert(skill.kind == TacticalSkillKind::Suppression);
+    }
+
+    // 8. Real D2R Unique Item: Radament's Sphere (Poison Explosion skill 83, lvl 6, 40 max charges, 9 current)
+    // In D2R runtime: param = 5318 (0x14C6), value = 10249 (0x00002809)
+    {
+        assert(PackChargedSkillParam(83, 6) == 5318);
+        assert(PackChargedSkillValue(9, 40) == 10249);
+        const auto skill = UnpackChargedSkill(22, 5, 5318, 10249);
+        assert(skill.skillId == 83); // Poison Explosion! NOT 198!
+        assert(skill.level == 6);
+        assert(skill.currentCharges == 9);
+        assert(skill.maxCharges == 40);
+        assert(skill.kind == TacticalSkillKind::DamageSpell);
+    }
+
     std::puts("TestStat204Packing: OK");
 }
 

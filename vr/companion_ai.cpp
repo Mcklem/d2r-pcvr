@@ -926,25 +926,21 @@ void ExecuteCompanionTacticalChargesInternal(
                 const uint8_t cur = static_cast<uint8_t>(statVal & 0xFF);
                 const uint8_t maxC = static_cast<uint8_t>((statVal >> 8) & 0xFF);
 
-                const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
-                const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
-
-                const uint16_t sB = static_cast<uint16_t>(p);
-                const uint8_t lB = static_cast<uint8_t>((statVal >> 16) & 0xFF);
-
-                const uint16_t s3 = static_cast<uint16_t>(p & 0x3FF);
-                const uint8_t l3 = static_cast<uint8_t>((p >> 10) & 0x3F);
-
+                // D2R Native stat 204 encoding: Bits 6..15 = Skill ID (10 bits), Bits 0..5 = Level (6 bits)
                 const uint16_t s4 = static_cast<uint16_t>((p >> 6) & 0x3FF);
                 const uint8_t l4 = static_cast<uint8_t>(p & 0x3F);
 
                 uint16_t skillId = 0;
                 uint8_t lvl = 1;
-                if (sA > 0 && sA < 600 && lA > 0 && lA <= 40) { skillId = sA; lvl = lA; }
-                else if (sB > 0 && sB < 600) { skillId = sB; lvl = (lB > 0 && lB <= 40) ? lB : 5; }
-                else if (s3 > 0 && s3 < 600 && l3 > 0 && l3 <= 40) { skillId = s3; lvl = l3; }
-                else if (s4 > 0 && s4 < 600 && l4 > 0 && l4 <= 40) { skillId = s4; lvl = l4; }
-                else { skillId = sA ? sA : sB; lvl = lA ? lA : 1; }
+                if (s4 > 0 && s4 < 600 && l4 > 0 && l4 <= 60) {
+                    skillId = s4;
+                    lvl = l4;
+                } else {
+                    const uint16_t sA = static_cast<uint16_t>((p & 0xFF) | (((p >> 14) & 0x03) << 8));
+                    const uint8_t lA = static_cast<uint8_t>((p >> 8) & 0x3F);
+                    if (sA > 0 && sA < 600 && lA > 0 && lA <= 40) { skillId = sA; lvl = lA; }
+                    else { skillId = s4 ? s4 : (p & 0xFF); lvl = l4 ? l4 : 1; }
+                }
 
                 if (skillId > 0 && maxC > 0 && framevr::companionai::IsSkillUsableByCompanion(vclass, skillId)) {
                     bool already = false;
@@ -982,11 +978,7 @@ void ExecuteCompanionTacticalChargesInternal(
                     v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, pStd);
                     if (v > 0) processHit(pStd, v);
 
-                    const uint16_t p10 = static_cast<uint16_t>((lvl << 10) | (cSkill & 0x3FF));
-                    if (p10 != pStd && p10 != cSkill) {
-                        v = statFn(slot.itemUnit, framevr::companionai::ItemStat::ChargedSkill, p10);
-                        if (v > 0) processHit(p10, v);
-                    }
+
                 }
                 for (uint8_t lvl : {30, 33}) {
                     const uint16_t pStd = framevr::companionai::PackChargedSkillParam(cSkill, lvl);

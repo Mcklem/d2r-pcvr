@@ -62,22 +62,24 @@ struct EquippedItemSlot {
     uintptr_t itemUnit = 0;
 };
 
+// Forward declaration
+inline TacticalSkillKind GetTacticalSkillKind(uint16_t skillId) noexcept;
+
 // Stat 204 (item_charged_skill) packing and unpacking helpers.
-// In Diablo II / D2R (Encode = 3):
-// Parameter (16 bits): aabbbbbbcccccccc
-//   - cccccccc (bits 0..7): Skill ID low 8 bits
-//   - bbbbbb   (bits 8..13): Skill Level (6 bits, 0..63)
-//   - aa       (bits 14..15): Skill ID high 2 bits (bits 8..9)
+// In Diablo II: Resurrected / D2R:
+// Parameter (16 bits):
+//   - bits 0..5 (6 bits): Skill Level (0..63)
+//   - bits 6..15 (10 bits): Skill ID (0..1023)
+//   param = ((skillId & 0x3FF) << 6) | (level & 0x3F)
 // Value (32 bits):
-//   - bits 0..7: Current Charges (0..255)
-//   - bits 8..15: Max Charges (0..255)
-// Value integer = (MaxCharges << 8) | CurrentCharges
+//   - bits 0..7 (8 bits): Current Charges (0..255)
+//   - bits 8..15 (8 bits): Max Charges (0..255)
+//   value = (MaxCharges << 8) | CurrentCharges
 
 inline constexpr uint16_t PackChargedSkillParam(uint16_t skillId, uint8_t level) noexcept {
     return static_cast<uint16_t>(
-        (skillId & 0xFF) |
-        ((static_cast<uint16_t>(level) & 0x3F) << 8) |
-        (((static_cast<uint16_t>(skillId) >> 8) & 0x03) << 14)
+        ((static_cast<uint16_t>(skillId) & 0x3FF) << 6) |
+        (static_cast<uint16_t>(level) & 0x3F)
     );
 }
 
@@ -95,10 +97,11 @@ inline CompanionChargedSkill UnpackChargedSkill(
     CompanionChargedSkill skill{};
     skill.itemId = itemId;
     skill.bodyLocation = bodyLocation;
-    skill.skillId = static_cast<uint16_t>((param & 0xFF) | (((param >> 14) & 0x03) << 8));
-    skill.level = static_cast<uint8_t>((param >> 8) & 0x3F);
+    skill.skillId = static_cast<uint16_t>((param >> 6) & 0x3FF);
+    skill.level = static_cast<uint8_t>(param & 0x3F);
     skill.currentCharges = static_cast<uint8_t>(value & 0xFF);
     skill.maxCharges = static_cast<uint8_t>((value >> 8) & 0xFF);
+    skill.kind = GetTacticalSkillKind(skill.skillId);
     return skill;
 }
 
