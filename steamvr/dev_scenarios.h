@@ -248,61 +248,137 @@ inline constexpr int PreparationCount=5;
 // nullptr skips an off-hand item for a two-handed staff/maul.
 inline std::array<const char*,10> Kit(int cls,int choice,int mercClassId=-1){
     if(ValidClass(cls)&&choice==MercChargesChoice) {
-        if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin
+        if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin (Polearms, Spears, Helms, Armor)
             constexpr const char* pool[] = {
                 "7sp", // Bonehew (Ogre Axe, Corpse Explosion lvl 14, 30 charges)
-                "7pa", // Tomb Reaver (Cryptic Axe, Revive lvl 1-3, 14 charges)
-                "9pa", // Soulfeast Tine (Partizan, Decrepify lvl 7, 20 charges)
-                "9b7", // Blackleach Blade (Bill, Weaken lvl 5, 30 charges)
-                "9ha", // Spellsteel (Bearded Axe, Decrepify lvl 3, Teleport lvl 1, Firestorm lvl 12, Holy Bolt lvl 10)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5, 30 charges)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5, 40 charges)
+                "7pa", // Tomb Reaver (Cryptic Axe, 10% Reanimate as Returned minion)
+                "7sr", // The Reaper's Toll (Thresher, 33% CTC Decrepify)
+                "7tr", // Viperfork (Mancatcher, 50% IAS, CTC Poison Explosion)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
-        } else if(mercClassId==359||(mercClassId<0&&cls==1)) { // Iron Wolf / Sorceress
+        } else if(mercClassId==359||(mercClassId<0&&cls==1)) { // Iron Wolf / Sorceress (1H Swords, Shields, Helms, Armor)
             constexpr const char* pool[] = {
                 "9sb", // Hexfire (Shamshir, Hydra lvl 6, 36 charges)
                 "7sb", // Bloodmoon (Elegant Blade, Blood Golem lvl 15, 9 charges)
                 "xts", // Radament's Sphere (Ancient Shield, Poison Explosion lvl 6, 40 charges)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5, 30 charges)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5, 40 charges)
+                "7fl", // Frostwind (Cryptic Sword, Arctic Blast)
+                "9fl", // Plague Bearer (Rune Sword, Poison Nova)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
-        } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian
+        } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian (1H/2H Swords, Barb Helms, Helms, Armor)
             constexpr const char* pool[] = {
-                "9ba", // Moonfall (Jagged Star, Meteor lvl 11, 60 charges)
-                "9fb", // Sureshrill Frost (Flanged Mace, Frozen Orb lvl 9, 50 charges)
-                "6hx", // Demonlimb (Tyrant Club, Enchant lvl 23, 20 charges)
-                "9sb", // Hexfire (Shamshir, Hydra lvl 6, 36 charges)
+                "7gs", // Todesfaelle Flamme (Zweihander, Enchant lvl 10, 45 charges; Fire Wall lvl 10, 20 charges)
                 "7sb", // Bloodmoon (Elegant Blade, Blood Golem lvl 15, 9 charges)
-                "9ha", // Spellsteel (Bearded Axe, Decrepify lvl 3, Teleport lvl 1, Firestorm lvl 12, Holy Bolt lvl 10)
+                "9sb", // Hexfire (Shamshir, Hydra lvl 6, 36 charges)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5, 30 charges)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5, 40 charges)
+                "72h", // Doombringer (Champion Sword, 8% CTC Weaken lvl 3)
+                "7fl", // Frostwind (Cryptic Sword, Arctic Blast)
+                "bad", // Wolfhowl (Fury Visor, Feral Rage / Werewolf)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
-        } else { // Rogue / Amazon (default)
+        } else { // Rogue / Amazon (default: Bows, Helms, Armor)
             constexpr const char* pool[] = {
-                "8cb", // Cliffkiller (Large Siege Bow, Weaken lvl 10, 45 charges)
-                "7o7", // Hellrack (Colossus Crossbow, Immolation Arrow lvl 18, 150 charges)
+                "8cb", // Endlesshail (Double Bow, Strafe +3-5)
+                "8l8", // Cliffkiller (Large Siege Bow, Weaken lvl 10, 45 charges)
+                "amb", // Blood Raven's Charge (Matriarchal Bow, Revive lvl 5, 30 charges)
                 "xh9", // Darksight Helm (Basinet, Cloak of Shadows lvl 5, 30 charges)
                 "xar", // Corpse Mourn (Ornate Plate, Corpse Explosion lvl 5, 40 charges)
+                "8s8", // Witchwild String (Short Siege Bow, CTC Amplify Damage)
             };
             static size_t rot = 0;
             return {pool[rot++ % std::size(pool)]};
         }
     }
     if(ValidClass(cls)&&choice==MercSkillsChoice) {
-        if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin
-            return {"7sr", "uap", "xld"};
-        } else if(mercClassId==359||(mercClassId<0&&cls==1)) { // Iron Wolf / Sorceress
-            return {"9b9", "xsh", "uap", "xea"};
-        } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian
-            return {"7gd", "baa", "utu"};
-        } else { // Rogue / Amazon (default)
-            return {"8cb", "xhm", "xea"};
+        if(mercClassId==338||(mercClassId<0&&cls==3)) { // Desert Guard / Paladin (Polearms, Spears, Helms, Armor)
+            constexpr const char* pool[] = {
+                "7sr", // The Reaper's Toll (Thresher, CTC Decrepify, 33% Deadly Strike)
+                "7s7", // Arioc's Needle (Hyperion Spear, +2-4 All Skills, 50% Deadly Strike, 30% IAS)
+                "9st", // Spire of Honor (Lance, +3 Paladin Combat Skills, 20% FHR)
+                "7pa", // Tomb Reaver (Cryptic Axe, 60% IAS, All Res +30-50, Reanimate as Returned)
+                "7sp", // Bonehew (Ogre Axe, 30% IAS, Level 14 Corpse Explosion)
+                "7tr", // Viperfork (Mancatcher, 50% IAS, CTC Poison Explosion)
+                "7h7", // Stormspire (Giant Thresher, 30% IAS, CTC Charged Bolt)
+                "9p9", // Athena's Wrath (Battle Scythe, +1-3 Skills, Life per level)
+                "9tr", // Pierre Tombale Couant (Partizan, +3 Barbarian Skills, 55% Deadly Strike)
+                "9vo", // The Meat Scraper (Lochaber Axe, +3 Poison Creeper, Open Wounds)
+                "uap", // Harlequin Crest (Shako, +2 All Skills, 10% DR)
+                "aar", // Arkaine's Valor (Balrog Skin, +1-2 All Skills, 30% FHR)
+                "usk", // Andariel's Visage (Demonhead, +2 All Skills, 20% IAS, Life Steal)
+                "xld", // Crow Caw (Tigulated Mail, 15% IAS, Open Wounds)
+                "ci3", // Griffon's Eye (Diadem, +1 All Skills, -Enemy Lightning Res)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else if(mercClassId==359||(mercClassId<0&&cls==1)) { // Iron Wolf / Sorceress (1H Swords, Shields, Helms, Armor)
+            constexpr const char* pool[] = {
+                "9b9", // Culwen's Point (War Sword, +1 All Skills, 20% FCR, 20% FHR)
+                "9sb", // Hexfire (Shamshir, +3 Fire Skills, Hydra lvl 6 charges)
+                "7cr", // Azurewrath (Phase Blade, +1 All Skills, Sanctuary Aura)
+                "7fl", // Frostwind (Cryptic Sword, +9-14 Arctic Blast, Freezes Target)
+                "9fl", // Plague Bearer (Rune Sword, +5 Poison Nova)
+                "9ss", // Ginther's Rift (Dimensional Blade, Magic Damage, MDR)
+                "7sm", // Djinn Slayer (Ataghan, Fire Damage, 2 Sockets)
+                "7sb", // Bloodmoon (Elegant Blade, Blood Golem charges, Open Wounds)
+                "xsh", // Lidless Wall (Grim Shield, +1 All Skills, 20% FCR)
+                "ush", // Stormshield (Monarch, 35% Damage Reduced)
+                "xow", // Moser's Blessed Circle (Round Shield, +25 All Res, 2 Sockets)
+                "xea", // Skin of the Vipermagi (Serpentskin Armor, +1 All Skills, 30% FCR, All Res +20-35)
+                "uap", // Harlequin Crest (Shako, +2 All Skills)
+                "ci3", // Griffon's Eye (Diadem, +1 All Skills, +FCR, -Enemy Lightning Res)
+                "aar", // Arkaine's Valor (Balrog Skin, +1-2 All Skills, 30% FHR)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else if(mercClassId==560||mercClassId==561||(mercClassId<0&&cls==4)) { // Barbarian (1H/2H Swords, Barb Helms, Helms, Armor)
+            constexpr const char* pool[] = {
+                "7gd", // The Grandfather (Colossus Blade, +2 All Skills, 50% AR, Life)
+                "72h", // Doombringer (Champion Sword, +2 All Skills, 8% CTC Weaken)
+                "7gs", // Todesfaelle Flamme (Zweihander, Fire Wall / Enchant charges)
+                "7fl", // Frostwind (Cryptic Sword, +9-14 Arctic Blast)
+                "7cr", // Azurewrath (Phase Blade, +1 All Skills, Sanctuary Aura)
+                "9bs", // Headstriker (Battle Sword, +1 Barbarian Skills, Deadly Strike per level)
+                "9b9", // Culwen's Point (War Sword, +1 All Skills, 20% FHR)
+                "92h", // Swordguard (Executioner Sword, All Resists +10-20, Damage to Mana)
+                "9cm", // Bing Sz Wang (Dacian Claymore, Freezes Target +3)
+                "baa", // Arreat's Face (Slayer Guard, +2 Barbarian Skills, +2 Combat Skills, 20% FHR, LL)
+                "bad", // Wolfhowl (Fury Visor, +2-3 Warcries, +3-6 Feral Rage, Werewolf)
+                "bac", // Demonhorn's Edge (Destroyer Helm, +1-3 Warcries, Masteries, Combat Skills, 10% IAS)
+                "bab", // Halaberd's Reign (Conqueror Crown, +2 Barbarian Skills, +1-2 Battle Command/Orders)
+                "uap", // Harlequin Crest (Shako, +2 All Skills)
+                "usk", // Andariel's Visage (Demonhead, +2 All Skills, 20% IAS, LL)
+                "utu", // The Gladiator's Bane (Wire Fleece, Cannot Be Frozen, DR/MDR)
+                "aar", // Arkaine's Valor (Balrog Skin, +1-2 All Skills, 30% FHR)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
+        } else { // Rogue / Amazon (default: Bows, Helms, Armor)
+            constexpr const char* pool[] = {
+                "8cb", // Endlesshail (Double Bow, +3-5 Strafe, +Cold Dmg)
+                "8l8", // Cliffkiller (Large Siege Bow, +2 Amazon Skills, +Knockback)
+                "am7", // Lycander's Aim (Ceremonial Bow, +2 Amazon Skills, +2 Bow and Crossbow Skills, 20% IAS)
+                "8lb", // Kuko Shakaku (Cedar Bow, +3 Immolation Arrow, Piercing Attack 50%, Explosive)
+                "8s8", // Witchwild String (Short Siege Bow, Level 20 Magic Arrow, 40% Deadly Strike)
+                "8sw", // Magewrath (Rune Bow, +1 Amazon Skills, +1 Guided Arrow)
+                "6sw", // Widowmaker (Ward Bow, +3-5 Guided Arrow, 33% Deadly Strike)
+                "6l7", // Eaglehorn (Crusader Bow, +1 Amazon Skills, Ignore Target Defense)
+                "6lw", // Windforce (Hydra Bow, 20% IAS, Knockback)
+                "uap", // Harlequin Crest (Shako, +2 All Skills, 10% DR)
+                "xhm", // Peasant Crown (War Hat, +1 All Skills, 15% FRW)
+                "xea", // Skin of the Vipermagi (Serpentskin Armor, +1 All Skills, 30% FCR, All Res +20-35)
+                "aar", // Arkaine's Valor (Balrog Skin, +1-2 All Skills, 30% FHR)
+                "xld", // Crow Caw (Tigulated Mail, 15% IAS, 15% Open Wounds)
+            };
+            static size_t rot = 0;
+            return {pool[rot++ % std::size(pool)]};
         }
     }
     if(ValidClass(cls)&&(choice==StarterPrimaryChoice||choice==StarterAlternateChoice)) {
