@@ -627,3 +627,30 @@ En lugar de textos prefijados en código que colisionan con el idioma del jugado
 
 * **Cero sobrecoste en reposo:** Si el inventario no se altera, no se lanzan hechizos y no se apunta a una nueva insignia, la comprobación de memoria dura menos de **0.02 microsegundos** por fotograma (simple comparación de IDs de 4 ítems y del índice de hover) y el atlas no se re-renderiza ni se sube a GPU.
 * **Reactividad instantánea:** En cuanto el jugador equipa un nuevo objeto, se consume una carga en combate, se completan de cargar los iconos PNG asíncronos en segundo plano o el rayo láser entra/sale de una insignia, la interfaz se actualiza de forma reactiva e instantánea.
+
+
+---
+
+## 11. Ejecución Nativa de Habilidades de Equipo y Resincronización al Revivir
+
+### 11.1 Resolución del Bug de Invalidez de Caché en Resurrección
+
+Cuando el mercenario fallece en combate y el jugador lo revive en la ciudad hablando con el NPC correspondiente (ej. Kashya, Greiz, Ormus, Qual-Kehk):
+1. **El Problema Original:** La función `InvalidateTacticalContextOnMissingUnit` limpiaba la lista de insignias de la UI (`ClearCachedSkillBadges()`), pero las variables estáticas locales que recordaban los IDs de objetos equipados (`s_lastItemIds`, `s_lastSlotCount` y `s_lastHirelingUnitId`) conservaban los valores previos al fallecimiento. Dado que el mercenario reaparecía con el mismo equipo y la misma cantidad de ranuras, la comprobación `hirelingChanged || itemsChanged` evaluaba a `false`. Esto provocaba que no se reconstruyeran las habilidades ni las insignias de UI hasta que el jugador desequipaba y reequipaba manualmente algún objeto.
+2. **La Solución Implementada:**
+   - Se introdujo `ResetCompanionEquipmentCache()` a nivel de archivo, invocada automáticamente cada vez que se detecta la pérdida de la unidad mercenaria y se vacían las insignias.
+   - Se añadió la condición de guarda reactiva `const bool cacheEmpty = s_cachedBadges.empty() && slotCount > 0;`. De este modo, tan pronto como el mercenario revive y se detecta equipo presente, el sistema realiza de inmediato un escaneo fresco y completo sin intervención del jugador.
+
+---
+
+### 11.2 Puente de Ejecución Nativa de Habilidades de Equipamiento (Caso Bombardeo / Strafe)
+
+En el motor vanilla de *Diablo II: Resurrected*:
+1. `ITEM_EquipItem` únicamente añade estadísticas `STAT 107` (habilidades individuales) a la lista de nodos de habilidad (`unit->pSkills` en `offset 0x100`) si la unidad es un jugador (`unit->dwType == 0`). Para mercenarios y monstruos (`dwType == 1`), el motor omite esta inserción.
+2. Como consecuencia, cuando `SKILLS_StartSkill` (RVA `0x43b3e0`) y `SKILLS_Cast` / `Dispatch` (RVA `0x43acb0`) intentan ejecutar una habilidad táctica otorgada por equipo (como *Bombardeo / Strafe*, ID 26 en arcos para la Pícara del Acto 1), invocan internamente `SKILLS_GetSkillNodeById` (RVA `0x33dcd0`). Al no encontrar ningún nodo de habilidad en la lista enlazada del mercenario, la función devolvía `nullptr`, abortando el lanzamiento con códigos de resultado `startRes = 0, castRes = 0`.
+3. Adicionalmente, las rutinas de combate de D2R requieren que el puntero a la habilidad en uso esté presente en `unit->pSkills + 0x18` (`pUsedSkill`), y que las habilidades de proyectiles dirigidos cuenten con una unidad objetivo válida (`targetUnit`).
+
+Para habilitar la ejecución completa de habilidades de equipo sin alterar el binario original:
+* **Hook a `SKILLS_GetSkillNodeById` (RVA `0x33dcd0` / `SkillRva`):** Mediante `DetourSkill`, si la búsqueda vanilla de la unidad no arroja resultado pero la habilidad pertenece al conjunto de habilidades de equipo reconocidas para su clase virtual, se construye un nodo sintético (`SyntheticCompanionSkillNode`) con el puntero a la fila compilada de `Skills.txt` obtenido dinámicamente mediante `nativeui::GetSkillRow(skillId)` y su nivel efectivo.
+* **Contexto de Selección Temporal (`SelectionScope`):** Se escribe temporalmente el nodo sintético en `hireling->pSkills + 0x18` durante la ventana de invocación de `StartRva` y `DispatchRva`, restaurando el valor anterior inmediatamente al concluir la llamada.
+* **Resolución de Objetivo de Combate (`CommandedActionScope`):** Se suministra la entidad del enemigo principal hostil (`primaryTargetUnit = melee::ServerUnit(game, 1, primaryTargetId)`) en lugar de pasar `target = 0`, permitiendo que el motor valide los ángulos de tiro y las trayectorias de proyectil de habilidades dirigidas como Strafe.

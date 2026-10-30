@@ -126,6 +126,10 @@ std::string SkillName(int id) {
     std::snprintf(buf, sizeof(buf), "Skill %d", id);
     return buf;
 }
+const void* GetSkillRow(int id) {
+    static uint8_t mockRow[748]{};
+    return id > 0 ? mockRow : nullptr;
+}
 }
 
 namespace {
@@ -155,7 +159,15 @@ void PopulateCanonicalMonStats(std::vector<uint8_t>& buf, size_t rows = 600) {
 D2RL::DataTables::Result __cdecl FakeGetTable(const D2RL::PluginContext*, D2RL::DataTables::Bank bank,
                                               D2RL::DataTables::TableId tableId, D2RL::DataTables::TableView* out) noexcept {
     ++tableQueryCalls;
-    if (!out || tableId != D2RL::DataTables::TableId::MonStats) return D2RL::DataTables::Result::Unavailable;
+    if (!out) return D2RL::DataTables::Result::Unavailable;
+    if (tableId == D2RL::DataTables::TableId::Skills) {
+        static std::vector<uint8_t> mockSkillsTable(1000 * 748, 0);
+        out->rows = mockSkillsTable.data();
+        out->rowCount = 1000;
+        out->rowSize = 748;
+        return D2RL::DataTables::Result::Success;
+    }
+    if (tableId != D2RL::DataTables::TableId::MonStats) return D2RL::DataTables::Result::Unavailable;
     if (bank == D2RL::DataTables::Bank::Lod && !lodTable.empty()) {
         out->rows = lodTable.data();
         out->rowCount = uint32_t(lodTable.size() / framevr::companionai::RowSize);
@@ -236,6 +248,10 @@ static void __fastcall FakeSetStat(uintptr_t, int stat, int val, int param) {
     g_setStatCount++;
 }
 
+static uintptr_t __fastcall FakeOriginalSkillLookup(uintptr_t, int, int) {
+    return 0;
+}
+
 namespace d2rsig {
 bool Check(uint64_t rva, const void*, uint32_t) {
     if (rva == companionai::abi::ModeRva ||
@@ -253,7 +269,8 @@ bool Check(uint64_t rva, const void*, uint32_t) {
         rva == companionai::abi::GetStatRva ||
         rva == companionai::abi::StartRva ||
         rva == companionai::abi::DispatchRva ||
-        rva == companionai::abi::SetStatRva) {
+        rva == companionai::abi::SetStatRva ||
+        rva == companionai::abi::SkillRva) {
         return signatures;
     }
     return false;
@@ -274,6 +291,7 @@ uintptr_t Addr(uint64_t rva) {
     if (rva == companionai::abi::StartRva) return reinterpret_cast<uintptr_t>(&FakeStartSkill);
     if (rva == companionai::abi::DispatchRva) return reinterpret_cast<uintptr_t>(&FakeDispatchSkill);
     if (rva == companionai::abi::SetStatRva) return reinterpret_cast<uintptr_t>(&FakeSetStat);
+    if (rva == companionai::abi::SkillRva) return reinterpret_cast<uintptr_t>(&FakeOriginalSkillLookup);
     return 0;
 }
 bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
@@ -292,6 +310,10 @@ bool Hook(uint64_t rva, const void*, uint32_t, void*, void** original) {
     }
     if (rva == companionai::abi::SkillLevelRva) {
         if (original) *original = reinterpret_cast<void*>(&FakeOriginalSkillLevel);
+        return true;
+    }
+    if (rva == companionai::abi::SkillRva) {
+        if (original) *original = reinterpret_cast<void*>(&FakeOriginalSkillLookup);
         return true;
     }
     return false;
@@ -1911,6 +1933,54 @@ int main() {
                 assert(g_lastDispatchedDestY == 115);
 
                 g_mockCorpseCount = 0;
+                g_testEquippedSlots.clear();
+            }
+
+            // Test 8: Equipment Skill (Strafe 26) DetourSkill lookup & Revival Cache Invalidation
+            {
+                g_dispatchCount = 0;
+                g_testEquippedSlots.clear();
+
+                // Rogue mercenary class 271 with Strafe (skill 26, lvl 4) from item
+                const uint16_t strafeParam = 26; // Skill ID
+                const int32_t strafeLvl = 4;
+                g_testEquippedSlots[4].header[2] = 301; // Bow slot
+                g_testEquippedSlots[4].stats = { { static_cast<int>(ItemStat::SingleSkill), strafeParam, strafeLvl } };
+
+                const framevr::companionai::Vec2 compP{ 100.0f, 100.0f };
+                const framevr::companionai::Vec2 plyrP{ 100.0f, 100.0f };
+                uint64_t tickMs = 300000;
+
+                // Step 1: Scan and execute
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 100.0f, 100.0f,
+                    compP, plyrP, tickMs, true, true);
+
+                assert(g_dispatchCount == 1);
+                assert(g_lastDispatchedSkill == 26);
+                assert(g_lastDispatchedLevel == 4);
+
+                // Step 2: Test DetourSkill directly on unit
+                uintptr_t detourNode = companionai::DetourSkill(mercUnitPtr, 26, -1);
+                assert(detourNode != 0);
+                auto* synNode = reinterpret_cast<companionai::SyntheticCompanionSkillNode*>(detourNode);
+                assert(synNode->level == 4);
+                assert(synNode->row != 0);
+
+                // Step 3: Simulate mercenary death / revival:
+                // ClearCachedSkillBadges() is called when hireling disappears
+                companionai::ClearCachedSkillBadges();
+
+                // On the next tick with the same items on the revived merc,
+                // cacheEmpty is true, forcing re-scan and execution
+                tickMs += 10000;
+                companionai::ExecuteCompanionTacticalCharges(
+                    1, mercUnitPtr, 271, 100.0f, 100.0f,
+                    compP, plyrP, tickMs, true, true);
+
+                assert(g_dispatchCount == 2);
+                assert(g_lastDispatchedSkill == 26);
+
                 g_testEquippedSlots.clear();
             }
 

@@ -64,6 +64,18 @@ static SRWLOCK s_badgesLock = SRWLOCK_INIT;
 static std::vector<framevr::companionui::MercenarySkillBadge> s_cachedBadges;
 static std::atomic<uint64_t> s_badgesRevision{1};
 
+static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
+static uint32_t s_lastHirelingUnitId = 0;
+static std::array<uint32_t, 4> s_lastItemIds{};
+static size_t s_lastSlotCount = 0;
+
+void ResetCompanionEquipmentCache() noexcept {
+    s_lastHirelingUnitId = 0;
+    s_lastSlotCount = 0;
+    s_lastItemIds.fill(0);
+    s_cachedCharges.clear();
+}
+
 void ClearCachedSkillBadges() {
     AcquireSRWLockExclusive(&s_badgesLock);
     if (!s_cachedBadges.empty()) {
@@ -71,6 +83,7 @@ void ClearCachedSkillBadges() {
         s_badgesRevision.fetch_add(1, std::memory_order_release);
     }
     ReleaseSRWLockExclusive(&s_badgesLock);
+    ResetCompanionEquipmentCache();
 }
 std::atomic<bool> g_pendingRegroupMove{false};
 thread_local bool g_inCommandedMove = false;
@@ -800,6 +813,80 @@ void EnsureSkillLevelInstalled() noexcept {
     }
 }
 
+struct alignas(16) SyntheticCompanionSkillNode {
+    uintptr_t row = 0;          // 0x00: pSkillsTxt
+    uintptr_t next = 0;         // 0x08: pNext
+    uint32_t flags = 1;         // 0x10: dwFlags
+    uint32_t unk14 = 0;         // 0x14
+    uint32_t unk18 = 0;         // 0x18
+    uint32_t unk1c = 0;         // 0x1c
+    uint32_t unk20 = 0;         // 0x20
+    int32_t hitCount = 0;       // 0x24: NodeHitsOffset
+    uint32_t unk28 = 0;         // 0x28
+    int32_t targetType = 0;     // 0x2c: NodeTargetTypeOffset
+    int32_t targetId = 0;       // 0x30: NodeTargetIdOffset
+    uint32_t pad34 = 0;         // 0x34
+    uint64_t pad38 = 0;         // 0x38
+    uint64_t pad40 = 0;         // 0x40
+    int32_t level = 1;          // 0x48: dwSkillLevel
+    uint32_t pad4c = 0;         // 0x4c
+    uint8_t extra[128]{};       // generous padding up to 256 bytes
+};
+
+static SyntheticCompanionSkillNode s_companionSyntheticNode{};
+using SkillLookupFn = uintptr_t(*)(uintptr_t unit, int skillId, int owner);
+static SkillLookupFn originalSkill = nullptr;
+static std::atomic<bool> g_skillHooked{false};
+
+uintptr_t __fastcall DetourSkill(uintptr_t unit, int skillId, int owner) {
+    uintptr_t res = originalSkill ? originalSkill(unit, skillId, owner) : 0;
+    if (res) return res;
+
+    if (!unit || skillId <= 0) return 0;
+
+    uint32_t header[3]{};
+    if (!Read(unit, header) || header[0] != 1) return 0; // dwType == 1 (UNIT_MONSTER)
+
+    const uint16_t classId = static_cast<uint16_t>(header[1]);
+    const auto vclass = framevr::companionai::GetVirtualPlayerClass(classId);
+    if (vclass == framevr::companionai::VirtualPlayerClass::None) return 0;
+
+    for (const auto& s : s_cachedCharges) {
+        if (s.skillId == static_cast<uint16_t>(skillId) && s.isEquipmentSkill) {
+            const void* skillRow = nativeui::GetSkillRow(skillId);
+            if (skillRow) {
+                s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
+                s_companionSyntheticNode.next = 0;
+                s_companionSyntheticNode.flags = 1;
+                s_companionSyntheticNode.hitCount = 0;
+                s_companionSyntheticNode.targetType = 0;
+                s_companionSyntheticNode.targetId = 0;
+                s_companionSyntheticNode.level = s.level > 0 ? s.level : 1;
+                return reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
+void EnsureSkillInstalled() noexcept {
+    if (!g_companionItemSkillsEnabled.load(std::memory_order_relaxed)) return;
+    if (g_skillHooked.load(std::memory_order_relaxed)) return;
+
+    if (d2rsig::Check(abi::SkillRva, abi::SkillSig, sizeof(abi::SkillSig))) {
+        if (d2rsig::Hook(
+                abi::SkillRva,
+                abi::SkillSig,
+                sizeof(abi::SkillSig),
+                reinterpret_cast<void*>(&DetourSkill),
+                reinterpret_cast<void**>(&originalSkill))) {
+            g_skillHooked.store(true, std::memory_order_relaxed);
+            framevr::logging::Write("Frame companion AI: verified and hooked native skill node lookup (0x33dcd0) for companion equipment skills");
+        }
+    }
+}
+
 void EnsureServerMoveInstalled() noexcept {
     if (!serverMoveToCoordFn && d2rsig::Check(abi::ServerMoveToCoordRva, abi::ServerMoveToCoordSig, sizeof(abi::ServerMoveToCoordSig))) {
         serverMoveToCoordFn = reinterpret_cast<ServerMoveToCoordFn>(d2rsig::Addr(abi::ServerMoveToCoordRva));
@@ -868,10 +955,6 @@ void ExecuteCompanionTacticalChargesInternal(
         return;
     }
 
-    static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
-    static uint32_t s_lastHirelingUnitId = 0;
-    static std::array<uint32_t, 4> s_lastItemIds{};
-    static size_t s_lastSlotCount = 0;
     static uint64_t s_lastDiagScanLogMs = 0;
     static uint64_t s_lastTacticalCastMs = 0;
 
@@ -902,9 +985,11 @@ void ExecuteCompanionTacticalChargesInternal(
 
     const bool hirelingChanged = (s_lastHirelingUnitId != compHeader[2]);
     const bool itemsChanged = (slotCount != s_lastSlotCount || currentItemIds != s_lastItemIds);
+    const bool cacheEmpty = s_cachedBadges.empty() && slotCount > 0;
 
-    // ZERO OVERHEAD: Only perform probe if the mercenary or equipped item IDs actually changed!
-    if (hirelingChanged || itemsChanged) {
+    // ZERO OVERHEAD: Only perform probe if the mercenary or equipped item IDs actually changed,
+    // or if the cached badges are empty after a revival/respawn!
+    if (hirelingChanged || itemsChanged || cacheEmpty) {
         s_lastHirelingUnitId = compHeader[2];
         s_lastSlotCount = slotCount;
         s_lastItemIds = currentItemIds;
@@ -1118,6 +1203,7 @@ void ExecuteCompanionTacticalChargesInternal(
     const int hCount = melee::HostilesAround(hostiles, 16, 24.0f, compPos.x, compPos.y, hireling);
     float primaryTargetX = compPos.x;
     float primaryTargetY = compPos.y;
+    uint32_t primaryTargetId = 0;
 
     if (hCount > 0) {
         sensors.isCombatActive = true;
@@ -1153,6 +1239,7 @@ void ExecuteCompanionTacticalChargesInternal(
                 closestDist = d;
                 primaryTargetX = hostiles[i].x;
                 primaryTargetY = hostiles[i].y;
+                primaryTargetId = hostiles[i].id;
             }
         }
         if (closestDist >= 9998.0f && hCount > 0) {
@@ -1162,6 +1249,7 @@ void ExecuteCompanionTacticalChargesInternal(
                     closestDist = d;
                     primaryTargetX = hostiles[i].x;
                     primaryTargetY = hostiles[i].y;
+                    primaryTargetId = hostiles[i].id;
                 }
             }
         }
@@ -1174,6 +1262,7 @@ void ExecuteCompanionTacticalChargesInternal(
         if (enemy && ReadPosition(enemy, ex, ey)) {
             primaryTargetX = ex;
             primaryTargetY = ey;
+            primaryTargetId = holdTargetId;
             sensors.isCombatActive = true;
         }
     }
@@ -1243,14 +1332,40 @@ void ExecuteCompanionTacticalChargesInternal(
     const auto dispatchFn = reinterpret_cast<int(__fastcall*)(uintptr_t, uintptr_t, int, int, int, int, int)>(d2rsig::Addr(abi::DispatchRva));
 
     if (startFn && dispatchFn) {
+        // Resolve skill node (either native charge node or synthetic equipment skill node via DetourSkill)
+        const auto lookupFn = reinterpret_cast<SkillLookupFn>(d2rsig::Addr(abi::SkillRva));
+        const uintptr_t activeSkillNode = lookupFn ? lookupFn(hireling, decision.skillId, -1) : 0;
+
+        // Temporarily supply THIS skill node to the hireling's used skill slot (list + 0x18),
+        // exactly matching how spells.cpp and melee.cpp prepare the caster for StartRva and DispatchRva
+        struct SelectionScope {
+            uintptr_t address = 0, previous = 0;
+            bool changed = false;
+            SelectionScope(uintptr_t unit, uintptr_t node) {
+                uintptr_t list = 0;
+                if (node && unit && Read(unit + 0x100, list) && list >= 0x10000 && Read(list + 0x18, previous)) {
+                    address = list + 0x18;
+                    changed = framevr::WriteMemory(reinterpret_cast<void*>(address), &node, sizeof(node));
+                }
+            }
+            ~SelectionScope() {
+                if (changed) framevr::WriteMemory(reinterpret_cast<void*>(address), &previous, sizeof(previous));
+            }
+        };
+        SelectionScope selectionScope(hireling, activeSkillNode);
+
+        uintptr_t targetUnit = 0;
+        if (framevr::companionai::SkillRequiresCorpse(decision.skillId)) {
+            targetUnit = sensors.closestCorpseUnit;
+        } else if (primaryTargetId != 0 && game) {
+            targetUnit = melee::ServerUnit(game, 1, primaryTargetId);
+        }
+
         struct CommandedActionScope {
-            CommandedActionScope(uintptr_t targetUnit = 0) noexcept { g_inCommandedAction = true; g_commandedActionTargetUnit = targetUnit; }
+            CommandedActionScope(uintptr_t target = 0) noexcept { g_inCommandedAction = true; g_commandedActionTargetUnit = target; }
             ~CommandedActionScope() noexcept { g_inCommandedAction = false; g_commandedActionTargetUnit = 0; }
         };
-        CommandedActionScope actionScope(framevr::companionai::SkillRequiresCorpse(decision.skillId) ? sensors.closestCorpseUnit : 0);
-
-
-
+        CommandedActionScope actionScope(targetUnit);
 
         const int startRes = startFn(game, hireling, decision.skillId, decision.level, 0);
         const int castRes = dispatchFn(game, hireling, decision.skillId, decision.level, 1, destX, destY);
@@ -1311,6 +1426,7 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
 
     EnsureServerMoveInstalled();
     EnsureSkillLevelInstalled();
+    EnsureSkillInstalled();
     uintptr_t game = 0, player = 0;
     if (!melee::LocalServer(game, player)) {
         InvalidateTacticalContextOnMissingUnit(0);
@@ -2016,6 +2132,7 @@ void Install() {
     }
     EnsureServerMoveInstalled();
     EnsureSkillLevelInstalled();
+    EnsureSkillInstalled();
 
     if (mode && relocateFn && roomPointFn) {
         g_installed.store(true);

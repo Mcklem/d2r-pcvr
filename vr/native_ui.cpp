@@ -206,6 +206,14 @@ std::string Name(int id) {
 std::string SkillName(int id) {
     return Name(id);
 }
+const void* GetSkillRow(int id) {
+    using D2RL::DataTables::TableId;
+    D2RL::DataTables::TableView skills;
+    if (!Tables(TableId::Skills, skills) || id < 0 || uint32_t(id) >= skills.rowCount || !skills.rows) {
+        return nullptr;
+    }
+    return static_cast<const uint8_t*>(skills.rows) + uint32_t(id) * skills.rowSize;
+}
 void Init(const D2RL::PluginContext* c){
     context=c;c->QueryService(&strings);c->QueryService(&tables);
     const auto core=GetModuleHandleW(L"D2RCore.dll");
