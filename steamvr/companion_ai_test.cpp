@@ -1948,18 +1948,20 @@ int main() {
                 const framevr::companionai::Vec2 plyrP{ 100.0f, 100.0f };
                 uint64_t tickMs = 300000;
 
-                // Step 1: Scan and execute
+                // Step 1: Scan and execute (Strafe lvl 4 fires min(4+4, 10) = 8 arrows in volley)
                 companionai::ExecuteCompanionTacticalCharges(
                     1, mercUnitPtr, 271, 100.0f, 100.0f,
                     compP, plyrP, tickMs, true, true);
 
-                assert(g_dispatchCount == 1);
+                assert(g_dispatchCount == 8);
                 assert(g_lastDispatchedSkill == 26);
                 assert(g_lastDispatchedLevel == 4);
 
-                // Step 2: Verify synthetic node was populated with Strafe row and level
+                // Step 2: Verify synthetic node was populated with Strafe row, exact level at 0x40, monster targetType and owner -1
                 assert(companionai::s_companionSyntheticNode.level == 4);
                 assert(companionai::s_companionSyntheticNode.row != 0);
+                assert(companionai::s_companionSyntheticNode.targetType == 1);
+                assert(companionai::s_companionSyntheticNode.owner == -1);
 
                 // Step 3: Simulate mercenary death / revival:
                 // ClearCachedSkillBadges() is called when hireling disappears
@@ -1972,7 +1974,7 @@ int main() {
                     1, mercUnitPtr, 271, 100.0f, 100.0f,
                     compP, plyrP, tickMs, true, true);
 
-                assert(g_dispatchCount == 2);
+                assert(g_dispatchCount == 16);
                 assert(g_lastDispatchedSkill == 26);
 
                 g_testEquippedSlots.clear();

@@ -68,6 +68,7 @@ static std::vector<framevr::companionai::CompanionChargedSkill> s_cachedCharges;
 static uint32_t s_lastHirelingUnitId = 0;
 static std::array<uint32_t, 4> s_lastItemIds{};
 static size_t s_lastSlotCount = 0;
+static uint64_t s_lastTacticalCastMs = 0;
 
 void ResetCompanionEquipmentCache() noexcept {
     s_lastHirelingUnitId = 0;
@@ -817,21 +818,29 @@ struct alignas(16) SyntheticCompanionSkillNode {
     uintptr_t row = 0;          // 0x00: pSkillsTxt
     uintptr_t next = 0;         // 0x08: pNext
     uint32_t flags = 1;         // 0x10: dwFlags
-    uint32_t unk14 = 0;         // 0x14
-    uint32_t unk18 = 0;         // 0x18
-    uint32_t unk1c = 0;         // 0x1c
-    uint32_t unk20 = 0;         // 0x20
-    int32_t hitCount = 0;       // 0x24: NodeHitsOffset
-    uint32_t unk28 = 0;         // 0x28
-    int32_t targetType = 0;     // 0x2c: NodeTargetTypeOffset
+    uint32_t pad14 = 0;         // 0x14
+    uint32_t pad18 = 0;         // 0x18
+    uint32_t pad1c = 0;         // 0x1c
+    uint32_t pad20 = 0;         // 0x20
+    int32_t hitCount = 1;       // 0x24: NodeHitsOffset
+    uint32_t pad28 = 0;         // 0x28
+    int32_t targetType = 1;     // 0x2c: NodeTargetTypeOffset (1 = monster)
     int32_t targetId = 0;       // 0x30: NodeTargetIdOffset
     uint32_t pad34 = 0;         // 0x34
     uint64_t pad38 = 0;         // 0x38
-    uint64_t pad40 = 0;         // 0x40
-    int32_t level = 1;          // 0x48: dwSkillLevel
-    uint32_t pad4c = 0;         // 0x4c
+    int32_t level = 1;          // 0x40: dwSkillLevel
+    int32_t bonus = 0;          // 0x44: dwBonus
+    int32_t base = 1;           // 0x48: dwBaseLevel
+    int32_t owner = -1;         // 0x4c: dwOwner (-1 = universal/item)
     uint8_t extra[128]{};       // generous padding up to 256 bytes
 };
+static_assert(offsetof(SyntheticCompanionSkillNode, hitCount) == 0x24);
+static_assert(offsetof(SyntheticCompanionSkillNode, targetType) == 0x2c);
+static_assert(offsetof(SyntheticCompanionSkillNode, targetId) == 0x30);
+static_assert(offsetof(SyntheticCompanionSkillNode, level) == 0x40);
+static_assert(offsetof(SyntheticCompanionSkillNode, bonus) == 0x44);
+static_assert(offsetof(SyntheticCompanionSkillNode, base) == 0x48);
+static_assert(offsetof(SyntheticCompanionSkillNode, owner) == 0x4c);
 
 static SyntheticCompanionSkillNode s_companionSyntheticNode{};
 using SkillLookupFn = uintptr_t(*)(uintptr_t unit, int skillId, int owner);
@@ -905,7 +914,6 @@ void ExecuteCompanionTacticalChargesInternal(
     }
 
     static uint64_t s_lastDiagScanLogMs = 0;
-    static uint64_t s_lastTacticalCastMs = 0;
 
     const auto invFn = reinterpret_cast<InventoryFn>(d2rsig::Addr(abi::InventoryRva));
     const auto eqFn = reinterpret_cast<EquippedFn>(d2rsig::Addr(abi::EquippedRva));
@@ -1294,10 +1302,13 @@ void ExecuteCompanionTacticalChargesInternal(
                 s_companionSyntheticNode.row = reinterpret_cast<uintptr_t>(skillRow);
                 s_companionSyntheticNode.next = 0;
                 s_companionSyntheticNode.flags = 1;
-                s_companionSyntheticNode.hitCount = 0;
-                s_companionSyntheticNode.targetType = 0;
-                s_companionSyntheticNode.targetId = 0;
+                s_companionSyntheticNode.hitCount = 1;
+                s_companionSyntheticNode.targetType = 1;
+                s_companionSyntheticNode.targetId = primaryTargetId;
                 s_companionSyntheticNode.level = decision.level > 0 ? decision.level : 1;
+                s_companionSyntheticNode.bonus = 0;
+                s_companionSyntheticNode.base = decision.level > 0 ? decision.level : 1;
+                s_companionSyntheticNode.owner = -1;
                 activeSkillNode = reinterpret_cast<uintptr_t>(&s_companionSyntheticNode);
             }
         }
@@ -1333,13 +1344,40 @@ void ExecuteCompanionTacticalChargesInternal(
         };
         CommandedActionScope actionScope(targetUnit);
 
+        const int arrowCount = (decision.skillId == 26)
+            ? std::clamp(static_cast<int>(decision.level) + 4, 4, 10)
+            : 1;
+
         const int startRes = startFn(game, hireling, decision.skillId, decision.level, 0);
-        const int castRes = dispatchFn(game, hireling, decision.skillId, decision.level, 1, destX, destY);
+
+        int castRes = 0;
+        int successfulDispatches = 0;
+        for (int a = 0; a < arrowCount; ++a) {
+            uint32_t arrowTargetId = primaryTargetId;
+            int arrowDestX = destX;
+            int arrowDestY = destY;
+
+            if (hCount > 0) {
+                const auto& h = hostiles[a % hCount];
+                arrowTargetId = h.id;
+                arrowDestX = int(std::round(h.x));
+                arrowDestY = int(std::round(h.y));
+            }
+
+            s_companionSyntheticNode.targetId = arrowTargetId;
+            s_companionSyntheticNode.hitCount = arrowCount - a;
+
+            const int res = dispatchFn(game, hireling, decision.skillId, decision.level, 1, arrowDestX, arrowDestY);
+            if (res != 0) {
+                successfulDispatches++;
+                castRes = res;
+            }
+        }
 
         char logBuf[256];
         std::snprintf(logBuf, sizeof logBuf,
-            "Frame companion AI: tactical cast skill %u (lvl %u, %s) -> dest (%d,%d) startRes=%d castRes=%d",
-            decision.skillId, decision.level, decision.reason, destX, destY, startRes, castRes);
+            "Frame companion AI: tactical cast skill %u (lvl %u, %s, %d arrows/hits) -> dest (%d,%d) startRes=%d castRes=%d",
+            decision.skillId, decision.level, decision.reason, arrowCount, destX, destY, startRes, successfulDispatches);
         framevr::logging::Write(logBuf);
 
         if (castRes != 0 || startRes != 0) {
@@ -2007,7 +2045,8 @@ void __cdecl CompanionGameThreadTick(const PluginContext*, void*) noexcept {
     // 6. Active Bodyguard Instinct ("Peeling" & Blind-Spot Defense)
     // Routes companion combat target acquisition via TryOverrideCombatTarget (0x48fe20)
     // and dispatches server locomotion toward interceptPos when stationary/out of range.
-    if (!inRetreat && !isTacticalActive && g_peelEnabled.load()) {
+    const bool recentlyCast = (nowMs - s_lastTacticalCastMs < 800);
+    if (!inRetreat && !isTacticalActive && !recentlyCast && g_peelEnabled.load()) {
         const float fx = g_cachedForwardX.load();
         const float fy = g_cachedForwardY.load();
 

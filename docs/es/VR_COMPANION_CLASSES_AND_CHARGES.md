@@ -654,3 +654,25 @@ Para habilitar la ejecución completa de habilidades de equipo sin alterar el bi
 * **Nodo Sintético Limpio sin Hook Inline:** En lugar de instalar un hook inline MinHook en `SKILLS_GetSkillNodeById` (0x33dcd0) —lo cual alteraba el prólogo de la función en memoria y hacía fallar la verificación de firmas `d2rsig::Check(SkillRva)` requerida por `native_ui.cpp` y `spells.cpp`—, el sistema consulta primero la lista nativa mediante `SkillLookupFn`. Si la habilidad no existe en la lista enlazada del mercenario y proviene de equipo (`decision.isEquipmentSkill`), se construye de forma puramente no intrusiva el nodo sintético (`SyntheticCompanionSkillNode`) con el puntero compilado a `Skills.txt` (`nativeui::GetSkillRow`) y su nivel efectivo.
 * **Contexto de Selección Temporal (`SelectionScope`):** Se escribe temporalmente el nodo sintético en `hireling->pSkills + 0x18` durante la ventana de invocación de `StartRva` y `DispatchRva` (exactamente como hacen los sistemas nativos de lanzamiento de hechizos y combate en VR), restaurando el valor anterior inmediatamente al concluir la llamada.
 * **Resolución de Objetivo de Combate (`CommandedActionScope`):** Se suministra la entidad del enemigo principal hostil (`primaryTargetUnit = melee::ServerUnit(game, 1, primaryTargetId)`) en lugar de pasar `target = 0`, permitiendo que el motor valide los ángulos de tiro y las trayectorias de proyectil de habilidades dirigidas como Strafe.
+
+---
+
+### 11.3 Estructura de Nodo Sintético (Offset de Nivel 0x40) y Ráfaga Multidisparo de Combate
+
+#### Por qué Strafe no era perceptible inicialmente a pesar de `startRes=1 castRes=1`:
+1. **Desalineación del Layout de `SkillNode` (Offset 0x40 vs 0x48):**
+   - En la estructura nativa de D2R (`native_ui.cpp:418`), `dwSkillLevel` se ubica exactamente en el offset `0x40`, seguido de `dwBonus` en `0x44`, `dwBaseLevel` en `0x48` y `dwOwner` en `0x4c` (`static_assert(offsetof(Node, owner) == 0x4c)`).
+   - En la primera versión de `SyntheticCompanionSkillNode`, el campo `level` se colocó erróneamente en el offset `0x48`. Por tanto, el offset `0x40` contenía `0`, provocando que los cálculos internos del motor evaluaran la habilidad como **Nivel 0**.
+   - Se reestructuró `SyntheticCompanionSkillNode` con 7 directivas `static_assert` en tiempo de compilación para garantizar a nivel de compilador que `hitCount` esté en `0x24`, `targetType = 1` (`UNIT_MONSTER`) en `0x2c`, `targetId` en `0x30`, `level` en `0x40`, `bonus` en `0x44`, `base` en `0x48` y `owner = -1` (universal/objeto) en `0x4c`.
+2. **Naturaleza de Ráfaga / Volley (`Action::Volley`):**
+   - Strafe no es un hechizo de proyectil único, sino una habilidad de salva física clasificada como `Action::Volley`. A nivel 4, la fórmula de proyectiles de D2R dispara $\min(lvl + 4, 10) = 8$ flechas.
+   - Dado que el ciclo de IA táctica se ejecuta una vez cada 4 segundos, una única llamada a `dispatchFn` emitía únicamente 1 sola flecha física estándar (indistinguible visual y sonoramente de un ataque básico con arco).
+   - Se implementó un bucle de disparo secuencial que despacha las 8 flechas de la ráfaga repartidas entre los monstruos hostiles detectados en la escena (`hostiles[a % hCount]`), con objetivo individual por flecha y contador decreciente `hitCount`.
+3. **Interrupción por Locomoción de Protección (*Peeling*):**
+   - El sistema de protección corporal (*Bodyguard Peeling*) reaccionaba tan pronto como la Pícara quedaba fuera del rango de intercepción ideal, emitiendo una orden de movimiento al servidor (`DispatchServerMoveToCoord`) en modo correr apenas 500 ms después de la orden táctica, interrumpiendo la postura de disparo.
+   - Se añadió la guarda `recentlyCast = (nowMs - s_lastTacticalCastMs < 800)` para suprimir el movimiento forzado inmediatamente tras una acción táctica, permitiendo que la mercenaria complete la secuencia completa de disparo.
+
+#### Comportamiento en Otras Habilidades Adquiridas (No de Cargas):
+- **Hechizos de casteo individual (ej. Bola de Fuego, Teletransporte, Ventisca, Nova, Decrepitud):** Se lanzan en una sola invocación de `dispatchFn`. Al estar corregido el offset `0x40`, el motor calcula su daño y radio con su nivel real (ej. nivel 4 o 5 en lugar de nivel 0).
+- **Habilidades pasivas (ej. Golpe Crítico, Penetrar, Perforar):** No se envían al motor vía `dispatchFn`; sus bonos se consultan dinámicamente mediante `DetourSkillLevel` / `ComputeEffectiveCompanionSkillLevel` y aplican sus efectos estadísticos automáticamente en cada ataque.
+- **Habilidades de ráfaga y ataques múltiples (ej. Strafe, Fervor/Zeal, Furia/Fury):** Quedan perfectamente operativas gracias al nuevo bucle multidisparo secuencial.
