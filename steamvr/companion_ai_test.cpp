@@ -2004,10 +2004,10 @@ int main() {
                 assert(g_lastDispatchedLevel == 4);
 
                 // Step 2: Verify synthetic node was populated with Strafe row, exact level at 0x40, monster targetType and owner -1
-                assert(companionai::s_companionSyntheticNode.level == 4);
-                assert(companionai::s_companionSyntheticNode.row != 0);
-                assert(companionai::s_companionSyntheticNode.targetType == 1);
-                assert(companionai::s_companionSyntheticNode.owner == -1);
+                assert(companionai::s_companionSyntheticNodes[0].level == 4);
+                assert(companionai::s_companionSyntheticNodes[0].row != 0);
+                assert(companionai::s_companionSyntheticNodes[0].targetType == 1);
+                assert(companionai::s_companionSyntheticNodes[0].owner == -1);
 
                 // Step 3: Simulate mercenary death / revival:
                 // ClearCachedSkillBadges() is called when hireling disappears
